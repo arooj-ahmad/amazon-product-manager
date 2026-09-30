@@ -74,15 +74,18 @@ app = FastAPI(
 # ============================================
 # CORS MIDDLEWARE
 # ============================================
+# Production frontend + local dev + Vercel preview URLs allow
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
         settings.FRONTEND_URL,
         "http://localhost:5173",
         "http://localhost:3000",
-        # Shopify admin domain (development ke liye)
         "https://admin.shopify.com",
+        "https://amazon-product-manager-asev.vercel.app",
     ],
+    # Ye regex har Vercel URL allow karega (including preview deployments)
+    allow_origin_regex=r"https://.*\.vercel\.app",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -113,5 +116,5 @@ def root():
 
 @app.get("/health", tags=["Root"])
 def health_check():
-    """Health check endpoint — Render ke liye"""
+    """Health check endpoint — monitoring ke liye"""
     return {"status": "healthy"}
