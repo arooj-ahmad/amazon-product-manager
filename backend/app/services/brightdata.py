@@ -1,0 +1,230 @@
+# ============================================
+# app/services/brightdata.py
+# Bright Data Scraper API se Amazon data fetch karne ke liye
+# ============================================
+
+import logging
+from typing import Optional
+
+import httpx
+
+from app.config import settings
+
+logger = logging.getLogger(__name__)
+
+
+# ============================================
+# CUSTOM EXCEPTION
+# ============================================
+class BrightDataError(Exception):
+    """Bright Data API se related errors"""
+    pass
+
+
+# ============================================
+# AMAZON URL SE ASIN NIKALEIN
+# ============================================
+def extract_asin_from_url(url: str) -> Optional[str]:
+    """
+    Amazon URL se ASIN nikalta hai.
+    """
+    import re
+
+    patterns = [
+        r"/dp/([A-Z0-9]{10})",
+        r"/gp/product/([A-Z0-9]{10})",
+        r"/product/([A-Z0-9]{10})",
+        r"asin=([A-Z0-9]{10})",
+    ]
+
+    for pattern in patterns:
+        match = re.search(pattern, url)
+        if match:
+            return match.group(1)
+
+    return None
+
+
+# ============================================
+# BRIGHT DATA API CALL
+# ============================================
+async def fetch_product_from_brightdata(amazon_url: str) -> dict:
+    """
+    Bright Data API se product data fetch karta hai.
+    """
+    # API URL with query params
+    api_url = (
+        f"{settings.BRIGHT_DATA_API_URL}"
+        f"?dataset_id={settings.BRIGHT_DATA_DATASET_ID}"
+        f"&include_errors=true"
+    )
+
+    # Headers
+    headers = {
+        "Authorization": f"Bearer {settings.BRIGHT_DATA_API_KEY}",
+        "Content-Type": "application/json",
+    }
+
+    # Body
+    body = [{"url": amazon_url}]
+
+    logger.info(f"Bright Data API call: {amazon_url}")
+
+    # API Call
+    try:
+        async with httpx.AsyncClient(timeout=90.0) as client:
+            response = await client.post(api_url, headers=headers, json=body)
+            response.raise_for_status()
+    except httpx.HTTPStatusError as e:
+        logger.error(
+            f"Bright Data HTTP error: {e.response.status_code} - {e.response.text}"
+        )
+        raise BrightDataError(f"Bright Data API error: {e.response.status_code}")
+    except httpx.RequestError as e:
+        logger.error(f"Bright Data request error: {e}")
+        raise BrightDataError(f"Bright Data connection error: {str(e)}")
+
+    # Parse Response
+    try:
+        data = response.json()
+    except Exception as e:
+        logger.error(f"Bright Data JSON parse error: {e}")
+        raise BrightDataError("Invalid JSON response from Bright Data")
+
+    # Bright Data kabhi list, kabhi single object return karta hai
+    if isinstance(data, list):
+        if len(data) == 0:
+            logger.error("Bright Data empty array response")
+            raise BrightDataError("Bright Data ne koi data return nahi kiya")
+        raw = data[0]
+    elif isinstance(data, dict):
+        raw = data
+    else:
+        logger.error(f"Bright Data unexpected response type: {type(data)}")
+        raise BrightDataError("Bright Data ne unexpected response bheja")
+
+    # Check errors
+    if "error" in raw:
+        logger.error(f"Bright Data error in response: {raw['error']}")
+        raise BrightDataError(f"Bright Data error: {raw['error']}")
+
+    # Extract fields
+    asin = raw.get("asin") or extract_asin_from_url(amazon_url)
+    if not asin:
+        raise BrightDataError("ASIN nahi mila - na response mein, na URL mein")
+
+    parent_asin = raw.get("parent_asin") or None
+    is_variation = bool(parent_asin)
+
+    # Price
+    amazon_price = (
+        raw.get("final_price")
+        or raw.get("price")
+        or raw.get("buybox_price")
+        or raw.get("initial_price")
+    )
+
+    if amazon_price is not None:
+        try:
+            if isinstance(amazon_price, str):
+                amazon_price = float(
+                    amazon_price.replace("$", "").replace(",", "").strip()
+                )
+            else:
+                amazon_price = float(amazon_price)
+        except (ValueError, TypeError):
+            logger.warning(f"Price parse fail: {amazon_price}")
+            amazon_price = None
+
+    # ----------------------------------------
+    # Images extract karo
+    # ----------------------------------------
+    images_list = raw.get("images") or []
+    if not isinstance(images_list, list):
+        images_list = []
+
+    main_image = raw.get("image_url") or raw.get("image")
+
+    unique_images = []
+    if main_image:
+        unique_images.append(main_image)
+
+    for img in images_list:
+        if isinstance(img, str) and img not in unique_images:
+            unique_images.append(img)
+
+    if not main_image and unique_images:
+        main_image = unique_images[0]
+
+    # ----------------------------------------
+    # Specifications extract karo
+    # ----------------------------------------
+    specs = {}
+
+    product_details = raw.get("product_details") or []
+    if isinstance(product_details, list):
+        for item in product_details:
+            if isinstance(item, dict):
+                key = item.get("type")
+                value = item.get("value")
+                if key and value and str(value).strip():
+                    if key not in specs:
+                        specs[key] = str(value).strip()
+
+    # Extra useful fields
+    extra_fields = {
+        "Rating": raw.get("rating"),
+        "Reviews": raw.get("reviews_count"),
+        "Availability": raw.get("availability"),
+        "Seller": raw.get("seller_name") or raw.get("buybox_seller"),
+        "Category": (
+            raw.get("categories", [None])[-1]
+            if raw.get("categories")
+            else None
+        ),
+    }
+
+    for key, value in extra_fields.items():
+        if value is not None and str(value).strip() and key not in specs:
+            specs[key] = str(value).strip()
+
+    logger.info(
+        f"Parsed product: ASIN={asin}, Price=${amazon_price}, "
+        f"Images={len(unique_images)}, Specs={len(specs)}"
+    )
+
+    return {
+        "asin": asin,
+        "parent_asin": parent_asin,
+        "is_variation": is_variation,
+        "title": raw.get("title"),
+        "brand": raw.get("brand"),
+        "amazon_price": amazon_price,
+        "image_url": main_image,
+        "images": unique_images,
+        "specifications": specs,
+        "description": raw.get("description"),
+    }
+
+
+# ============================================
+# CALCULATE FINAL PRICE
+# ============================================
+def calculate_final_price(
+    amazon_price: Optional[float],
+    markup: float = 2.0,
+    admin_price: Optional[float] = None,
+    is_manual_override: bool = False,
+) -> Optional[float]:
+    """
+    Final website price calculate karta hai.
+    """
+    if amazon_price is None:
+        return admin_price
+
+    auto_price = amazon_price + markup
+
+    if is_manual_override and admin_price is not None:
+        return max(admin_price, auto_price)
+
+    return auto_price

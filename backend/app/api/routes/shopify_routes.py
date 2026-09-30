@@ -1,0 +1,380 @@
+# ============================================
+# app/api/routes/shopify_routes.py
+# Shopify OAuth + Product Push + Embedded App
+# ============================================
+
+import logging
+
+from fastapi import APIRouter, Body, Depends, Header, HTTPException, Query, Request
+from fastapi.responses import HTMLResponse, RedirectResponse
+from sqlalchemy.orm import Session
+
+from app.api.routes.auth import get_current_admin
+from app.config import settings
+from app.database import get_db
+from app.models import Admin, Product, ShopifyStore
+from app.services.brightdata import (
+    BrightDataError,
+    calculate_final_price,
+    fetch_product_from_brightdata,
+)
+from app.services.shopify import (
+    build_auth_url,
+    create_shopify_product,
+    exchange_code_for_token,
+    verify_hmac,
+    verify_id_token,
+)
+
+logger = logging.getLogger(__name__)
+
+router = APIRouter(prefix="/api/shopify", tags=["Shopify"])
+
+
+# ============================================
+# INSTALL: Merchant ko authorize page par bhejo
+# ============================================
+@router.get("/install")
+def shopify_install(
+    shop: str = Query(..., description="Shopify store domain"),
+):
+    """Merchant jab app install karega, toh ye URL hit hoga."""
+    if not shop:
+        raise HTTPException(status_code=400, detail="Shop parameter required")
+
+    auth_url = build_auth_url(shop)
+    logger.info(f"Redirecting to Shopify OAuth: {auth_url}")
+
+    return RedirectResponse(url=auth_url)
+
+
+# ============================================
+# CALLBACK: OAuth callback handle karo
+# ============================================
+@router.get("/callback")
+async def shopify_callback(
+    request: Request,
+    shop: str = Query(...),
+    code: str = Query(...),
+    state: str = Query(None),
+    hmac: str = Query(None),
+    db: Session = Depends(get_db),
+):
+    """
+    Shopify merchant authorize karne ke baad yahan wapas aayega.
+    """
+    query_params = dict(request.query_params)
+
+    access_token = await exchange_code_for_token(shop, code)
+
+    if not access_token:
+        logger.error(f"Token exchange failed for {shop}")
+        return HTMLResponse(
+            content="""
+            <html>
+                <body style="font-family: sans-serif; padding: 40px; text-align: center;">
+                    <h1>❌ Installation Failed</h1>
+                    <p>Could not exchange authorization code for access token.</p>
+                </body>
+            </html>
+            """,
+            status_code=400,
+        )
+
+    # DB mein store karo (upsert)
+    existing = (
+        db.query(ShopifyStore)
+        .filter(ShopifyStore.shop_domain == shop)
+        .first()
+    )
+
+    if existing:
+        existing.access_token = access_token
+        existing.scopes = settings.SHOPIFY_SCOPES
+        logger.info(f"Updated token for {shop}")
+    else:
+        new_store = ShopifyStore(
+            shop_domain=shop,
+            access_token=access_token,
+            scopes=settings.SHOPIFY_SCOPES,
+        )
+        db.add(new_store)
+        logger.info(f"New store installed: {shop}")
+
+    db.commit()
+
+    return HTMLResponse(
+        content=f"""
+        <html>
+            <body style="font-family: sans-serif; padding: 40px; text-align: center; background: #f6f6f7;">
+                <div style="max-width: 500px; margin: 0 auto; background: white; padding: 40px; border-radius: 12px; box-shadow: 0 2px 8px rgba(0,0,0,0.1);">
+                    <h1 style="color: #008060;">✅ App Installed!</h1>
+                    <p style="color: #637381;">Your store <strong>{shop}</strong> is now connected.</p>
+                    <p style="color: #637381; font-size: 14px;">Access token saved successfully.</p>
+                    <a href="https://{shop}/admin/apps"
+                       style="display: inline-block; margin-top: 20px; padding: 12px 24px; background: #008060; color: white; text-decoration: none; border-radius: 6px;">
+                        Go to Shopify Admin
+                    </a>
+                </div>
+            </body>
+        </html>
+        """,
+    )
+
+
+# ============================================
+# STORES: Installed stores list karo
+# ============================================
+@router.get("/stores")
+def list_installed_stores(db: Session = Depends(get_db)):
+    """Installed stores ki list"""
+    stores = db.query(ShopifyStore).all()
+    return {
+        "total": len(stores),
+        "stores": [
+            {
+                "shop_domain": s.shop_domain,
+                "installed_at": s.installed_at,
+                "scopes": s.scopes,
+            }
+            for s in stores
+        ],
+    }
+
+
+# ============================================
+# PUSH PRODUCT TO SHOPIFY (Admin Panel Se)
+# ============================================
+@router.post("/push-product/{product_id}")
+async def push_product_to_shopify(
+    product_id: int,
+    shop_domain: str = Body(..., embed=True),
+    db: Session = Depends(get_db),
+    current_admin: Admin = Depends(get_current_admin),
+):
+    """
+    Ek product ko Supabase se Shopify mein push karta hai.
+    Admin protected endpoint.
+    """
+    product = db.query(Product).filter(Product.id == product_id).first()
+
+    if not product:
+        raise HTTPException(
+            status_code=404,
+            detail="Product not found in database",
+        )
+
+    store = (
+        db.query(ShopifyStore)
+        .filter(ShopifyStore.shop_domain == shop_domain)
+        .first()
+    )
+
+    if not store:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Store {shop_domain} not connected",
+        )
+
+    product_data = {
+        "title": product.title,
+        "description": product.description or "",
+        "brand": product.brand or "",
+        "images": product.images or (
+            [product.image_url] if product.image_url else []
+        ),
+        "price": str(product.price) if product.price else "0.00",
+    }
+
+    result = await create_shopify_product(
+        shop=store.shop_domain,
+        access_token=store.access_token,
+        product_data=product_data,
+    )
+
+    if "errors" in result:
+        logger.error(f"Shopify push error: {result['errors']}")
+        raise HTTPException(
+            status_code=400,
+            detail=f"Shopify API error: {result['errors']}",
+        )
+
+    user_errors = (
+        result.get("data", {})
+        .get("productCreate", {})
+        .get("userErrors", [])
+    )
+
+    if user_errors:
+        logger.error(f"Shopify user errors: {user_errors}")
+        raise HTTPException(
+            status_code=400,
+            detail=f"Shopify validation error: {user_errors}",
+        )
+
+    shopify_product = (
+        result.get("data", {}).get("productCreate", {}).get("product", {})
+    )
+
+    return {
+        "success": True,
+        "message": "Product pushed to Shopify successfully",
+        "shopify_product_id": shopify_product.get("id"),
+        "shopify_handle": shopify_product.get("handle"),
+        "shopify_title": shopify_product.get("title"),
+    }
+
+
+# ============================================
+# ADD PRODUCT FROM SHOPIFY APP (Iframe Se)
+# TESTING MODE: ID token verification temporarily disabled
+# ============================================
+@router.post("/app/add-product")
+async def add_product_from_shopify_app(
+    amazon_url: str = Body(..., embed=True),
+    authorization: str = Header(None),  # Optional now
+    db: Session = Depends(get_db),
+):
+    """
+    Shopify App ke iframe se product add karta hai.
+
+    ⚠️ TESTING MODE: ID token verification temporarily disabled.
+    Production mein wapas enable karenge.
+    """
+    shop_domain = ""
+
+    # ========================================
+    # Token verification (agar token hai toh)
+    # ========================================
+    if authorization and authorization.startswith("Bearer "):
+        token = authorization.replace("Bearer ", "")
+
+        if token.strip():  # Non-empty token
+            try:
+                payload = verify_id_token(token)
+                dest = payload.get("dest", "")
+                shop_domain = dest.replace("https://", "").split("/")[0]
+                logger.info(f"✅ Shopify App request from (verified): {shop_domain}")
+            except ValueError as e:
+                logger.warning(f"⚠️ ID token verify fail: {e}")
+
+    # ========================================
+    # Fallback: DB se pehla store use karo (TESTING)
+    # ========================================
+    if not shop_domain:
+        logger.info("🔧 TESTING MODE: Using first store from database")
+
+        first_store = db.query(ShopifyStore).first()
+        if not first_store:
+            raise HTTPException(
+                status_code=404,
+                detail="No Shopify store connected. Please install the app first.",
+            )
+        shop_domain = first_store.shop_domain
+        logger.info(f"Using fallback store: {shop_domain}")
+
+    # Store dhundo
+    store = (
+        db.query(ShopifyStore)
+        .filter(ShopifyStore.shop_domain == shop_domain)
+        .first()
+    )
+    if not store:
+        raise HTTPException(status_code=404, detail="Store not connected")
+
+    # ========================================
+    # Bright Data se fetch karo
+    # ========================================
+    try:
+        data = await fetch_product_from_brightdata(amazon_url)
+    except BrightDataError as e:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Bright Data fetch fail: {str(e)}",
+        )
+
+    asin = data["asin"]
+
+    # Duplicate check
+    existing = db.query(Product).filter(Product.asin == asin).first()
+    if existing:
+        raise HTTPException(
+            status_code=409,
+            detail=f"Product already exists (ASIN: {asin})",
+        )
+
+    # Price calculate
+    markup = data.get("markup", 2.0) or 2.0
+    final_price = calculate_final_price(
+        amazon_price=data["amazon_price"],
+        markup=markup,
+    )
+
+    # Naya product Supabase mein save karo
+    new_product = Product(
+        asin=asin,
+        parent_asin=data["parent_asin"],
+        is_variation=data["is_variation"],
+        title=data["title"],
+        brand=data["brand"],
+        description=data["description"],
+        image_url=data["image_url"],
+        images=data.get("images", []),
+        specifications=data.get("specifications", {}),
+        amazon_price=data["amazon_price"],
+        price=final_price,
+        markup=markup,
+        is_manual_override=False,
+    )
+
+    db.add(new_product)
+    db.commit()
+    db.refresh(new_product)
+
+    logger.info(f"Product saved to Supabase: {asin}")
+
+    # ========================================
+    # Shopify mein bhi push karo
+    # ========================================
+    shopify_pushed = False
+    try:
+        shopify_result = await create_shopify_product(
+            shop=shop_domain,
+            access_token=store.access_token,
+            product_data={
+                "title": new_product.title,
+                "description": new_product.description or "",
+                "brand": new_product.brand or "",
+                "images": new_product.images or (
+                    [new_product.image_url] if new_product.image_url else []
+                ),
+                "price": str(new_product.price),
+            },
+        )
+
+        if "errors" not in shopify_result:
+            shopify_pushed = True
+            logger.info(f"✅ Product pushed to Shopify: {asin}")
+        else:
+            logger.warning(f"Shopify push warnings: {shopify_result.get('errors')}")
+
+    except Exception as e:
+        logger.error(f"Shopify push fail: {e}")
+
+    return {
+        "success": True,
+        "message": f"Product added (ASIN: {asin})"
+        + (" and pushed to Shopify ✅" if shopify_pushed else ""),
+        "product_id": new_product.id,
+        "asin": asin,
+        "shopify_pushed": shopify_pushed,
+    }
+
+
+# ============================================
+# HEALTH CHECK
+# ============================================
+@router.get("/health")
+def shopify_health():
+    """Simple health check"""
+    return {"status": "ok", "service": "shopify-integration"}
