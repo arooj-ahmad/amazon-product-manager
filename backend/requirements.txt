@@ -1,47 +1,15 @@
-# ============================================
-# Web Framework
-# ============================================
 fastapi==0.115.0
 uvicorn[standard]==0.32.0
-
-# ============================================
-# Database (Supabase / PostgreSQL)
-# ============================================
 sqlalchemy==2.0.36
 psycopg2-binary==2.9.10
-
-# ============================================
-# Settings & Validation
-# ============================================
 pydantic==2.9.2
 pydantic-settings==2.6.0
 python-dotenv==1.0.1
-
-# ============================================
-# Authentication (Sirf Admin Ke Liye)
-# ============================================
 python-jose[cryptography]==3.3.0
 passlib[bcrypt]==1.7.4
 bcrypt==4.0.1
 python-multipart==0.0.12
-
-# ============================================
-# HTTP Client (Bright Data API ke liye)
-# ============================================
 httpx==0.27.2
-
-# ============================================
-# Scheduler (24 ghante wala price update)
-# ============================================
 apscheduler==3.10.4
-
-# ============================================
-# CORS (Frontend se connect karne ke liye)
-# ============================================
-# (FastAPI mein built-in hai, lekin explicit note)
-
-
-# Shopify Integration
 ShopifyAPI==12.7.0
-shopify-api-python==0.0.5
 PyJWT==2.8.0
