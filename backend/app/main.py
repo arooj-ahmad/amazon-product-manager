@@ -12,7 +12,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.api.routes import auth, products, shopify_routes
 from app.config import settings
 from app.services.scheduler import start_scheduler, stop_scheduler
-from app.api.routes import auth, products, shopify_routes, billing_routes
+from app.api.routes import auth, products, shopify_routes, billing_routes 
 
 
 # ============================================

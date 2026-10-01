@@ -1,184 +1,144 @@
 # ============================================
-# app/services/billing.py
-# Shopify Billing API integration
+# app/api/routes/billing_routes.py
+# Shopify Billing endpoints
 # ============================================
 
 import logging
 
-from app.services.shopify import shopify_graphql
+from fastapi import APIRouter, Depends, Header, HTTPException
+from sqlalchemy.orm import Session
+
+from app.database import get_db
+from app.models import ShopifyStore
+from app.services.billing import (
+    BILLING_PLANS,
+    create_subscription,
+    get_active_subscription,
+)
+from app.services.shopify import verify_id_token
 
 logger = logging.getLogger(__name__)
 
-
-# ============================================
-# BILLING PLANS CONFIGURATION
-# ============================================
-BILLING_PLANS = {
-    "basic": {
-        "name": "Basic Plan",
-        "price": 9.99,
-        "currency": "USD",
-        "interval": "EVERY_30_DAYS",
-        "trial_days": 7,
-        "features": [
-            "Unlimited product imports",
-            "Auto price sync",
-            "Multi-image support",
-            "Email support",
-        ],
-    },
-    "pro": {
-        "name": "Pro Plan",
-        "price": 29.99,
-        "currency": "USD",
-        "interval": "EVERY_30_DAYS",
-        "trial_days": 7,
-        "features": [
-            "Everything in Basic",
-            "Bulk imports",
-            "Priority support",
-            "Advanced analytics",
-        ],
-    },
-}
+# ⚠️⚠️⚠️ YE LINE ZAROORI HAI — ISKE BINA ROUTER KAAM NAHI KAREGA
+router = APIRouter(prefix="/api/billing", tags=["Billing"])
+# ⚠️⚠️⚠️
 
 
 # ============================================
-# CREATE SUBSCRIPTION
+# GET AVAILABLE PLANS
 # ============================================
-async def create_subscription(
-    shop: str,
-    access_token: str,
-    plan_key: str,
-    return_url: str,
-) -> dict:
-    """
-    Naya subscription create karta hai.
-    Merchant ko Shopify confirmation page par redirect karta hai.
-    """
-    plan = BILLING_PLANS.get(plan_key)
-    if not plan:
-        return {"error": f"Invalid plan: {plan_key}"}
-
-    mutation = """
-    mutation appSubscriptionCreate(
-      $name: String!
-      $returnUrl: URL!
-      $trialDays: Int!
-      $test: Boolean!
-      $lineItems: [AppSubscriptionLineItemInput!]!
-    ) {
-      appSubscriptionCreate(
-        name: $name
-        returnUrl: $returnUrl
-        trialDays: $trialDays
-        test: $test
-        lineItems: $lineItems
-      ) {
-        confirmationUrl
-        appSubscription {
-          id
-          status
-          name
-          trialDays
-          currentPeriodEnd
-        }
-        userErrors {
-          field
-          message
-        }
-      }
-    }
-    """
-
-    variables = {
-        "name": plan["name"],
-        "returnUrl": return_url,
-        "trialDays": plan["trial_days"],
-        "test": True,  # ⚠️ Production mein False karein
-        "lineItems": [
-            {
-                "plan": {
-                    "appRecurringPricingDetails": {
-                        "price": {
-                            "amount": plan["price"],
-                            "currencyCode": plan["currency"],
-                        },
-                        "interval": plan["interval"],
-                    }
-                }
-            }
-        ],
-    }
-
-    result = await shopify_graphql(shop, access_token, mutation, variables)
-
-    if "errors" in result:
-        logger.error(f"Subscription create error: {result['errors']}")
-        return result
-
-    sub_data = result.get("data", {}).get("appSubscriptionCreate", {})
-    user_errors = sub_data.get("userErrors", [])
-
-    if user_errors:
-        logger.error(f"Subscription user errors: {user_errors}")
-        return {"errors": user_errors}
-
+@router.get("/plans")
+def get_plans():
+    """Saare available billing plans"""
     return {
-        "confirmation_url": sub_data.get("confirmationUrl"),
-        "subscription": sub_data.get("appSubscription"),
+        "plans": [
+            {
+                "key": key,
+                "name": plan["name"],
+                "price": plan["price"],
+                "currency": plan["currency"],
+                "interval": plan["interval"],
+                "trial_days": plan["trial_days"],
+                "features": plan["features"],
+            }
+            for key, plan in BILLING_PLANS.items()
+        ]
     }
 
 
 # ============================================
-# CHECK ACTIVE SUBSCRIPTION
+# CHECK SUBSCRIPTION STATUS
 # ============================================
-async def get_active_subscription(
-    shop: str,
-    access_token: str,
-) -> dict:
-    """
-    Shop ke active subscriptions check karta hai.
-    """
-    query = """
-    query {
-      currentAppInstallation {
-        activeSubscriptions {
-          id
-          name
-          status
-          currentPeriodEnd
-          trialDays
-          createdAt
-        }
-      }
-    }
-    """
+@router.get("/status")
+async def subscription_status(
+    authorization: str = Header(...),
+    db: Session = Depends(get_db),
+):
+    """Merchant ka subscription status check karta hai."""
+    if not authorization.startswith("Bearer "):
+        raise HTTPException(status_code=401, detail="Invalid authorization")
 
-    result = await shopify_graphql(shop, access_token, query)
+    token = authorization.replace("Bearer ", "").strip()
 
-    if "errors" in result:
-        logger.error(f"Subscription query error: {result['errors']}")
-        return {"active": False, "error": result["errors"]}
+    try:
+        payload = verify_id_token(token)
+    except ValueError as e:
+        raise HTTPException(status_code=401, detail=str(e))
 
-    subscriptions = (
-        result.get("data", {})
-        .get("currentAppInstallation", {})
-        .get("activeSubscriptions", [])
+    shop_domain = payload.get("dest", "").replace("https://", "").split("/")[0]
+
+    store = (
+        db.query(ShopifyStore)
+        .filter(ShopifyStore.shop_domain == shop_domain)
+        .first()
     )
 
-    if not subscriptions:
-        return {"active": False, "subscription": None}
+    if not store:
+        raise HTTPException(status_code=404, detail="Store not connected")
 
-    sub = subscriptions[0]
+    sub_status = await get_active_subscription(
+        shop=shop_domain,
+        access_token=store.access_token,
+    )
 
     return {
-        "active": sub.get("status") == "ACTIVE",
-        "subscription": {
-            "id": sub.get("id"),
-            "name": sub.get("name"),
-            "status": sub.get("status"),
-            "current_period_end": sub.get("currentPeriodEnd"),
-            "trial_days": sub.get("trialDays"),
-        },
+        "shop_domain": shop_domain,
+        "active": sub_status.get("active", False),
+        "subscription": sub_status.get("subscription"),
+    }
+
+
+# ============================================
+# SUBSCRIBE TO PLAN
+# ============================================
+@router.post("/subscribe/{plan_key}")
+async def subscribe(
+    plan_key: str,
+    authorization: str = Header(...),
+    db: Session = Depends(get_db),
+):
+    """Merchant ko subscription par bhejta hai."""
+    if not authorization.startswith("Bearer "):
+        raise HTTPException(status_code=401, detail="Invalid authorization")
+
+    token = authorization.replace("Bearer ", "").strip()
+
+    try:
+        payload = verify_id_token(token)
+    except ValueError as e:
+        raise HTTPException(status_code=401, detail=str(e))
+
+    shop_domain = payload.get("dest", "").replace("https://", "").split("/")[0]
+
+    store = (
+        db.query(ShopifyStore)
+        .filter(ShopifyStore.shop_domain == shop_domain)
+        .first()
+    )
+
+    if not store:
+        raise HTTPException(status_code=404, detail="Store not connected")
+
+    return_url = (
+        f"https://amazon-product-manager-asev.vercel.app/shopify-app"
+        f"?subscription=success"
+    )
+
+    result = await create_subscription(
+        shop=shop_domain,
+        access_token=store.access_token,
+        plan_key=plan_key,
+        return_url=return_url,
+    )
+
+    if "error" in result:
+        raise HTTPException(status_code=400, detail=result["error"])
+
+    if "errors" in result:
+        raise HTTPException(status_code=400, detail=str(result["errors"]))
+
+    return {
+        "success": True,
+        "confirmation_url": result.get("confirmation_url"),
+        "subscription": result.get("subscription"),
     }
