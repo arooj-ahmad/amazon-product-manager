@@ -65,6 +65,21 @@ async def shopify_callback(
     """
     query_params = dict(request.query_params)
 
+    # ========================================
+    # Step 1: HMAC verify karo (SECURITY)
+    # ========================================
+    if not hmac or not verify_hmac(query_params):
+        logger.error(f"❌ HMAC verification failed for {shop}")
+        raise HTTPException(
+            status_code=401,
+            detail="HMAC verification failed. Request may be tampered.",
+        )
+
+    logger.info(f"✅ HMAC verified for {shop}")
+
+    # ========================================
+    # Step 2: Token exchange
+    # ========================================
     access_token = await exchange_code_for_token(shop, code)
 
     if not access_token:
@@ -81,7 +96,9 @@ async def shopify_callback(
             status_code=400,
         )
 
-    # DB mein store karo (upsert)
+    # ========================================
+    # Step 3: DB mein store karo (upsert)
+    # ========================================
     existing = (
         db.query(ShopifyStore)
         .filter(ShopifyStore.shop_domain == shop)
@@ -232,7 +249,7 @@ async def push_product_to_shopify(
 @router.post("/app/add-product")
 async def add_product_from_shopify_app(
     amazon_url: str = Body(..., embed=True),
-    authorization: str = Header(...),  # ⚠️ REQUIRED now
+    authorization: str = Header(...),  # ⚠️ REQUIRED
     db: Session = Depends(get_db),
 ):
     """
@@ -261,7 +278,7 @@ async def add_product_from_shopify_app(
     # ========================================
     try:
         payload = verify_id_token(token)
-        logger.info(f"✅ ID token verified successfully")
+        logger.info("✅ ID token verified successfully")
     except ValueError as e:
         logger.error(f"❌ ID token verify fail: {e}")
         raise HTTPException(
@@ -299,7 +316,27 @@ async def add_product_from_shopify_app(
         )
 
     # ========================================
-    # Step 5: Bright Data se fetch karo
+    # Step 5: Subscription check (PAID USERS ONLY)
+    # ⚠️ Ye check ab SAHI jagah hai — product add se PEHLE
+    # ========================================
+    from app.services.billing import get_active_subscription
+
+    sub_status = await get_active_subscription(
+        shop=shop_domain,
+        access_token=store.access_token,
+    )
+
+    if not sub_status.get("active"):
+        logger.warning(f"❌ No active subscription for: {shop_domain}")
+        raise HTTPException(
+            status_code=402,
+            detail="Active subscription required. Please subscribe to a plan.",
+        )
+
+    logger.info(f"✅ Active subscription verified for: {shop_domain}")
+
+    # ========================================
+    # Step 6: Bright Data se fetch karo
     # ========================================
     try:
         data = await fetch_product_from_brightdata(amazon_url)
@@ -327,7 +364,7 @@ async def add_product_from_shopify_app(
     )
 
     # ========================================
-    # Step 6: Supabase mein save karo
+    # Step 7: Supabase mein save karo
     # ========================================
     new_product = Product(
         asin=asin,
@@ -352,7 +389,7 @@ async def add_product_from_shopify_app(
     logger.info(f"✅ Product saved to Supabase: {asin}")
 
     # ========================================
-    # Step 7: Shopify mein push karo
+    # Step 8: Shopify mein push karo
     # ========================================
     shopify_pushed = False
     try:

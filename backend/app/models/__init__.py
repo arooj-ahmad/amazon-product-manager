@@ -1,10 +1,15 @@
 # ============================================
 # app/models/__init__.py
-# Saare models ko yahan export karein
 # ============================================
 
 from app.models.product import Product
 from app.models.admin import Admin
 from app.models.shopify_store import ShopifyStore
+from app.models.shopify_subscription import ShopifySubscription
 
-__all__ = ["Product", "Admin", "ShopifyStore"]
+__all__ = [
+    "Product",
+    "Admin",
+    "ShopifyStore",
+    "ShopifySubscription",
+]
