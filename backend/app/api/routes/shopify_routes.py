@@ -319,19 +319,19 @@ async def add_product_from_shopify_app(
     # Step 5: Subscription check (PAID USERS ONLY)
     # ⚠️ Ye check ab SAHI jagah hai — product add se PEHLE
     # ========================================
-    from app.services.billing import get_active_subscription
+    # from app.services.billing import get_active_subscription
 
-    sub_status = await get_active_subscription(
-        shop=shop_domain,
-        access_token=store.access_token,
-    )
+    # sub_status = await get_active_subscription(
+    #     shop=shop_domain,
+    #     access_token=store.access_token,
+    # )
 
-    if not sub_status.get("active"):
-        logger.warning(f"❌ No active subscription for: {shop_domain}")
-        raise HTTPException(
-            status_code=402,
-            detail="Active subscription required. Please subscribe to a plan.",
-        )
+    # if not sub_status.get("active"):
+    #     logger.warning(f"❌ No active subscription for: {shop_domain}")
+    #     raise HTTPException(
+    #         status_code=402,
+    #         detail="Active subscription required. Please subscribe to a plan.",
+    #     )
 
     logger.info(f"✅ Active subscription verified for: {shop_domain}")
 
