@@ -12,6 +12,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.api.routes import auth, products, shopify_routes
 from app.config import settings
 from app.services.scheduler import start_scheduler, stop_scheduler
+from app.api.routes import auth, products, shopify_routes, billing_routes
 
 
 # ============================================
@@ -98,7 +99,7 @@ app.add_middleware(
 app.include_router(auth.router)
 app.include_router(products.router)
 app.include_router(shopify_routes.router)
-
+app.include_router(billing_routes.router)
 
 # ============================================
 # ROOT ENDPOINTS
