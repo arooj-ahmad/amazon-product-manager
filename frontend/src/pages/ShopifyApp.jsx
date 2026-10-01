@@ -295,63 +295,63 @@ function ShopifyApp() {
   // ========================================
   // Subscription required — show plans
   // ========================================
-  if (!subscription?.active) {
-    return (
-      <div style={styles.page}>
-        <div style={styles.container}>
-          <h1 style={styles.h1}>🛒 Amazon Product Manager</h1>
-          <p style={styles.subtitle}>
-            Choose a plan to start adding Amazon products
-          </p>
+  // if (!subscription?.active) {
+  //   return (
+  //     <div style={styles.page}>
+  //       <div style={styles.container}>
+  //         <h1 style={styles.h1}>🛒 Amazon Product Manager</h1>
+  //         <p style={styles.subtitle}>
+  //           Choose a plan to start adding Amazon products
+  //         </p>
 
-          {plans.length === 0 ? (
-            <div style={styles.errorBox}>
-              No plans available. Please try again later.
-            </div>
-          ) : (
-            <div style={styles.grid}>
-              {plans.map((plan) => (
-                <div key={plan.key} style={styles.planCard}>
-                  <h3 style={styles.planName}>{plan.name}</h3>
-                  <p style={styles.planPrice}>
-                    ${plan.price}
-                    <span style={styles.planPriceUnit}>/month</span>
-                  </p>
-                  {plan.trial_days > 0 && (
-                    <p style={styles.trialText}>
-                      {plan.trial_days}-day free trial
-                    </p>
-                  )}
-                  <ul style={styles.featureList}>
-                    {(plan.features || []).map((f) => (
-                      <li key={f} style={styles.featureItem}>
-                        ✓ {f}
-                      </li>
-                    ))}
-                  </ul>
-                  <button
-                    onClick={() => handleSubscribe(plan.key)}
-                    disabled={isSubscribing}
-                    style={{
-                      ...styles.primaryBtn,
-                      background: isSubscribing ? '#babfc3' : '#008060',
-                      cursor: isSubscribing ? 'not-allowed' : 'pointer',
-                    }}
-                  >
-                    {isSubscribing ? '⏳ Redirecting...' : 'Start Free Trial'}
-                  </button>
-                </div>
-              ))}
-            </div>
-          )}
+  //         {plans.length === 0 ? (
+  //           <div style={styles.errorBox}>
+  //             No plans available. Please try again later.
+  //           </div>
+  //         ) : (
+  //           <div style={styles.grid}>
+  //             {plans.map((plan) => (
+  //               <div key={plan.key} style={styles.planCard}>
+  //                 <h3 style={styles.planName}>{plan.name}</h3>
+  //                 <p style={styles.planPrice}>
+  //                   ${plan.price}
+  //                   <span style={styles.planPriceUnit}>/month</span>
+  //                 </p>
+  //                 {plan.trial_days > 0 && (
+  //                   <p style={styles.trialText}>
+  //                     {plan.trial_days}-day free trial
+  //                   </p>
+  //                 )}
+  //                 <ul style={styles.featureList}>
+  //                   {(plan.features || []).map((f) => (
+  //                     <li key={f} style={styles.featureItem}>
+  //                       ✓ {f}
+  //                     </li>
+  //                   ))}
+  //                 </ul>
+  //                 <button
+  //                   onClick={() => handleSubscribe(plan.key)}
+  //                   disabled={isSubscribing}
+  //                   style={{
+  //                     ...styles.primaryBtn,
+  //                     background: isSubscribing ? '#babfc3' : '#008060',
+  //                     cursor: isSubscribing ? 'not-allowed' : 'pointer',
+  //                   }}
+  //                 >
+  //                   {isSubscribing ? '⏳ Redirecting...' : 'Start Free Trial'}
+  //                 </button>
+  //               </div>
+  //             ))}
+  //           </div>
+  //         )}
 
-          {message && (
-            <div style={styles.errorBox}>{message.text}</div>
-          )}
-        </div>
-      </div>
-    )
-  }
+  //         {message && (
+  //           <div style={styles.errorBox}>{message.text}</div>
+  //         )}
+  //       </div>
+  //     </div>
+  //   )
+  // }
 
   // ========================================
   // Main app — subscription active
