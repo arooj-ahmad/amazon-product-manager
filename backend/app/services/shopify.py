@@ -22,6 +22,10 @@ logger = logging.getLogger(__name__)
 # OAUTH: AUTH URL BANAO
 # ============================================
 def build_auth_url(shop: str, state: str = "default") -> str:
+    """
+    Shopify OAuth authorization URL banata hai.
+    Merchant is URL par jaakar app install karega.
+    """
     params = {
         "client_id": settings.SHOPIFY_API_KEY,
         "scope": settings.SHOPIFY_SCOPES,
@@ -35,6 +39,10 @@ def build_auth_url(shop: str, state: str = "default") -> str:
 # OAUTH: HMAC VERIFY KARO
 # ============================================
 def verify_hmac(query_params: dict) -> bool:
+    """
+    Shopify se aane wale OAuth callback ka HMAC verify karta hai.
+    Security ke liye zaroori hai.
+    """
     received_hmac = query_params.get("hmac")
     if not received_hmac:
         return False
@@ -52,10 +60,17 @@ def verify_hmac(query_params: dict) -> bool:
 
 
 # ============================================
-# ID TOKEN VERIFY KARO
+# ID TOKEN VERIFY KARO (Strict Mode)
 # ============================================
 def verify_id_token(token: str) -> dict:
+    """
+    Shopify ID token (JWT) verify karta hai.
+    Strict mode — saare claims check hote hain.
+
+    Ye token App Bridge se aata hai jab iframe se API call hoti hai.
+    """
     try:
+        # JWT decode with secret + audience verification
         payload = jwt.decode(
             token,
             settings.SHOPIFY_API_SECRET,
@@ -64,20 +79,43 @@ def verify_id_token(token: str) -> dict:
         )
 
         now = int(time.time())
+
+        # ----------------------------------------
+        # Expiry check
+        # ----------------------------------------
         if payload.get("exp", 0) < now:
             raise ValueError("Token expired")
 
         if payload.get("nbf", 0) > now:
             raise ValueError("Token not yet valid")
 
+        # ----------------------------------------
+        # Issuer check
+        # ----------------------------------------
         iss = payload.get("iss", "")
-        dest = payload.get("dest", "")
-        if iss and dest:
-            iss_domain = iss.replace("https://", "").split("/")[0]
-            dest_domain = dest.replace("https://", "").split("/")[0]
-            if iss_domain != dest_domain:
-                raise ValueError("Domain mismatch")
+        if not iss.startswith("https://"):
+            raise ValueError("Invalid issuer")
 
+        # ----------------------------------------
+        # Domain match check
+        # ----------------------------------------
+        iss_domain = iss.replace("https://", "").split("/")[0]
+        dest_domain = (
+            payload.get("dest", "")
+            .replace("https://", "")
+            .split("/")[0]
+        )
+
+        if iss_domain != dest_domain:
+            raise ValueError("Domain mismatch")
+
+        # ----------------------------------------
+        # Must be a .myshopify.com store
+        # ----------------------------------------
+        if not iss_domain.endswith(".myshopify.com"):
+            raise ValueError("Not a valid Shopify store")
+
+        logger.info(f"ID token verified for: {iss_domain}")
         return payload
 
     except jwt.ExpiredSignatureError:
@@ -90,12 +128,18 @@ def verify_id_token(token: str) -> dict:
 # OAUTH: ACCESS TOKEN EXCHANGE
 # ============================================
 async def exchange_code_for_token(shop: str, code: str) -> Optional[str]:
+    """
+    OAuth code ko access token se exchange karta hai.
+    Ye token permanent hai — DB mein save karna hai.
+    """
     url = f"https://{shop}/admin/oauth/access_token"
+
     payload = {
         "client_id": settings.SHOPIFY_API_KEY,
         "client_secret": settings.SHOPIFY_API_SECRET,
         "code": code,
     }
+
     try:
         async with httpx.AsyncClient(timeout=30.0) as client:
             response = await client.post(url, json=payload)
@@ -116,11 +160,19 @@ async def shopify_graphql(
     query: str,
     variables: dict = None,
 ) -> dict:
-    url = f"https://{shop}/admin/api/{settings.SHOPIFY_API_VERSION}/graphql.json"
+    """
+    Shopify Admin GraphQL API ko call karta hai.
+    """
+    url = (
+        f"https://{shop}/admin/api/"
+        f"{settings.SHOPIFY_API_VERSION}/graphql.json"
+    )
+
     headers = {
         "X-Shopify-Access-Token": access_token,
         "Content-Type": "application/json",
     }
+
     payload = {"query": query}
     if variables:
         payload["variables"] = variables
@@ -136,8 +188,8 @@ async def shopify_graphql(
 
 
 # ============================================
-# PRODUCT CREATE KARO (GraphQL) — Simple
-# Product create karo, phir variant query se lo
+# PRODUCT CREATE KARO (GraphQL)
+# 2-Step: Create product + Update price
 # ============================================
 async def create_shopify_product(
     shop: str,
@@ -145,12 +197,14 @@ async def create_shopify_product(
     product_data: dict,
 ) -> dict:
     """
-    Product create karta hai, phir alag query se variant lo
-    aur price update karo.
+    Shopify mein naya product create karta hai.
+    Step 1: Product create (bina variants)
+    Step 2: Variant ka price update
+    Step 3: Images add
     """
 
     # ========================================
-    # Step 1: Product create (simple, no variants)
+    # STEP 1: Product create
     # ========================================
     mutation_create = """
     mutation productCreate($input: ProductCreateInput!) {
@@ -179,6 +233,7 @@ async def create_shopify_product(
         shop, access_token, mutation_create, {"input": input_data}
     )
 
+    # Check GraphQL errors
     if "errors" in result:
         logger.error(f"❌ Product create error: {result['errors']}")
         return result
@@ -197,7 +252,7 @@ async def create_shopify_product(
     logger.info(f"   Product ID: {product_id}")
 
     # ========================================
-    # Step 2: Variant fetch karo (alag query)
+    # STEP 2: Price update (variant)
     # ========================================
     price_value = product_data.get("price", "0.00")
     try:
@@ -208,7 +263,7 @@ async def create_shopify_product(
     logger.info(f"   Target price: ${price_float}")
 
     if product_id and price_float > 0:
-        # Variant query
+        # Variant query — pehla variant dhundo
         query_variants = """
         query getProductVariants($id: ID!) {
           product(id: $id) {
@@ -242,12 +297,16 @@ async def create_shopify_product(
             variant_id = variants_data[0]["node"]["id"]
             logger.info(f"   Variant ID: {variant_id}")
 
-            # ========================================
-            # Step 3: Price update karo
-            # ========================================
+            # Price update mutation
             mutation_update = """
-            mutation productVariantsBulkUpdate($productId: ID!, $variants: [ProductVariantsBulkInput!]!) {
-              productVariantsBulkUpdate(productId: $productId, variants: $variants) {
+            mutation productVariantsBulkUpdate(
+              $productId: ID!,
+              $variants: [ProductVariantsBulkInput!]!
+            ) {
+              productVariantsBulkUpdate(
+                productId: $productId,
+                variants: $variants
+              ) {
                 productVariants {
                   id
                   price
@@ -276,8 +335,6 @@ async def create_shopify_product(
                 shop, access_token, mutation_update, variables_update
             )
 
-            logger.info(f"   Update result: {update_result}")
-
             update_errors = (
                 update_result.get("data", {})
                 .get("productVariantsBulkUpdate", {})
@@ -299,7 +356,7 @@ async def create_shopify_product(
             logger.warning("⚠️ No variants found after create")
 
     # ========================================
-    # Step 4: Images add karo
+    # STEP 3: Images add karo
     # ========================================
     images = product_data.get("images", [])
     if product_id and images:
@@ -318,7 +375,7 @@ async def create_shopify_product(
 
 
 # ============================================
-# PRODUCT IMAGES ADD KARO
+# PRODUCT IMAGES ADD KARO (Media API)
 # ============================================
 async def add_product_images(
     shop: str,
@@ -326,8 +383,14 @@ async def add_product_images(
     product_id: str,
     image_urls: list,
 ) -> dict:
+    """
+    Product ke liye images add karta hai (Shopify Media API se).
+    """
     mutation = """
-    mutation productCreateMedia($productId: ID!, $media: [CreateMediaInput!]!) {
+    mutation productCreateMedia(
+      $productId: ID!,
+      $media: [CreateMediaInput!]!
+    ) {
       productCreateMedia(productId: $productId, media: $media) {
         media {
           ... on MediaImage {

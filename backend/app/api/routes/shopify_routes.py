@@ -227,63 +227,79 @@ async def push_product_to_shopify(
 
 # ============================================
 # ADD PRODUCT FROM SHOPIFY APP (Iframe Se)
-# TESTING MODE: ID token verification temporarily disabled
+# PRODUCTION MODE: ID token verification ENABLED
 # ============================================
 @router.post("/app/add-product")
 async def add_product_from_shopify_app(
     amazon_url: str = Body(..., embed=True),
-    authorization: str = Header(None),  # Optional now
+    authorization: str = Header(...),  # ⚠️ REQUIRED now
     db: Session = Depends(get_db),
 ):
     """
     Shopify App ke iframe se product add karta hai.
-
-    ⚠️ TESTING MODE: ID token verification temporarily disabled.
-    Production mein wapas enable karenge.
+    ID token verify karta hai — sirf authorized store hi access kar sakta hai.
     """
-    shop_domain = ""
+    # ========================================
+    # Step 1: Authorization header check
+    # ========================================
+    if not authorization or not authorization.startswith("Bearer "):
+        raise HTTPException(
+            status_code=401,
+            detail="Missing or invalid authorization header",
+        )
+
+    token = authorization.replace("Bearer ", "").strip()
+
+    if not token:
+        raise HTTPException(
+            status_code=401,
+            detail="Empty ID token",
+        )
 
     # ========================================
-    # Token verification (agar token hai toh)
+    # Step 2: ID Token verify karo
     # ========================================
-    if authorization and authorization.startswith("Bearer "):
-        token = authorization.replace("Bearer ", "")
-
-        if token.strip():  # Non-empty token
-            try:
-                payload = verify_id_token(token)
-                dest = payload.get("dest", "")
-                shop_domain = dest.replace("https://", "").split("/")[0]
-                logger.info(f"✅ Shopify App request from (verified): {shop_domain}")
-            except ValueError as e:
-                logger.warning(f"⚠️ ID token verify fail: {e}")
+    try:
+        payload = verify_id_token(token)
+        logger.info(f"✅ ID token verified successfully")
+    except ValueError as e:
+        logger.error(f"❌ ID token verify fail: {e}")
+        raise HTTPException(
+            status_code=401,
+            detail=f"Invalid ID token: {str(e)}",
+        )
 
     # ========================================
-    # Fallback: DB se pehla store use karo (TESTING)
+    # Step 3: Shop domain nikalo payload se
     # ========================================
+    dest = payload.get("dest", "")
+    shop_domain = dest.replace("https://", "").split("/")[0]
+
     if not shop_domain:
-        logger.info("🔧 TESTING MODE: Using first store from database")
+        raise HTTPException(
+            status_code=401,
+            detail="Shop domain missing from token",
+        )
 
-        first_store = db.query(ShopifyStore).first()
-        if not first_store:
-            raise HTTPException(
-                status_code=404,
-                detail="No Shopify store connected. Please install the app first.",
-            )
-        shop_domain = first_store.shop_domain
-        logger.info(f"Using fallback store: {shop_domain}")
+    logger.info(f"✅ Verified Shopify request from: {shop_domain}")
 
-    # Store dhundo
+    # ========================================
+    # Step 4: Store dhundo DB mein
+    # ========================================
     store = (
         db.query(ShopifyStore)
         .filter(ShopifyStore.shop_domain == shop_domain)
         .first()
     )
+
     if not store:
-        raise HTTPException(status_code=404, detail="Store not connected")
+        raise HTTPException(
+            status_code=404,
+            detail=f"Store {shop_domain} not connected. Please reinstall the app.",
+        )
 
     # ========================================
-    # Bright Data se fetch karo
+    # Step 5: Bright Data se fetch karo
     # ========================================
     try:
         data = await fetch_product_from_brightdata(amazon_url)
@@ -310,7 +326,9 @@ async def add_product_from_shopify_app(
         markup=markup,
     )
 
-    # Naya product Supabase mein save karo
+    # ========================================
+    # Step 6: Supabase mein save karo
+    # ========================================
     new_product = Product(
         asin=asin,
         parent_asin=data["parent_asin"],
@@ -331,10 +349,10 @@ async def add_product_from_shopify_app(
     db.commit()
     db.refresh(new_product)
 
-    logger.info(f"Product saved to Supabase: {asin}")
+    logger.info(f"✅ Product saved to Supabase: {asin}")
 
     # ========================================
-    # Shopify mein bhi push karo
+    # Step 7: Shopify mein push karo
     # ========================================
     shopify_pushed = False
     try:
@@ -368,6 +386,7 @@ async def add_product_from_shopify_app(
         "product_id": new_product.id,
         "asin": asin,
         "shopify_pushed": shopify_pushed,
+        "shop_domain": shop_domain,
     }
 
 
