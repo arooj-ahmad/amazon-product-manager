@@ -3,7 +3,7 @@
 // Final routes — user + admin + Footer
 // ============================================
 
-import { BrowserRouter, Routes, Route } from 'react-router-dom'
+import { BrowserRouter, Routes, Route, useLocation } from 'react-router-dom'
 import Navbar from './components/Navbar'
 import Footer from './components/Footer'
 import ProtectedRoute from './components/ProtectedRoute'
@@ -18,74 +18,97 @@ import Dashboard from './pages/admin/Dashboard'
 import ProductEdit from './pages/admin/ProductEdit'
 
 import ShopifyApp from './pages/ShopifyApp'
+import MarkupSettings from './pages/MarkupSettings'
+
+// ✅ NAYA — Layout wrapper jo decide kare Navbar/Footer dikhaye ya nahi
+function Layout({ children }) {
+  const location = useLocation()
+
+  // Yeh routes pe Navbar/Footer NAHI dikhayenge (full-screen)
+  const FULL_SCREEN_ROUTES = ['/markup-settings', '/shopify-app']
+  const isFullScreen = FULL_SCREEN_ROUTES.some((path) =>
+    location.pathname.startsWith(path)
+  )
+
+  if (isFullScreen) {
+    // Full screen — sirf content, no navbar/footer
+    return <>{children}</>
+  }
+
+  // Normal layout — Navbar + Footer
+  return (
+    <div className="flex flex-col min-h-screen">
+      <Navbar />
+      <main className="flex-1">{children}</main>
+      <Footer />
+    </div>
+  )
+}
 
 function App() {
   return (
     <BrowserRouter>
-      <div className="flex flex-col min-h-screen">
-        <Navbar />
+      <Layout>
+        <Routes>
+          {/* USER ROUTES */}
+          <Route path="/" element={<Home />} />
 
-        <main className="flex-1">
-          <Routes>
-            {/* USER ROUTES */}
-            <Route path="/" element={<Home />} />
+          {/* MARKUP SETTINGS — full screen */}
+          <Route path="/markup-settings" element={<MarkupSettings />} />
 
-            {/* Product by slug */}
-            <Route path="/product/:slug" element={<ProductDetail />} />
+          {/* Product by slug */}
+          <Route path="/product/:slug" element={<ProductDetail />} />
 
-            {/* Product by ID (fallback) */}
-            <Route path="/product/id/:id" element={<ProductDetail />} />
+          {/* Product by ID (fallback) */}
+          <Route path="/product/id/:id" element={<ProductDetail />} />
 
-            {/* ADMIN ROUTES */}
-            <Route path="/admin/login" element={<Login />} />
-            <Route path="/shopify-app" element={<ShopifyApp />} />
+          {/* ADMIN ROUTES */}
+          <Route path="/admin/login" element={<Login />} />
+          <Route path="/shopify-app" element={<ShopifyApp />} />
 
-            <Route
-              path="/admin/dashboard"
-              element={
-                <ProtectedRoute>
-                  <Dashboard />
-                </ProtectedRoute>
-              }
-            />
+          <Route
+            path="/admin/dashboard"
+            element={
+              <ProtectedRoute>
+                <Dashboard />
+              </ProtectedRoute>
+            }
+          />
 
-            <Route
-              path="/admin/edit/:id"
-              element={
-                <ProtectedRoute>
-                  <ProductEdit />
-                </ProtectedRoute>
-              }
-            />
+          <Route
+            path="/admin/edit/:id"
+            element={
+              <ProtectedRoute>
+                <ProductEdit />
+              </ProtectedRoute>
+            }
+          />
 
-            {/* 404 */}
-            <Route
-              path="*"
-              element={
-                <div className="min-h-[60vh] flex items-center justify-center px-4">
-                  <div className="text-center">
-                    <p className="text-6xl mb-4">404</p>
-                    <h1 className="text-3xl font-bold text-gray-800 mb-2">
-                      Page not found
-                    </h1>
-                    <p className="text-gray-600 mb-6">
-                      Jo page aap dhundh rahe hain woh exist nahi karta.
-                    </p>
-                    <a
-                      href="/"
-                      className="inline-block bg-[#ff9900] hover:bg-[#e88b00] text-[#0f1111] font-medium px-6 py-3 rounded-lg transition-colors"
-                    >
-                      ← Back to Home
-                    </a>
-                  </div>
+          {/* 404 */}
+          <Route
+            path="*"
+            element={
+              <div className="min-h-[60vh] flex items-center justify-center px-4">
+                <div className="text-center">
+                  <p className="text-6xl mb-4">404</p>
+                  <h1 className="text-3xl font-bold text-gray-800 mb-2">
+                    Page not found
+                  </h1>
+                  <p className="text-gray-600 mb-6">
+                    Jo page aap dhundh rahe hain woh exist nahi karta.
+                  </p>
+                  <a
+                    href="/"
+                    className="inline-block bg-[#ff9900] hover:bg-[#e88b00] text-[#0f1111] font-medium px-6 py-3 rounded-lg transition-colors"
+                  >
+                    ← Back to Home
+                  </a>
                 </div>
-              }
-            />
-          </Routes>
-        </main>
-
-        <Footer />
-      </div>
+              </div>
+            }
+          />
+        </Routes>
+      </Layout>
     </BrowserRouter>
   )
 }

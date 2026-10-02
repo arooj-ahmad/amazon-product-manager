@@ -70,6 +70,8 @@ async function safeFetch(url, options = {}) {
 // ============================================
 function ShopifyApp() {
   const [amazonUrl, setAmazonUrl] = useState('')
+  const [markup, setMarkup] = useState('2.00')              // ✅ NAYA
+  const [markupType, setMarkupType] = useState('fixed')      // ✅ NAYA
   const [isLoading, setIsLoading] = useState(false)
   const [isSubscribing, setIsSubscribing] = useState(false)
   const [message, setMessage] = useState(null)
@@ -220,6 +222,7 @@ function ShopifyApp() {
 
   // ========================================
   // 4. Add product handler
+  // ✅ NAYA: markup + markup_type bhej raha hai
   // ========================================
   const handleAddProduct = async (e) => {
     e.preventDefault()
@@ -239,7 +242,11 @@ function ShopifyApp() {
             'Content-Type': 'application/json',
             Authorization: `Bearer ${idToken}`,
           },
-          body: JSON.stringify({ amazon_url: amazonUrl.trim() }),
+          body: JSON.stringify({
+            amazon_url: amazonUrl.trim(),
+            markup: parseFloat(markup) || 2.0,        // ✅ NAYA
+            markup_type: markupType,                    // ✅ NAYA
+          }),
         }
       )
 
@@ -273,6 +280,7 @@ function ShopifyApp() {
         text: `✅ ${res.data.message || 'Product added successfully!'}`,
       })
       setAmazonUrl('')
+      setMarkup('2.00')  // ✅ NAYA: default pe reset
       showToast('Product added!')
     } catch (err) {
       setMessage({ type: 'error', text: `❌ ${err.message}` })
@@ -380,6 +388,19 @@ function ShopifyApp() {
               ● {subscription.subscription.name} Active
             </span>
           )}
+
+          {/* ✅ NAYA — Markup Settings link */}
+          <a
+            href="/markup-settings"
+            target="_top"
+            style={{
+              ...styles.badgeInfo,
+              textDecoration: 'none',
+              cursor: 'pointer',
+            }}
+          >
+            ⚙️ Markup Settings
+          </a>
         </div>
 
         <div style={styles.card}>
@@ -400,6 +421,50 @@ function ShopifyApp() {
               }}
             />
 
+            {/* ✅ NAYA — Markup Input */}
+            <label style={styles.label}>
+              Markup — Default $2 (apni marzi se change karein)
+            </label>
+            <div
+              style={{
+                display: 'flex',
+                gap: '8px',
+                marginBottom: '6px',
+              }}
+            >
+              <select
+                value={markupType}
+                onChange={(e) => setMarkupType(e.target.value)}
+                disabled={isLoading}
+                style={{
+                  ...styles.input,
+                  width: '130px',
+                  marginBottom: 0,
+                }}
+              >
+                <option value="fixed">$ Fixed</option>
+                <option value="percent">% Percent</option>
+              </select>
+              <input
+                type="number"
+                step="0.01"
+                min="0"
+                value={markup}
+                onChange={(e) => setMarkup(e.target.value)}
+                placeholder="2.00"
+                disabled={isLoading}
+                style={{
+                  ...styles.input,
+                  flex: 1,
+                  marginBottom: 0,
+                }}
+              />
+            </div>
+            <p style={styles.helpText}>
+              💡 Final price = Amazon price{' '}
+              {markupType === 'percent' ? '× (1 + %/100)' : '+ $'}
+            </p>
+
             <button
               type="submit"
               disabled={isLoading}
@@ -407,6 +472,7 @@ function ShopifyApp() {
                 ...styles.primaryBtn,
                 background: isLoading ? '#babfc3' : '#008060',
                 cursor: isLoading ? 'not-allowed' : 'pointer',
+                marginTop: '12px',
               }}
             >
               {isLoading
@@ -443,6 +509,7 @@ function ShopifyApp() {
           <strong style={{ color: '#202223' }}>💡 How it works:</strong>
           <ol style={{ marginTop: '8px', paddingLeft: '20px' }}>
             <li>Paste any Amazon product URL</li>
+            <li>Set your markup ($ fixed or % percent)</li>
             <li>Click "Fetch &amp; Add"</li>
             <li>We fetch title, images, price, and specs from Amazon</li>
             <li>Product is added to both Supabase and your Shopify store</li>

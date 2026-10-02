@@ -1,9 +1,12 @@
 # ============================================
 # app/models/product.py
-# Product model (SQLAlchemy)
+# Product model — Amazon product data
+# + Out of Stock tracking (NEW)
 # ============================================
 
 from sqlalchemy import (
+    JSON,
+    BigInteger,
     Boolean,
     Column,
     DateTime,
@@ -11,9 +14,8 @@ from sqlalchemy import (
     Integer,
     String,
     Text,
-    JSON,
+    func,
 )
-from sqlalchemy.sql import func
 
 from app.database import Base
 
@@ -21,24 +23,63 @@ from app.database import Base
 class Product(Base):
     __tablename__ = "products"
 
-    id = Column(Integer, primary_key=True, index=True)
-    asin = Column(String(20), unique=True, index=True, nullable=False)
-    parent_asin = Column(String(20), index=True, nullable=True)
-    is_variation = Column(Boolean, default=False)
+    id = Column(BigInteger, primary_key=True, index=True)
 
-    title = Column(String(500))
-    brand = Column(String(200))
-    description = Column(Text)
-    image_url = Column(String(1000))
+    # ----------------------------------------
+    # Amazon Identifiers
+    # ----------------------------------------
+    asin = Column(String(20), unique=True, nullable=False, index=True)
+    parent_asin = Column(String(20), nullable=True)
+    is_variation = Column(Boolean, default=False, nullable=False)
+
+    # ----------------------------------------
+    # Product Details
+    # ----------------------------------------
+    title = Column(String(500), nullable=True)
+    brand = Column(String(200), nullable=True)
+    description = Column(Text, nullable=True)
+    image_url = Column(String(1000), nullable=True)
     images = Column(JSON, default=list)
     specifications = Column(JSON, default=dict)
+    rating = Column(Float, nullable=True)
+    reviews_count = Column(BigInteger, nullable=True)
 
-    amazon_price = Column(Float, nullable=False)
-    price = Column(Float, nullable=False)
-    markup = Column(Float, default=2.0, nullable=False)
-    markup_type = Column(String(10), default="fixed", nullable=False)  # ✅ NAYA
+    # ----------------------------------------
+    # ⚠️ NAYA — Stock Tracking
+    # ----------------------------------------
+    availability = Column(String(100), default="In Stock")
+    is_available = Column(Boolean, default=True)
+    stock_quantity = Column(Integer, default=0)
+    last_synced_at = Column(DateTime(timezone=True), nullable=True)
 
-    is_manual_override = Column(Boolean, default=False)
+    # ----------------------------------------
+    # ⚠️ NAYA — Shopify Product ID (for updates)
+    # ----------------------------------------
+    shopify_product_id = Column(String(255), nullable=True)
+    shopify_handle = Column(String(255), nullable=True)
 
+    # ----------------------------------------
+    # Pricing
+    # ----------------------------------------
+    amazon_price = Column(Float, nullable=True)
+    price = Column(Float, nullable=True)
+    markup = Column(Float, default=2.0)
+    markup_type = Column(String(20), default="fixed")
+
+    # ----------------------------------------
+    # Manual Override
+    # ----------------------------------------
+    is_manual_override = Column(Boolean, default=False, nullable=False)
+
+    # ----------------------------------------
+    # Timestamps
+    # ----------------------------------------
     created_at = Column(DateTime(timezone=True), server_default=func.now())
-    updated_at = Column(DateTime(timezone=True), onupdate=func.now())
+    updated_at = Column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        onupdate=func.now(),
+    )
+
+    def __repr__(self):
+        return f"<Product id={self.id} asin={self.asin}>"

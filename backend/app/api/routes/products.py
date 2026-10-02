@@ -1,8 +1,11 @@
 # ============================================
 # app/api/routes/products.py
 # Product CRUD + Variation grouping + Slug
-# + Markup Settings endpoints (NEW)
+# + Markup Settings endpoints
+# + Out of Stock tracking (NEW)
 # ============================================
+
+from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import or_
@@ -256,11 +259,18 @@ async def admin_fetch_product(
         image_url=data["image_url"],
         images=data.get("images", []),
         specifications=data.get("specifications", {}),
+        rating=data.get("rating"),
+        reviews_count=data.get("reviews_count"),
         amazon_price=data["amazon_price"],
         price=final_price,
         markup=user_markup,
         markup_type=user_markup_type,
         is_manual_override=False,
+        # ✅ NAYA — Out of Stock tracking
+        availability=data.get("availability", "In Stock"),
+        is_available=data.get("is_available", True),
+        stock_quantity=data.get("stock_quantity", 0),
+        last_synced_at=datetime.now(timezone.utc),
     )
 
     db.add(new_product)

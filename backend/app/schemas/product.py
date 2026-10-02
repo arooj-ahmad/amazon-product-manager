@@ -1,6 +1,7 @@
 # ============================================
 # app/schemas/product.py
 # Product ke liye Pydantic schemas
+# + Out of Stock tracking (NEW)
 # ============================================
 
 from datetime import datetime
@@ -22,6 +23,11 @@ class ProductBase(BaseModel):
     markup: float = Field(default=2.0, ge=0)
     markup_type: str = Field(default="fixed", description="'fixed' or 'percent'")
 
+    # ✅ NAYA — Stock Tracking
+    availability: Optional[str] = "In Stock"
+    is_available: bool = True
+    stock_quantity: int = 0
+
 
 # ============================================
 # RESPONSE SCHEMA
@@ -34,6 +40,16 @@ class ProductResponse(ProductBase):
     is_manual_override: bool
     images: List[str] = []
     specifications: Dict[str, str] = {}
+    rating: Optional[float] = None
+    reviews_count: Optional[int] = None
+
+    # ✅ NAYA — Stock Tracking
+    last_synced_at: Optional[datetime] = None
+
+    # ✅ NAYA — Shopify fields
+    shopify_product_id: Optional[str] = None
+    shopify_handle: Optional[str] = None
+
     created_at: datetime
     updated_at: Optional[datetime] = None
 
@@ -67,9 +83,14 @@ class ProductUpdate(BaseModel):
     markup: Optional[float] = Field(None, ge=0)
     markup_type: Optional[Literal["fixed", "percent"]] = None
 
+    # ✅ NAYA — Stock Tracking (admin manually bhi change kar sakta hai)
+    availability: Optional[str] = None
+    is_available: Optional[bool] = None
+    stock_quantity: Optional[int] = None
+
 
 # ============================================
-# MARKUP UPDATE SCHEMA (NEW — Settings page ke liye)
+# MARKUP UPDATE SCHEMA (Settings page ke liye)
 # ============================================
 class MarkupUpdate(BaseModel):
     markup: float = Field(..., ge=0, description="Markup value")
@@ -88,7 +109,7 @@ class ProductFetchResponse(BaseModel):
 
 
 # ============================================
-# LIST RESPONSE (Purana — simple list)
+# LIST RESPONSE (Simple list)
 # ============================================
 class ProductListResponse(BaseModel):
     total: int
@@ -96,7 +117,7 @@ class ProductListResponse(BaseModel):
 
 
 # ============================================
-# VARIANT GROUP (NEW)
+# VARIANT GROUP
 # ============================================
 class VariantGroup(BaseModel):
     """Ek product group — parent + uske saare variants"""

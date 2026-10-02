@@ -1,9 +1,11 @@
 # ============================================
 # app/services/scheduler.py
 # Har 24 ghante Amazon se fresh prices fetch karne wala scheduler
+# + Out of Stock tracking (NEW)
 # ============================================
 
 import logging
+from datetime import datetime, timezone
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.interval import IntervalTrigger
@@ -44,6 +46,8 @@ async def update_all_prices():
         updated_count = 0
         skipped_count = 0
         error_count = 0
+        out_of_stock_count = 0
+        back_in_stock_count = 0
 
         for product in products:
             # Manual override wale skip karo
@@ -58,8 +62,34 @@ async def update_all_prices():
 
                 new_amazon_price = data["amazon_price"]
 
+                # ========================================
+                # ✅ NAYA: Availability update karo (PEHLE)
+                # ========================================
+                old_availability = product.is_available
+                new_availability = data.get("is_available", True)
+
+                product.availability = data.get("availability", "In Stock")
+                product.is_available = new_availability
+                product.stock_quantity = data.get("stock_quantity", 0)
+                product.last_synced_at = datetime.now(timezone.utc)
+
+                # Log availability change
+                if old_availability != new_availability:
+                    if new_availability:
+                        logger.info(f"✅ [BACK IN STOCK] ASIN={product.asin}")
+                        back_in_stock_count += 1
+                    else:
+                        logger.warning(f"❌ [OUT OF STOCK] ASIN={product.asin}")
+                        out_of_stock_count += 1
+
+                # ========================================
+                # Price check (availability ke BAAD)
+                # ========================================
                 if new_amazon_price is None:
                     logger.warning(f"[WARN] ASIN={product.asin} — price nahi mila")
+                    # Availability to save karo, chahe price na mile
+                    db.commit()
+                    db.refresh(product)
                     error_count += 1
                     continue
 
@@ -67,8 +97,12 @@ async def update_all_prices():
                 if product.amazon_price == new_amazon_price:
                     logger.info(
                         f"[NO CHANGE] ASIN={product.asin} "
-                        f"(price: ${new_amazon_price})"
+                        f"(price: ${new_amazon_price}, "
+                        f"available: {new_availability})"
                     )
+                    # ✅ Availability save karo chahe price same ho
+                    db.commit()
+                    db.refresh(product)
                     continue
 
                 old_price = product.price
@@ -77,9 +111,10 @@ async def update_all_prices():
                 new_final_price = calculate_final_price(
                     amazon_price=new_amazon_price,
                     markup=product.markup or 2.0,
+                    markup_type=product.markup_type or "fixed",
                 )
 
-                # Update
+                # Update price
                 product.amazon_price = new_amazon_price
                 product.price = new_final_price
 
@@ -94,7 +129,7 @@ async def update_all_prices():
                     data.get("specifications")
                     and data["specifications"] != product.specifications
                 ):
-                    product.specifications = data["specifications"]   # ← NEW
+                    product.specifications = data["specifications"]
 
                 db.commit()
                 db.refresh(product)
@@ -102,7 +137,8 @@ async def update_all_prices():
                 logger.info(
                     f"[UPDATED] ASIN={product.asin} "
                     f"amazon: ${old_amazon} → ${new_amazon_price}, "
-                    f"final: ${old_price} → ${new_final_price}"
+                    f"final: ${old_price} → ${new_final_price}, "
+                    f"available: {old_availability} → {new_availability}"
                 )
                 updated_count += 1
 
@@ -120,7 +156,9 @@ async def update_all_prices():
             f"PRICE UPDATE COMPLETE — "
             f"Updated: {updated_count}, "
             f"Skipped: {skipped_count}, "
-            f"Errors: {error_count}"
+            f"Errors: {error_count}, "
+            f"Out of Stock: {out_of_stock_count}, "
+            f"Back in Stock: {back_in_stock_count}"
         )
         logger.info("=" * 60)
 

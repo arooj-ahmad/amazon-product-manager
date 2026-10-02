@@ -1,6 +1,7 @@
 # ============================================
 # app/services/brightdata.py
 # Bright Data Scraper API se Amazon data fetch karne ke liye
+# + Out of Stock tracking (NEW)
 # ============================================
 
 import logging
@@ -157,6 +158,42 @@ async def fetch_product_from_brightdata(amazon_url: str) -> dict:
         main_image = unique_images[0]
 
     # ----------------------------------------
+    # ✅ NAYA: Availability extract karo
+    # ----------------------------------------
+    availability_text = (
+        raw.get("availability")
+        or raw.get("availabilityText")
+        or raw.get("availability_text")
+        or "In Stock"
+    )
+
+    # Check karo out of stock hai ya nahi
+    is_available = True
+    stock_quantity = 0
+
+    if isinstance(availability_text, bool):
+        is_available = availability_text
+    elif isinstance(availability_text, str):
+        avail_lower = availability_text.lower()
+        # Out of stock keywords
+        out_of_stock_keywords = [
+            "out of stock",
+            "unavailable",
+            "currently unavailable",
+            "not available",
+            "sold out",
+            "temporarily out",
+        ]
+        is_available = not any(kw in avail_lower for kw in out_of_stock_keywords)
+
+    # Stock quantity (agar Bright Data deta hai)
+    stock_quantity = raw.get("stock_quantity") or raw.get("stock") or 0
+    try:
+        stock_quantity = int(stock_quantity) if stock_quantity else 0
+    except (ValueError, TypeError):
+        stock_quantity = 0
+
+    # ----------------------------------------
     # Specifications extract karo
     # ----------------------------------------
     specs = {}
@@ -175,7 +212,7 @@ async def fetch_product_from_brightdata(amazon_url: str) -> dict:
     extra_fields = {
         "Rating": raw.get("rating"),
         "Reviews": raw.get("reviews_count"),
-        "Availability": raw.get("availability"),
+        "Availability": availability_text,
         "Seller": raw.get("seller_name") or raw.get("buybox_seller"),
         "Category": (
             raw.get("categories", [None])[-1]
@@ -190,7 +227,8 @@ async def fetch_product_from_brightdata(amazon_url: str) -> dict:
 
     logger.info(
         f"Parsed product: ASIN={asin}, Price=${amazon_price}, "
-        f"Images={len(unique_images)}, Specs={len(specs)}"
+        f"Images={len(unique_images)}, Specs={len(specs)}, "
+        f"Availability={availability_text}, Available={is_available}"
     )
 
     return {
@@ -204,6 +242,10 @@ async def fetch_product_from_brightdata(amazon_url: str) -> dict:
         "images": unique_images,
         "specifications": specs,
         "description": raw.get("description"),
+        
+        "availability": str(availability_text),
+        "is_available": is_available,
+        "stock_quantity": stock_quantity,
     }
 
 

@@ -1,6 +1,7 @@
 // ============================================
 // frontend/src/components/ProductCard.jsx
 // Amazon-style product card (clean — no dummy data)
+// + Out of Stock tracking (NEW)
 // ============================================
 
 import { Link } from 'react-router-dom'
@@ -15,6 +16,9 @@ function ProductCard({ product, totalVariants = 1 }) {
         )
       : 0
 
+  // ✅ NAYA — Out of stock check
+  const isOutOfStock = product.is_available === false
+
   return (
     <Link
       to={productUrl(product)}
@@ -28,7 +32,9 @@ function ProductCard({ product, totalVariants = 1 }) {
           <img
             src={product.image_url}
             alt={product.title || 'Product'}
-            className="w-full h-full object-contain group-hover:scale-105 transition-transform duration-300"
+            className={`w-full h-full object-contain transition-transform duration-300 ${
+              isOutOfStock ? 'opacity-50' : 'group-hover:scale-105'
+            }`}
             loading="lazy"
           />
         ) : (
@@ -37,15 +43,22 @@ function ProductCard({ product, totalVariants = 1 }) {
           </div>
         )}
 
+        {/* ✅ NAYA — Out of Stock badge */}
+        {isOutOfStock && (
+          <span className="absolute top-2 right-2 bg-[#cc0c39] text-white text-xs font-bold px-2 py-1 rounded">
+            OUT OF STOCK
+          </span>
+        )}
+
         {/* Variants badge */}
-        {totalVariants > 1 && (
+        {totalVariants > 1 && !isOutOfStock && (
           <span className="absolute top-2 left-2 bg-[#232f3e] text-white text-[10px] font-medium px-2 py-0.5 rounded">
             {totalVariants} variants
           </span>
         )}
 
         {/* Discount badge */}
-        {discount > 0 && (
+        {discount > 0 && !isOutOfStock && (
           <span className="absolute top-2 right-2 bg-[#cc0c39] text-white text-xs font-bold px-2 py-1 rounded">
             -{discount}%
           </span>
@@ -74,7 +87,7 @@ function ProductCard({ product, totalVariants = 1 }) {
             <span className="text-xl font-bold text-[#0f1111]">
               ${product.price?.toFixed(2) || '0.00'}
             </span>
-            {discount > 0 && (
+            {discount > 0 && !isOutOfStock && (
               <span className="text-xs text-gray-500 line-through">
                 ${product.amazon_price?.toFixed(2)}
               </span>
@@ -85,13 +98,20 @@ function ProductCard({ product, totalVariants = 1 }) {
         {/* CTA Button */}
         <button
           type="button"
+          disabled={isOutOfStock}
           onClick={(e) => {
             e.preventDefault()
-            window.location.href = productUrl(product)
+            if (!isOutOfStock) {
+              window.location.href = productUrl(product)
+            }
           }}
-          className="mt-3 w-full bg-[#ffd814] hover:bg-[#f7ca00] text-[#0f1111] text-sm font-medium py-2 rounded-full transition-colors"
+          className={`mt-3 w-full text-sm font-medium py-2 rounded-full transition-colors ${
+            isOutOfStock
+              ? 'bg-gray-300 text-gray-500 cursor-not-allowed'
+              : 'bg-[#ffd814] hover:bg-[#f7ca00] text-[#0f1111]'
+          }`}
         >
-          See Options
+          {isOutOfStock ? 'Out of Stock' : 'See Options'}
         </button>
       </div>
     </Link>
