@@ -4,7 +4,7 @@
 # ============================================
 
 from datetime import datetime
-from typing import Dict, List, Optional
+from typing import Dict, List, Literal, Optional
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -20,6 +20,7 @@ class ProductBase(BaseModel):
     amazon_price: Optional[float] = Field(None, ge=0)
     price: Optional[float] = Field(None, ge=0)
     markup: float = Field(default=2.0, ge=0)
+    markup_type: str = Field(default="fixed", description="'fixed' or 'percent'")
 
 
 # ============================================
@@ -44,6 +45,12 @@ class ProductResponse(ProductBase):
 # ============================================
 class ProductCreate(BaseModel):
     amazon_url: str = Field(..., description="Amazon product URL")
+    markup: Optional[float] = Field(
+        2.0, ge=0, description="Markup value (dollar or percent)"
+    )
+    markup_type: Optional[Literal["fixed", "percent"]] = Field(
+        "fixed", description="'fixed' = dollars, 'percent' = percentage"
+    )
 
 
 # ============================================
@@ -58,6 +65,17 @@ class ProductUpdate(BaseModel):
     specifications: Optional[Dict[str, str]] = None
     price: Optional[float] = Field(None, ge=0)
     markup: Optional[float] = Field(None, ge=0)
+    markup_type: Optional[Literal["fixed", "percent"]] = None
+
+
+# ============================================
+# MARKUP UPDATE SCHEMA (NEW — Settings page ke liye)
+# ============================================
+class MarkupUpdate(BaseModel):
+    markup: float = Field(..., ge=0, description="Markup value")
+    markup_type: Literal["fixed", "percent"] = Field(
+        "fixed", description="'fixed' or 'percent'"
+    )
 
 
 # ============================================

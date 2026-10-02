@@ -1,6 +1,7 @@
 # ============================================
 # app/api/routes/products.py
 # Product CRUD + Variation grouping + Slug
+# + Markup Settings endpoints (NEW)
 # ============================================
 
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -11,6 +12,7 @@ from app.api.routes.auth import get_current_admin
 from app.database import get_db
 from app.models import Admin, Product
 from app.schemas import (
+    MarkupUpdate,
     ProductCreate,
     ProductFetchResponse,
     ProductListResponse,
@@ -34,10 +36,7 @@ router = APIRouter(prefix="/api", tags=["Products"])
 
 @router.get("/products", response_model=VariantGroupListResponse)
 def get_all_products(db: Session = Depends(get_db)):
-    """
-    Saare products — variations ko GROUP karke.
-    Ek group = ek card on home page.
-    """
+    """Saare products — variations ko GROUP karke."""
     all_products = db.query(Product).order_by(Product.created_at.desc()).all()
 
     groups = {}
@@ -91,16 +90,9 @@ def get_all_products(db: Session = Depends(get_db)):
 # ⚠️ SLUG ENDPOINT — numeric se PEHLE
 @router.get("/products/slug/{slug}", response_model=ProductResponse)
 def get_product_by_slug(slug: str, db: Session = Depends(get_db)):
-    """
-    Product ko slug se fetch karo.
-    Multiple fallback methods — exact match → word match → partial match.
-    """
     import re
 
-    # ========================================
-    # METHOD 1: Full phrase match
-    # "eky-16-inch-laptop" -> "%eky 16 inch laptop%"
-    # ========================================
+    # METHOD 1: Full phrase
     search_phrase = slug.replace('-', ' ').lower()
     product = (
         db.query(Product)
@@ -111,10 +103,7 @@ def get_product_by_slug(slug: str, db: Session = Depends(get_db)):
     if product:
         return product
 
-    # ========================================
-    # METHOD 2: Word-by-word match
-    # "eky-16-inch-laptop" -> "%eky%16%inch%laptop%"
-    # ========================================
+    # METHOD 2: Word-by-word
     parts = [p.strip() for p in slug.lower().split('-') if p.strip()]
     parts = [re.escape(p) for p in parts if len(p) >= 2]
 
@@ -129,9 +118,7 @@ def get_product_by_slug(slug: str, db: Session = Depends(get_db)):
         if product:
             return product
 
-    # ========================================
-    # METHOD 3: First 6 words only (long slugs ke liye)
-    # ========================================
+    # METHOD 3: First 6 words
     if len(parts) > 6:
         short_pattern = '%' + '%'.join(parts[:6]) + '%'
         product = (
@@ -143,9 +130,7 @@ def get_product_by_slug(slug: str, db: Session = Depends(get_db)):
         if product:
             return product
 
-    # ========================================
-    # METHOD 4: First 3 words only (loose match)
-    # ========================================
+    # METHOD 4: First 3 words
     if len(parts) > 3:
         loose_pattern = '%' + '%'.join(parts[:3]) + '%'
         product = (
@@ -165,7 +150,6 @@ def get_product_by_slug(slug: str, db: Session = Depends(get_db)):
 
 @router.get("/products/{product_id}", response_model=ProductResponse)
 def get_product(product_id: int, db: Session = Depends(get_db)):
-    """Ek product ki detail (numeric ID se)."""
     product = db.query(Product).filter(Product.id == product_id).first()
 
     if not product:
@@ -182,7 +166,6 @@ def get_product(product_id: int, db: Session = Depends(get_db)):
     response_model=list[ProductResponse],
 )
 def get_product_variants(product_id: int, db: Session = Depends(get_db)):
-    """Ek product ke saare variants (poore group ke)."""
     product = db.query(Product).filter(Product.id == product_id).first()
 
     if not product:
@@ -216,7 +199,6 @@ def get_all_products_admin(
     db: Session = Depends(get_db),
     current_admin: Admin = Depends(get_current_admin),
 ):
-    """Admin dashboard ke liye — flat list."""
     products = db.query(Product).order_by(Product.created_at.desc()).all()
     return ProductListResponse(
         total=len(products),
@@ -234,7 +216,7 @@ async def admin_fetch_product(
     db: Session = Depends(get_db),
     current_admin: Admin = Depends(get_current_admin),
 ):
-    """Admin Amazon URL submit karta hai."""
+    """Admin Amazon URL submit karta hai + apna markup bhej sakta hai."""
     amazon_url = payload.amazon_url
 
     try:
@@ -254,10 +236,14 @@ async def admin_fetch_product(
             detail=f"Product already exists (ASIN: {asin})",
         )
 
-    markup = data.get("markup", 2.0) or 2.0
+    # ✅ Admin ka markup use karo
+    user_markup = payload.markup if payload.markup is not None else 2.0
+    user_markup_type = payload.markup_type or "fixed"
+
     final_price = calculate_final_price(
         amazon_price=data["amazon_price"],
-        markup=markup,
+        markup=user_markup,
+        markup_type=user_markup_type,
     )
 
     new_product = Product(
@@ -272,7 +258,8 @@ async def admin_fetch_product(
         specifications=data.get("specifications", {}),
         amazon_price=data["amazon_price"],
         price=final_price,
-        markup=markup,
+        markup=user_markup,
+        markup_type=user_markup_type,
         is_manual_override=False,
     )
 
@@ -294,7 +281,6 @@ def admin_update_product(
     db: Session = Depends(get_db),
     current_admin: Admin = Depends(get_current_admin),
 ):
-    """Product update karo."""
     product = db.query(Product).filter(Product.id == product_id).first()
 
     if not product:
@@ -327,7 +313,6 @@ def admin_delete_product(
     db: Session = Depends(get_db),
     current_admin: Admin = Depends(get_current_admin),
 ):
-    """Product delete karo."""
     product = db.query(Product).filter(Product.id == product_id).first()
 
     if not product:
@@ -340,3 +325,80 @@ def admin_delete_product(
     db.commit()
 
     return None
+
+
+# ============================================
+# 🆕 MARKUP SETTINGS ROUTES (Settings Page ke liye)
+# ============================================
+
+@router.get("/markup/products", response_model=list[ProductResponse])
+def list_products_for_markup(
+    db: Session = Depends(get_db),
+):
+    """
+    Markup Settings page ke liye saare products.
+    Public rakha hai taake Shopify iframe se easily access ho.
+    """
+    products = db.query(Product).order_by(Product.created_at.desc()).all()
+    return products
+
+
+@router.patch("/markup/{product_id}", response_model=ProductResponse)
+def update_product_markup(
+    product_id: int,
+    payload: MarkupUpdate,
+    db: Session = Depends(get_db),
+):
+    """
+    Ek product ka markup update karo.
+    Price automatically recalculate hoti hai.
+    """
+    product = db.query(Product).filter(Product.id == product_id).first()
+
+    if not product:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Product not found",
+        )
+
+    # Naya price calculate karo
+    new_price = calculate_final_price(
+        amazon_price=product.amazon_price,
+        markup=payload.markup,
+        markup_type=payload.markup_type,
+    )
+
+    product.markup = payload.markup
+    product.markup_type = payload.markup_type
+    product.price = new_price
+    product.is_manual_override = True
+
+    db.commit()
+    db.refresh(product)
+
+    return product
+
+
+@router.post("/markup/bulk-update")
+def bulk_update_markup(
+    payload: MarkupUpdate,
+    db: Session = Depends(get_db),
+):
+    """Saare products ka markup ek saath update karo."""
+    products = db.query(Product).all()
+    updated = 0
+
+    for product in products:
+        product.markup = payload.markup
+        product.markup_type = payload.markup_type
+        product.price = calculate_final_price(
+            amazon_price=product.amazon_price,
+            markup=payload.markup,
+            markup_type=payload.markup_type,
+        )
+        product.is_manual_override = True
+        updated += 1
+
+    db.commit()
+
+    return {"success": True, "updated": updated}

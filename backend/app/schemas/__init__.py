@@ -12,6 +12,7 @@ from app.schemas.product import (
     ProductUpdate,
     VariantGroup,
     VariantGroupListResponse,
+    MarkupUpdate,                    # ✅ NAYA
 )
 from app.schemas.admin import (
     AdminLogin,
@@ -30,6 +31,7 @@ __all__ = [
     "ProductUpdate",
     "VariantGroup",
     "VariantGroupListResponse",
+    "MarkupUpdate",                 
     # Admin schemas
     "AdminLogin",
     "AdminResponse",

@@ -213,18 +213,37 @@ async def fetch_product_from_brightdata(amazon_url: str) -> dict:
 def calculate_final_price(
     amazon_price: Optional[float],
     markup: float = 2.0,
+    markup_type: str = "fixed",
     admin_price: Optional[float] = None,
     is_manual_override: bool = False,
 ) -> Optional[float]:
     """
     Final website price calculate karta hai.
+
+    - fixed:   amazon_price + markup
+    - percent: amazon_price * (1 + markup/100)
+
+    Manual override case:
+    - Agar admin ne manually price set ki hai, toh max(admin_price, auto_price) return karo
+
+    Examples:
+        calculate_final_price(35.99, 2.0, "fixed")     → 37.99
+        calculate_final_price(35.99, 10, "percent")    → 39.59
+        calculate_final_price(35.99, 5.0, "fixed", 50.0, True) → 50.00
     """
     if amazon_price is None:
         return admin_price
 
-    auto_price = amazon_price + markup
+    markup = markup or 0.0
 
+    # ✅ Markup type ke hisaab se calculate
+    if markup_type == "percent":
+        auto_price = amazon_price * (1 + markup / 100.0)
+    else:  # fixed
+        auto_price = amazon_price + markup
+
+    # Manual override — agar admin ne khud price di hai
     if is_manual_override and admin_price is not None:
-        return max(admin_price, auto_price)
+        return round(max(admin_price, auto_price), 2)
 
-    return auto_price
+    return round(auto_price, 2)
