@@ -1,7 +1,8 @@
 # ============================================
 # app/services/scheduler.py
 # Har 24 ghante Amazon se fresh prices fetch karne wala scheduler
-# + Out of Stock tracking (NEW)
+# + Out of Stock tracking
+# + Shopify Status Sync (NEW — write_products scope)
 # ============================================
 
 import logging
@@ -11,12 +12,17 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.interval import IntervalTrigger
 from sqlalchemy.orm import Session
 
+from app.config import settings
 from app.database import SessionLocal
 from app.models import Product
 from app.services.brightdata import (
     BrightDataError,
     calculate_final_price,
     fetch_product_from_brightdata,
+)
+from app.services.shopify import (
+    update_shopify_product_status,
+    get_shopify_product_by_sku,
 )
 
 logger = logging.getLogger(__name__)
@@ -26,6 +32,67 @@ logger = logging.getLogger(__name__)
 # GLOBAL SCHEDULER INSTANCE
 # ============================================
 scheduler = AsyncIOScheduler()
+
+
+# ============================================
+# ✅ HELPER: SHOPIFY STATUS UPDATE KARO
+# ============================================
+async def sync_shopify_status(product: Product, is_available: bool):
+    """
+    Product ka Shopify status update karta hai.
+    - is_available = True  → Shopify status = ACTIVE (In Stock)
+    - is_available = False → Shopify status = DRAFT (Out of Stock)
+
+    Yeh `write_products` scope se kaam karta hai.
+    """
+    shop = settings.SHOPIFY_SHOP_URL
+    access_token = settings.SHOPIFY_ACCESS_TOKEN
+
+    if not shop or not access_token:
+        logger.warning("Shopify credentials missing — skip")
+        return
+
+    try:
+        # Product ID dhundo (agar saved nahi hai to SKU se)
+        shopify_id = product.shopify_product_id
+
+        if not shopify_id:
+            # SKU (ASIN) se Shopify product dhundo
+            shopify_id = await get_shopify_product_by_sku(
+                shop=shop,
+                access_token=access_token,
+                sku=product.asin,
+            )
+            if shopify_id:
+                product.shopify_product_id = shopify_id
+                logger.info(f"Shopify product linked: {shopify_id}")
+
+        if not shopify_id:
+            logger.warning(
+                f"Shopify product not found for ASIN={product.asin}"
+            )
+            return
+
+        # Status update karo
+        success = await update_shopify_product_status(
+            shop=shop,
+            access_token=access_token,
+            shopify_product_id=shopify_id,
+            is_available=is_available,
+        )
+
+        if success:
+            logger.info(
+                f"✅ Shopify synced: ASIN={product.asin}, "
+                f"available={is_available}"
+            )
+        else:
+            logger.warning(
+                f"⚠️ Shopify sync failed: ASIN={product.asin}"
+            )
+
+    except Exception as e:
+        logger.error(f"❌ Shopify sync error: ASIN={product.asin}: {e}")
 
 
 # ============================================
@@ -48,6 +115,7 @@ async def update_all_prices():
         error_count = 0
         out_of_stock_count = 0
         back_in_stock_count = 0
+        shopify_synced_count = 0
 
         for product in products:
             # Manual override wale skip karo
@@ -63,7 +131,7 @@ async def update_all_prices():
                 new_amazon_price = data["amazon_price"]
 
                 # ========================================
-                # ✅ NAYA: Availability update karo (PEHLE)
+                # ✅ STEP 1: Availability update karo
                 # ========================================
                 old_availability = product.is_available
                 new_availability = data.get("is_available", True)
@@ -73,8 +141,10 @@ async def update_all_prices():
                 product.stock_quantity = data.get("stock_quantity", 0)
                 product.last_synced_at = datetime.now(timezone.utc)
 
-                # Log availability change
-                if old_availability != new_availability:
+                # Availability change detect
+                availability_changed = (old_availability != new_availability)
+
+                if availability_changed:
                     if new_availability:
                         logger.info(f"✅ [BACK IN STOCK] ASIN={product.asin}")
                         back_in_stock_count += 1
@@ -83,24 +153,29 @@ async def update_all_prices():
                         out_of_stock_count += 1
 
                 # ========================================
-                # Price check (availability ke BAAD)
+                # ✅ STEP 2: Shopify status update karo
+                # (sirf jab availability change hui ho)
+                # ========================================
+                if availability_changed:
+                    await sync_shopify_status(product, new_availability)
+                    shopify_synced_count += 1
+
+                # ========================================
+                # STEP 3: Price check
                 # ========================================
                 if new_amazon_price is None:
                     logger.warning(f"[WARN] ASIN={product.asin} — price nahi mila")
-                    # Availability to save karo, chahe price na mile
                     db.commit()
                     db.refresh(product)
                     error_count += 1
                     continue
 
-                # Price change check
                 if product.amazon_price == new_amazon_price:
                     logger.info(
                         f"[NO CHANGE] ASIN={product.asin} "
                         f"(price: ${new_amazon_price}, "
                         f"available: {new_availability})"
                     )
-                    # ✅ Availability save karo chahe price same ho
                     db.commit()
                     db.refresh(product)
                     continue
@@ -158,7 +233,8 @@ async def update_all_prices():
             f"Skipped: {skipped_count}, "
             f"Errors: {error_count}, "
             f"Out of Stock: {out_of_stock_count}, "
-            f"Back in Stock: {back_in_stock_count}"
+            f"Back in Stock: {back_in_stock_count}, "
+            f"Shopify Synced: {shopify_synced_count}"
         )
         logger.info("=" * 60)
 

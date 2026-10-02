@@ -1,6 +1,7 @@
 # ============================================
 # app/services/shopify.py
 # Shopify OAuth + GraphQL Admin API + ID Token Verify
+# + Product Status Update (OUT OF STOCK tracking)
 # ============================================
 
 import hashlib
@@ -66,11 +67,8 @@ def verify_id_token(token: str) -> dict:
     """
     Shopify ID token (JWT) verify karta hai.
     Strict mode — saare claims check hote hain.
-
-    Ye token App Bridge se aata hai jab iframe se API call hoti hai.
     """
     try:
-        # JWT decode with secret + audience verification
         payload = jwt.decode(
             token,
             settings.SHOPIFY_API_SECRET,
@@ -80,25 +78,16 @@ def verify_id_token(token: str) -> dict:
 
         now = int(time.time())
 
-        # ----------------------------------------
-        # Expiry check
-        # ----------------------------------------
         if payload.get("exp", 0) < now:
             raise ValueError("Token expired")
 
         if payload.get("nbf", 0) > now:
             raise ValueError("Token not yet valid")
 
-        # ----------------------------------------
-        # Issuer check
-        # ----------------------------------------
         iss = payload.get("iss", "")
         if not iss.startswith("https://"):
             raise ValueError("Invalid issuer")
 
-        # ----------------------------------------
-        # Domain match check
-        # ----------------------------------------
         iss_domain = iss.replace("https://", "").split("/")[0]
         dest_domain = (
             payload.get("dest", "")
@@ -109,9 +98,6 @@ def verify_id_token(token: str) -> dict:
         if iss_domain != dest_domain:
             raise ValueError("Domain mismatch")
 
-        # ----------------------------------------
-        # Must be a .myshopify.com store
-        # ----------------------------------------
         if not iss_domain.endswith(".myshopify.com"):
             raise ValueError("Not a valid Shopify store")
 
@@ -189,7 +175,6 @@ async def shopify_graphql(
 
 # ============================================
 # PRODUCT CREATE KARO (GraphQL)
-# 2-Step: Create product + Update price
 # ============================================
 async def create_shopify_product(
     shop: str,
@@ -198,9 +183,6 @@ async def create_shopify_product(
 ) -> dict:
     """
     Shopify mein naya product create karta hai.
-    Step 1: Product create (bina variants)
-    Step 2: Variant ka price update
-    Step 3: Images add
     """
 
     # ========================================
@@ -233,7 +215,6 @@ async def create_shopify_product(
         shop, access_token, mutation_create, {"input": input_data}
     )
 
-    # Check GraphQL errors
     if "errors" in result:
         logger.error(f"❌ Product create error: {result['errors']}")
         return result
@@ -263,7 +244,6 @@ async def create_shopify_product(
     logger.info(f"   Target price: ${price_float}")
 
     if product_id and price_float > 0:
-        # Variant query — pehla variant dhundo
         query_variants = """
         query getProductVariants($id: ID!) {
           product(id: $id) {
@@ -297,7 +277,6 @@ async def create_shopify_product(
             variant_id = variants_data[0]["node"]["id"]
             logger.info(f"   Variant ID: {variant_id}")
 
-            # Price update mutation
             mutation_update = """
             mutation productVariantsBulkUpdate(
               $productId: ID!,
@@ -328,8 +307,6 @@ async def create_shopify_product(
                     }
                 ],
             }
-
-            logger.info(f"   Sending price update...")
 
             update_result = await shopify_graphql(
                 shop, access_token, mutation_update, variables_update
@@ -426,3 +403,131 @@ async def add_product_images(
     }
 
     return await shopify_graphql(shop, access_token, mutation, variables)
+
+
+# ============================================
+# ✅ NAYA — PRODUCT STATUS UPDATE
+# (In Stock ↔ Out of Stock)
+# write_products scope se kaam karta hai
+# ============================================
+async def update_shopify_product_status(
+    shop: str,
+    access_token: str,
+    shopify_product_id: str,
+    is_available: bool,
+) -> bool:
+    """
+    Shopify product ka status update karta hai.
+
+    - is_available = True  → status = ACTIVE  (In Stock)
+    - is_available = False → status = DRAFT   (Sold Out / Out of Stock)
+
+    Yeh `write_products` scope se kaam karta hai —
+    koi naya scope add karne ki zaroorat nahi.
+    """
+    # ID format check karo
+    if not shopify_product_id.startswith("gid://"):
+        product_gid = f"gid://shopify/Product/{shopify_product_id}"
+    else:
+        product_gid = shopify_product_id
+
+    new_status = "ACTIVE" if is_available else "DRAFT"
+
+    mutation = """
+    mutation updateProductStatus($input: ProductInput!) {
+      productUpdate(input: $input) {
+        product {
+          id
+          title
+          status
+        }
+        userErrors {
+          field
+          message
+        }
+      }
+    }
+    """
+
+    variables = {
+        "input": {
+            "id": product_gid,
+            "status": new_status,
+        }
+    }
+
+    logger.info(
+        f"Shopify status update: product={product_gid}, status={new_status}"
+    )
+
+    result = await shopify_graphql(
+        shop, access_token, mutation, variables
+    )
+
+    # Errors check
+    if "errors" in result:
+        logger.error(f"❌ Status update GraphQL errors: {result['errors']}")
+        return False
+
+    update_data = result.get("data", {}).get("productUpdate", {})
+    user_errors = update_data.get("userErrors", [])
+
+    if user_errors:
+        logger.error(f"❌ Status update user errors: {user_errors}")
+        return False
+
+    product = update_data.get("product", {})
+    logger.info(
+        f"✅ Shopify status updated: "
+        f"{product.get('title')} → {product.get('status')}"
+    )
+    return True
+
+
+# ============================================
+# ✅ NAYA — SHOPIFY PRODUCT DHUNDO SKU SE
+# ============================================
+async def get_shopify_product_by_sku(
+    shop: str,
+    access_token: str,
+    sku: str,
+) -> Optional[str]:
+    """
+    Shopify product ID dhundo SKU (ASIN) se.
+    Returns: Shopify Product GID (e.g., "gid://shopify/Product/12345")
+    """
+    query = """
+    query getProductBySku($query: String!) {
+      products(first: 1, query: $query) {
+        edges {
+          node {
+            id
+            title
+            status
+          }
+        }
+      }
+    }
+    """
+
+    result = await shopify_graphql(
+        shop, access_token, query, {"query": f"sku:{sku}"}
+    )
+
+    if "errors" in result:
+        logger.error(f"SKU search errors: {result['errors']}")
+        return None
+
+    edges = (
+        result.get("data", {})
+        .get("products", {})
+        .get("edges", [])
+    )
+
+    if edges:
+        product_gid = edges[0]["node"]["id"]
+        logger.info(f"Found Shopify product: {product_gid} for SKU={sku}")
+        return product_gid
+
+    logger.warning(f"No Shopify product found for SKU={sku}")
+    return None
