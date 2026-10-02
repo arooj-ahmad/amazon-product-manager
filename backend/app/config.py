@@ -19,6 +19,11 @@ class Settings(BaseSettings):
     DATABASE_URL: str
 
     # ----------------------------------------
+    # REDIS (ARQ Background Jobs)
+    # ----------------------------------------
+    REDIS_URL: str = "redis://localhost:6379"
+
+    # ----------------------------------------
     # BRIGHT DATA (Amazon Scraper)
     # ----------------------------------------
     BRIGHT_DATA_API_KEY: str
@@ -51,6 +56,13 @@ class Settings(BaseSettings):
     SHOPIFY_APP_URL: str = "https://example.com"
     SHOPIFY_REDIRECT_URI: str = "https://example.com/api/shopify/callback"
     SHOPIFY_API_VERSION: str = "2025-01"
+
+    # ----------------------------------------
+    # BATCH IMPORT (ARQ)
+    # ----------------------------------------
+    BATCH_MAX_URLS: int = 100          # Ek batch mein max URLs
+    BATCH_JOB_TIMEOUT: int = 600       # 10 minutes per job
+    BATCH_MAX_JOBS: int = 3            # Worker ek waqt mein kitne jobs
 
     # ----------------------------------------
     # Pydantic Settings Configuration
