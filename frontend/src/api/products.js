@@ -2,8 +2,8 @@
 // frontend/src/api/products.js
 // Product se related saari API calls
 // ============================================
-
 import api from './axios'
+
 
 // ============================================
 // PUBLIC ENDPOINTS (User side)
@@ -77,5 +77,10 @@ export const adminPushToShopify = async (productId, shopDomain) => {
  */
 export const getShopifyStores = async () => {
   const response = await api.get('/api/shopify/stores')
+  return response.data
+}
+
+export const getProductAvailability = async (id) => {
+  const response = await api.get(`/api/products/${id}/availability`)
   return response.data
 }

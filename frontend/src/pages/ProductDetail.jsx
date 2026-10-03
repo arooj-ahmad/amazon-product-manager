@@ -1,6 +1,8 @@
 // ============================================
 // frontend/src/pages/ProductDetail.jsx
 // Product detail — clean (no dummy data)
+// + Real-time availability check (Storefront API)
+// + Add to Cart / Buy Now buttons
 // ============================================
 
 import { useEffect, useState } from 'react'
@@ -9,6 +11,7 @@ import {
   getProductById,
   getProductBySlug,
   getProductVariants,
+  getProductAvailability,
 } from '../api/products'
 
 function ProductDetail() {
@@ -20,6 +23,10 @@ function ProductDetail() {
   const [error, setError] = useState(null)
   const [selectedImage, setSelectedImage] = useState(null)
   const [activeTab, setActiveTab] = useState('description')
+
+  // ✅ NAYA — Availability state
+  const [availability, setAvailability] = useState(null)
+  const [checkingAvailability, setCheckingAvailability] = useState(false)
 
   // Product + variants fetch
   useEffect(() => {
@@ -62,6 +69,26 @@ function ProductDetail() {
     fetchData()
   }, [slug, id])
 
+  // ✅ NAYA — Availability check (jab bhi product ya variant change ho)
+  useEffect(() => {
+    if (!product?.id) return
+
+    const checkAvail = async () => {
+      setCheckingAvailability(true)
+      try {
+        const data = await getProductAvailability(product.id)
+        setAvailability(data)
+      } catch (err) {
+        console.error('Availability check fail:', err)
+        setAvailability(null)
+      } finally {
+        setCheckingAvailability(false)
+      }
+    }
+
+    checkAvail()
+  }, [product?.id])
+
   // Variant change
   const handleVariantChange = async (variantId) => {
     if (variantId === selectedVariantId) return
@@ -71,6 +98,7 @@ function ProductDetail() {
       const data = await getProductById(variantId)
       setProduct(data)
       setSelectedImage(data.image_url || data.images?.[0] || null)
+      // Availability will re-fetch automatically due to useEffect [product?.id]
     } catch (err) {
       console.error('Variant fetch fail:', err)
     }
@@ -114,6 +142,11 @@ function ProductDetail() {
   const specs = product.specifications || {}
   const specEntries = Object.entries(specs)
   const hasMultipleVariants = variants.length > 1
+
+  // ✅ NAYA — Availability derived values
+  const isAvailable = availability?.available !== false
+  const showAvailability =
+    availability && !checkingAvailability && !isLoading
 
   return (
     <div className="min-h-screen bg-white">
@@ -226,6 +259,54 @@ function ProductDetail() {
                   — You save ${(product.amazon_price - product.price).toFixed(2)}
                 </p>
               )}
+            </div>
+
+            {/* ✅ NAYA — Stock Status Banner */}
+            {showAvailability && (
+              <p
+                className={`text-sm font-medium mb-4 ${
+                  isAvailable ? 'text-green-700' : 'text-red-700'
+                }`}
+              >
+                {isAvailable
+                  ? `● In Stock${
+                      availability.quantity
+                        ? ` (${availability.quantity} available)`
+                        : ''
+                    }`
+                  : '● Currently Out of Stock'}
+              </p>
+            )}
+
+            {/* ✅ NAYA — Add to Cart / Buy Now Buttons */}
+            <div className="space-y-3 mb-6">
+              <button
+                type="button"
+                disabled={!isAvailable || checkingAvailability}
+                className={`w-full font-medium py-3 rounded-full transition-colors ${
+                  !isAvailable || checkingAvailability
+                    ? 'bg-gray-300 text-gray-500 cursor-not-allowed'
+                    : 'bg-[#ffd814] hover:bg-[#f7ca00] text-[#0f1111]'
+                }`}
+              >
+                {checkingAvailability
+                  ? '⏳ Checking...'
+                  : !isAvailable
+                  ? '❌ Out of Stock'
+                  : '🛒 Add to Cart'}
+              </button>
+
+              <button
+                type="button"
+                disabled={!isAvailable || checkingAvailability}
+                className={`w-full font-medium py-3 rounded-full transition-colors ${
+                  !isAvailable || checkingAvailability
+                    ? 'bg-gray-300 text-gray-500 cursor-not-allowed'
+                    : 'bg-[#ffa41c] hover:bg-[#fa8900] text-[#0f1111]'
+                }`}
+              >
+                {!isAvailable ? 'Out of Stock' : '⚡ Buy Now'}
+              </button>
             </div>
 
             {/* Variant Selector */}
