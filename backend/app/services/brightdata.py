@@ -2,6 +2,7 @@
 # app/services/brightdata.py
 # Bright Data Scraper API se Amazon data fetch karne ke liye
 # + Out of Stock tracking (IMPROVED)
+# + Rating field (multiple names support)
 # ============================================
 
 import logging
@@ -114,12 +115,15 @@ async def fetch_product_from_brightdata(amazon_url: str) -> dict:
     # ========================================
     logger.info(f"=== BRIGHT DATA RAW RESPONSE ===")
     logger.info(f"Keys: {list(raw.keys())}")
+    logger.info(f"rating: {raw.get('rating')}")
+    logger.info(f"average_rating: {raw.get('average_rating')}")
+    logger.info(f"customer_rating: {raw.get('customer_rating')}")
+    logger.info(f"star_rating: {raw.get('star_rating')}")
+    logger.info(f"rating_value: {raw.get('rating_value')}")
     logger.info(f"add_to_cart_available: {raw.get('add_to_cart_available')}")
     logger.info(f"buybox_available: {raw.get('buybox_available')}")
     logger.info(f"availability: {raw.get('availability')}")
-    logger.info(f"availabilityText: {raw.get('availabilityText')}")
     logger.info(f"stock_quantity: {raw.get('stock_quantity')}")
-    logger.info(f"stock: {raw.get('stock')}")
     logger.info(f"=== END RAW RESPONSE ===")
 
     # Extract fields
@@ -149,6 +153,65 @@ async def fetch_product_from_brightdata(amazon_url: str) -> dict:
         except (ValueError, TypeError):
             logger.warning(f"Price parse fail: {amazon_price}")
             amazon_price = None
+
+    # ----------------------------------------
+    # ✅ RATING extract karo (multiple names try)
+    # ----------------------------------------
+    rating_raw = (
+        raw.get("rating")
+        or raw.get("average_rating")
+        or raw.get("customer_rating")
+        or raw.get("star_rating")
+        or raw.get("rating_value")
+        or raw.get("ratingValue")
+        or raw.get("stars")
+        or raw.get("review_rating")
+    )
+
+    # Clean rating value
+    rating_value = None
+    if rating_raw is not None:
+        try:
+            if isinstance(rating_raw, str):
+                # "4.5 out of 5 stars" → 4.5
+                import re
+                match = re.search(r"(\d+\.?\d*)", rating_raw)
+                if match:
+                    rating_value = float(match.group(1))
+            else:
+                rating_value = float(rating_raw)
+            logger.info(f"✅ Rating extracted: {rating_value}")
+        except (ValueError, TypeError):
+            logger.warning(f"Rating parse fail: {rating_raw}")
+            rating_value = None
+    else:
+        logger.warning("⚠️ No rating field found in Bright Data response")
+
+    # ----------------------------------------
+    # ✅ REVIEWS COUNT extract karo
+    # ----------------------------------------
+    reviews_raw = (
+        raw.get("reviews_count")
+        or raw.get("review_count")
+        or raw.get("ratings_count")
+        or raw.get("total_reviews")
+        or raw.get("num_reviews")
+    )
+
+    reviews_count = None
+    if reviews_raw is not None:
+        try:
+            if isinstance(reviews_raw, str):
+                import re
+                match = re.search(r"(\d[\d,]*)", reviews_raw)
+                if match:
+                    reviews_count = int(match.group(1).replace(",", ""))
+            else:
+                reviews_count = int(reviews_raw)
+            logger.info(f"✅ Reviews count extracted: {reviews_count}")
+        except (ValueError, TypeError):
+            logger.warning(f"Reviews parse fail: {reviews_raw}")
+            reviews_count = None
 
     # ----------------------------------------
     # Images extract karo
@@ -207,31 +270,25 @@ async def fetch_product_from_brightdata(amazon_url: str) -> dict:
     ]
 
     if isinstance(add_to_cart_available, bool):
-        # ✅ Priority 1: Direct boolean (sabse reliable)
         is_available = add_to_cart_available
         logger.info(f"Using add_to_cart_available: {is_available}")
 
     elif isinstance(buybox_available, bool):
-        # ✅ Priority 2: Buybox boolean
         is_available = buybox_available
         logger.info(f"Using buybox_available: {is_available}")
 
     elif isinstance(availability_text, str) and availability_text.strip():
-        # ✅ Priority 3: Text parsing (better)
         avail_lower = availability_text.lower().strip()
 
-        # Pehle out of stock check karein
         if any(kw in avail_lower for kw in out_of_stock_keywords):
             is_available = False
             logger.info(f"OUT OF STOCK text detected: '{availability_text}'")
 
-        # Phir in stock check karein
         elif any(kw in avail_lower for kw in in_stock_keywords):
             is_available = True
             logger.info(f"IN STOCK text detected: '{availability_text}'")
 
         else:
-            # Unknown text → default available (product exist karta hai)
             is_available = True
             logger.warning(
                 f"Unknown availability text: '{availability_text}' "
@@ -239,8 +296,6 @@ async def fetch_product_from_brightdata(amazon_url: str) -> dict:
             )
 
     else:
-        # ✅ Priority 4: Data missing → default to AVAILABLE
-        # Kyunki product scrape hua matlab Amazon par exist karta hai
         is_available = True
         logger.warning("No availability data → defaulting to AVAILABLE")
 
@@ -253,12 +308,10 @@ async def fetch_product_from_brightdata(amazon_url: str) -> dict:
     except (ValueError, TypeError):
         stock_quantity = 0
 
-    # ✅ NAYA: Agar out of stock hai toh stock 0 force karo
     if not is_available:
         stock_quantity = 0
         logger.info("Product out of stock → stock_quantity forced to 0")
     elif stock_quantity == 0:
-        # Available hai lekin quantity nahi mili → default 100
         stock_quantity = 100
         logger.info("Product available but no stock quantity → defaulting to 100")
 
@@ -279,8 +332,8 @@ async def fetch_product_from_brightdata(amazon_url: str) -> dict:
 
     # Extra useful fields
     extra_fields = {
-        "Rating": raw.get("rating"),
-        "Reviews": raw.get("reviews_count"),
+        "Rating": rating_value if rating_value is not None else raw.get("rating"),
+        "Reviews": reviews_count if reviews_count is not None else raw.get("reviews_count"),
         "Availability": availability_text,
         "Seller": raw.get("seller_name") or raw.get("buybox_seller"),
         "Category": (
@@ -296,6 +349,7 @@ async def fetch_product_from_brightdata(amazon_url: str) -> dict:
 
     logger.info(
         f"Parsed product: ASIN={asin}, Price=${amazon_price}, "
+        f"Rating={rating_value}, Reviews={reviews_count}, "
         f"Images={len(unique_images)}, Specs={len(specs)}, "
         f"Availability='{availability_text}', Available={is_available}, "
         f"Stock={stock_quantity}"
@@ -313,6 +367,11 @@ async def fetch_product_from_brightdata(amazon_url: str) -> dict:
         "specifications": specs,
         "description": raw.get("description"),
 
+        # ✅ Rating & Reviews
+        "rating": rating_value,
+        "reviews_count": reviews_count,
+
+        # ✅ Availability
         "availability": str(availability_text) if availability_text else "In Stock",
         "is_available": is_available,
         "stock_quantity": stock_quantity,
@@ -334,27 +393,17 @@ def calculate_final_price(
 
     - fixed:   amazon_price + markup
     - percent: amazon_price * (1 + markup/100)
-
-    Manual override case:
-    - Agar admin ne manually price set ki hai, toh max(admin_price, auto_price) return karo
-
-    Examples:
-        calculate_final_price(35.99, 2.0, "fixed")     → 37.99
-        calculate_final_price(35.99, 10, "percent")    → 39.59
-        calculate_final_price(35.99, 5.0, "fixed", 50.0, True) → 50.00
     """
     if amazon_price is None:
         return admin_price
 
     markup = markup or 0.0
 
-    # ✅ Markup type ke hisaab se calculate
     if markup_type == "percent":
         auto_price = amazon_price * (1 + markup / 100.0)
     else:  # fixed
         auto_price = amazon_price + markup
 
-    # Manual override — agar admin ne khud price di hai
     if is_manual_override and admin_price is not None:
         return round(max(admin_price, auto_price), 2)
 
