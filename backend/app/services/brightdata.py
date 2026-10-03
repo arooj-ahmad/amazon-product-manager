@@ -1,7 +1,7 @@
 # ============================================
 # app/services/brightdata.py
 # Bright Data Scraper API se Amazon data fetch karne ke liye
-# + Out of Stock tracking (NEW)
+# + Out of Stock tracking (IMPROVED)
 # ============================================
 
 import logging
@@ -109,6 +109,19 @@ async def fetch_product_from_brightdata(amazon_url: str) -> dict:
         logger.error(f"Bright Data error in response: {raw['error']}")
         raise BrightDataError(f"Bright Data error: {raw['error']}")
 
+    # ========================================
+    # ✅ DEBUG LOGS — Bright Data ka raw response
+    # ========================================
+    logger.info(f"=== BRIGHT DATA RAW RESPONSE ===")
+    logger.info(f"Keys: {list(raw.keys())}")
+    logger.info(f"add_to_cart_available: {raw.get('add_to_cart_available')}")
+    logger.info(f"buybox_available: {raw.get('buybox_available')}")
+    logger.info(f"availability: {raw.get('availability')}")
+    logger.info(f"availabilityText: {raw.get('availabilityText')}")
+    logger.info(f"stock_quantity: {raw.get('stock_quantity')}")
+    logger.info(f"stock: {raw.get('stock')}")
+    logger.info(f"=== END RAW RESPONSE ===")
+
     # Extract fields
     asin = raw.get("asin") or extract_asin_from_url(amazon_url)
     if not asin:
@@ -157,8 +170,6 @@ async def fetch_product_from_brightdata(amazon_url: str) -> dict:
     if not main_image and unique_images:
         main_image = unique_images[0]
 
-    # ----------------------------------------
-    # ✅ NAYA: Availability extract karo
     # ========================================
     # ✅ IMPROVED: Amazon "Add to Cart" check
     # ========================================
@@ -173,35 +184,65 @@ async def fetch_product_from_brightdata(amazon_url: str) -> dict:
     add_to_cart_available = raw.get("add_to_cart_available")
     buybox_available = raw.get("buybox_available")
 
+    # ✅ Available keywords (in stock detection)
+    in_stock_keywords = [
+        "in stock",
+        "only",
+        "usually ships",
+        "ships within",
+        "available",
+        "in stock soon",
+    ]
+
+    # ❌ Out of stock keywords
+    out_of_stock_keywords = [
+        "out of stock",
+        "unavailable",
+        "currently unavailable",
+        "not available",
+        "sold out",
+        "temporarily out",
+        "no disponible",
+        "temporarily unavailable",
+    ]
+
     if isinstance(add_to_cart_available, bool):
+        # ✅ Priority 1: Direct boolean (sabse reliable)
         is_available = add_to_cart_available
         logger.info(f"Using add_to_cart_available: {is_available}")
 
     elif isinstance(buybox_available, bool):
+        # ✅ Priority 2: Buybox boolean
         is_available = buybox_available
         logger.info(f"Using buybox_available: {is_available}")
 
-    elif isinstance(availability_text, str) and availability_text:
-        # Priority 2: Text parsing
-        avail_lower = availability_text.lower()
-        out_of_stock_keywords = [
-            "out of stock",
-            "unavailable",
-            "currently unavailable",
-            "not available",
-            "sold out",
-            "temporarily out",
-            "no disponible",
-        ]
-        is_available = not any(kw in avail_lower for kw in out_of_stock_keywords)
-        logger.info(
-            f"Using availability text: {availability_text} → {is_available}"
-        )
+    elif isinstance(availability_text, str) and availability_text.strip():
+        # ✅ Priority 3: Text parsing (better)
+        avail_lower = availability_text.lower().strip()
+
+        # Pehle out of stock check karein
+        if any(kw in avail_lower for kw in out_of_stock_keywords):
+            is_available = False
+            logger.info(f"OUT OF STOCK text detected: '{availability_text}'")
+
+        # Phir in stock check karein
+        elif any(kw in avail_lower for kw in in_stock_keywords):
+            is_available = True
+            logger.info(f"IN STOCK text detected: '{availability_text}'")
+
+        else:
+            # Unknown text → default available (product exist karta hai)
+            is_available = True
+            logger.warning(
+                f"Unknown availability text: '{availability_text}' "
+                f"→ defaulting to AVAILABLE"
+            )
 
     else:
-        # Priority 3: Data missing → safe default
-        is_available = False
-        logger.warning("No availability data → defaulting to OUT OF STOCK")
+        # ✅ Priority 4: Data missing → default to AVAILABLE
+        # Kyunki product scrape hua matlab Amazon par exist karta hai
+        is_available = True
+        logger.warning("No availability data → defaulting to AVAILABLE")
 
     # ----------------------------------------
     # Stock quantity
@@ -216,6 +257,11 @@ async def fetch_product_from_brightdata(amazon_url: str) -> dict:
     if not is_available:
         stock_quantity = 0
         logger.info("Product out of stock → stock_quantity forced to 0")
+    elif stock_quantity == 0:
+        # Available hai lekin quantity nahi mili → default 100
+        stock_quantity = 100
+        logger.info("Product available but no stock quantity → defaulting to 100")
+
     # ----------------------------------------
     # Specifications extract karo
     # ----------------------------------------
@@ -251,7 +297,8 @@ async def fetch_product_from_brightdata(amazon_url: str) -> dict:
     logger.info(
         f"Parsed product: ASIN={asin}, Price=${amazon_price}, "
         f"Images={len(unique_images)}, Specs={len(specs)}, "
-        f"Availability={availability_text}, Available={is_available}"
+        f"Availability='{availability_text}', Available={is_available}, "
+        f"Stock={stock_quantity}"
     )
 
     return {
@@ -265,8 +312,8 @@ async def fetch_product_from_brightdata(amazon_url: str) -> dict:
         "images": unique_images,
         "specifications": specs,
         "description": raw.get("description"),
-        
-        "availability": str(availability_text),
+
+        "availability": str(availability_text) if availability_text else "In Stock",
         "is_available": is_available,
         "stock_quantity": stock_quantity,
     }
