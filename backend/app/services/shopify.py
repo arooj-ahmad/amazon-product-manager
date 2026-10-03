@@ -192,6 +192,9 @@ async def get_primary_location(shop: str, access_token: str) -> Optional[str]:
 # ============================================
 # INVENTORY SET KARO (with changeFromQuantity)
 # ============================================
+# ============================================
+# INVENTORY SET KARO (with changeFromQuantity)
+# ============================================
 async def set_inventory_quantity(
     shop: str,
     access_token: str,
@@ -203,7 +206,7 @@ async def set_inventory_quantity(
         logger.warning("No location — inventory set nahi hoga")
         return False
 
-    # Current inventory fetch
+    # Current inventory fetch karo
     query_current = """
     query getInventoryLevel($inventoryItemId: ID!, $locationId: ID!) {
       inventoryItem(id: $inventoryItemId) {
@@ -241,7 +244,7 @@ async def set_inventory_quantity(
 
     logger.info(f"   Current inventory: {current_qty}, target: {quantity}")
 
-    # Set inventory
+    # ✅ Set inventory WITHOUT ignoreCompareQuantity
     mutation = """
     mutation inventorySetQuantities($input: InventorySetQuantitiesInput!) {
       inventorySetQuantities(input: $input) {
@@ -261,7 +264,6 @@ async def set_inventory_quantity(
         "input": {
             "name": "available",
             "reason": "correction",
-            "ignoreCompareQuantity": True,
             "quantities": [
                 {
                     "inventoryItemId": inventory_item_id,
