@@ -195,18 +195,23 @@ async def get_primary_location(shop: str, access_token: str) -> Optional[str]:
 # ============================================
 # INVENTORY SET KARO (with changeFromQuantity)
 # ============================================
+# ============================================
+# INVENTORY SET KARO (with changeFromQuantity + @idempotent)
+# ============================================
 async def set_inventory_quantity(
     shop: str,
     access_token: str,
     inventory_item_id: str,
     quantity: int,
 ) -> bool:
+    import uuid
+
     location_id = await get_primary_location(shop, access_token)
     if not location_id:
         logger.warning("No location — inventory set nahi hoga")
         return False
 
-    # Current inventory fetch karo
+    # Current inventory fetch
     query_current = """
     query getInventoryLevel($inventoryItemId: ID!, $locationId: ID!) {
       inventoryItem(id: $inventoryItemId) {
@@ -244,10 +249,13 @@ async def set_inventory_quantity(
 
     logger.info(f"   Current inventory: {current_qty}, target: {quantity}")
 
-    # ✅ Set inventory WITHOUT ignoreCompareQuantity
+    # ✅ Unique idempotency key
+    idempotency_key = str(uuid.uuid4())
+
+    # ✅ Mutation with @idempotent directive
     mutation = """
     mutation inventorySetQuantities($input: InventorySetQuantitiesInput!) {
-      inventorySetQuantities(input: $input) {
+      inventorySetQuantities(input: $input) @idempotent(key: "%s") {
         inventoryAdjustmentGroup {
           createdAt
           reason
@@ -258,7 +266,7 @@ async def set_inventory_quantity(
         }
       }
     }
-    """
+    """ % idempotency_key
 
     variables = {
         "input": {
