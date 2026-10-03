@@ -5,6 +5,7 @@
 # + Inventory Tracking (with changeFromQuantity)
 # + 2026-07 API compatible (variants removed from productCreate)
 # + Storefront API (real-time availability check)
+# + Rating Metafield
 # ============================================
 
 import hashlib
@@ -412,6 +413,7 @@ async def update_variant_with_tracked(
 
 # ============================================
 # PRODUCT CREATE — 2026-07 COMPATIBLE
+# + RATING METAFIELD
 # ============================================
 async def create_shopify_product(
     shop: str,
@@ -420,11 +422,7 @@ async def create_shopify_product(
 ) -> dict:
     """
     Shopify mein naya product create karta hai.
-    2026-07 API ke saath compatible:
-      1. Product create (simple)
-      2. Variant update (tracked=true + price)
-      3. Inventory set
-      4. Images add
+    Rating metafield ke saath.
     """
 
     is_available = product_data.get("is_available", True)
@@ -437,7 +435,22 @@ async def create_shopify_product(
         price_float = 0.0
 
     # ========================================
-    # STEP 1: Product create (NO variants field)
+    # ✅ METAFIELD: Rating
+    # ========================================
+    rating_value = str(product_data.get("rating", "") or "")
+
+    metafields_input = []
+    if rating_value and rating_value != "None":
+        metafields_input.append({
+            "namespace": "custom",
+            "key": "rating",
+            "value": rating_value,
+            "type": "single_line_text_field",
+        })
+        logger.info(f"   Rating metafield: {rating_value}")
+
+    # ========================================
+    # STEP 1: Product create with metafields
     # ========================================
     mutation_create = """
     mutation productCreate($input: ProductCreateInput!) {
@@ -446,6 +459,15 @@ async def create_shopify_product(
           id
           title
           handle
+          metafields(first: 5) {
+            edges {
+              node {
+                namespace
+                key
+                value
+              }
+            }
+          }
           variants(first: 1) {
             edges {
               node {
@@ -474,6 +496,10 @@ async def create_shopify_product(
         "status": status,
     }
 
+    # ✅ Rating metafield add karo (agar hai)
+    if metafields_input:
+        input_data["metafields"] = metafields_input
+
     result = await shopify_graphql(
         shop, access_token, mutation_create, {"input": input_data}
     )
@@ -494,6 +520,16 @@ async def create_shopify_product(
 
     logger.info(f"✅ Product created: {shopify_product.get('title')}")
     logger.info(f"   Product ID: {product_id}")
+
+    # ✅ Metafields verify karo
+    created_metafields = (
+        shopify_product.get("metafields", {}).get("edges", [])
+    )
+    if created_metafields:
+        logger.info(f"✅ Metafields created: {len(created_metafields)}")
+        for mf_edge in created_metafields:
+            mf = mf_edge["node"]
+            logger.info(f"   • {mf['namespace']}.{mf['key']} = {mf['value']}")
 
     # ========================================
     # STEP 2: Variant + Inventory Item ID
@@ -628,7 +664,7 @@ async def update_shopify_product_status(
     is_available: bool,
 ) -> bool:
     if not shopify_product_id.startswith("gid://"):
-        product_gid = f"gid://Shopify/Product/{shopify_product_id}"
+        product_gid = f"gid://shopify/Product/{shopify_product_id}"
     else:
         product_gid = shopify_product_id
 
@@ -743,18 +779,7 @@ async def check_product_availability(
 ) -> dict:
     """
     Shopify Storefront API se product ki real-time availability check karta hai.
-    Admin API token ki zaroorat NAHI — Storefront token use hota hai.
-
-    Returns:
-        {
-            "available": True/False,
-            "quantity": X,
-            "title": "...",
-            "variants": [...],
-            "source": "shopify"
-        }
     """
-    # GID banayein
     if not shopify_product_id.startswith("gid://"):
         product_gid = f"gid://shopify/Product/{shopify_product_id}"
     else:
@@ -779,7 +804,6 @@ async def check_product_availability(
             "source": "none",
         }
 
-    # Storefront API URL
     api_url = (
         f"https://{store_domain}/api/"
         f"{settings.SHOPIFY_API_VERSION}/graphql.json"
@@ -810,7 +834,6 @@ async def check_product_availability(
     }
     """
 
-    # Storefront token header (Admin token header se different)
     headers = {
         "X-Shopify-Storefront-Access-Token": storefront_token,
         "Content-Type": "application/json",
