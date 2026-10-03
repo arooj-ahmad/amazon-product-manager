@@ -2,7 +2,7 @@
 # app/services/shopify.py
 # Shopify OAuth + GraphQL Admin API + ID Token Verify
 # + Product Status Update (OUT OF STOCK tracking)
-# + Inventory Tracking (NEW)
+# + Inventory Tracking (with changeFromQuantity)
 # ============================================
 
 import hashlib
@@ -54,7 +54,7 @@ def verify_hmac(query_params: dict) -> bool:
 
 
 # ============================================
-# ID TOKEN VERIFY KARO (Strict Mode)
+# ID TOKEN VERIFY (Strict Mode)
 # ============================================
 def verify_id_token(token: str) -> dict:
     try:
@@ -154,8 +154,7 @@ async def shopify_graphql(
 
 
 # ============================================
-# ✅ NAYA — PRIMARY LOCATION DHUNDO
-# Inventory set karne ke liye zaroori hai
+# PRIMARY LOCATION DHUNDO
 # ============================================
 async def get_primary_location(shop: str, access_token: str) -> Optional[str]:
     """
@@ -193,7 +192,8 @@ async def get_primary_location(shop: str, access_token: str) -> Optional[str]:
 
 
 # ============================================
-# ✅ NAYA — INVENTORY SET KARO
+# ✅ INVENTORY SET KARO (with changeFromQuantity)
+# Shopify API 2026-07 format
 # ============================================
 async def set_inventory_quantity(
     shop: str,
@@ -203,6 +203,7 @@ async def set_inventory_quantity(
 ) -> bool:
     """
     Product ka inventory quantity set karta hai.
+    Shopify API 2026-07 ke naye format ke saath.
     """
     # Location ID chahiye
     location_id = await get_primary_location(shop, access_token)
@@ -210,6 +211,50 @@ async def set_inventory_quantity(
         logger.warning("No location — inventory set nahi hoga")
         return False
 
+    # ========================================
+    # Step 1: Current inventory fetch karo
+    # ========================================
+    query_current = """
+    query getInventoryLevel($inventoryItemId: ID!, $locationId: ID!) {
+      inventoryItem(id: $inventoryItemId) {
+        inventoryLevel(locationId: $locationId) {
+          quantities(names: ["available"]) {
+            name
+            quantity
+          }
+        }
+      }
+    }
+    """
+
+    current_result = await shopify_graphql(
+        shop,
+        access_token,
+        query_current,
+        {"inventoryItemId": inventory_item_id, "locationId": location_id},
+    )
+
+    # Current quantity nikalo (default 0)
+    current_qty = 0
+    try:
+        quantities = (
+            current_result.get("data", {})
+            .get("inventoryItem", {})
+            .get("inventoryLevel", {})
+            .get("quantities", [])
+        )
+        for q in quantities:
+            if q.get("name") == "available":
+                current_qty = q.get("quantity", 0)
+                break
+    except Exception:
+        current_qty = 0
+
+    logger.info(f"   Current inventory: {current_qty}, target: {quantity}")
+
+    # ========================================
+    # Step 2: Inventory set karo with changeFromQuantity
+    # ========================================
     mutation = """
     mutation inventorySetQuantities($input: InventorySetQuantitiesInput!) {
       inventorySetQuantities(input: $input) {
@@ -229,11 +274,13 @@ async def set_inventory_quantity(
         "input": {
             "name": "available",
             "reason": "correction",
+            "ignoreCompareQuantity": True,
             "quantities": [
                 {
                     "inventoryItemId": inventory_item_id,
                     "locationId": location_id,
                     "quantity": quantity,
+                    "changeFromQuantity": current_qty,
                 }
             ],
         }
@@ -260,7 +307,7 @@ async def set_inventory_quantity(
 
 
 # ============================================
-# PRODUCT CREATE KARO (GraphQL) — WITH INVENTORY
+# PRODUCT CREATE KARO (with tracked inventory)
 # ============================================
 async def create_shopify_product(
     shop: str,
@@ -269,11 +316,14 @@ async def create_shopify_product(
 ) -> dict:
     """
     Shopify mein naya product create karta hai
-    + inventory tracking + price + images.
+    + inventory tracking (tracked=true) + quantity + price + images.
     """
 
+    is_available = product_data.get("is_available", True)
+    status = "ACTIVE" if is_available else "DRAFT"
+
     # ========================================
-    # STEP 1: Product create (with tracked inventory)
+    # STEP 1: Product create with tracked=true
     # ========================================
     mutation_create = """
     mutation productCreate($input: ProductCreateInput!) {
@@ -303,14 +353,26 @@ async def create_shopify_product(
     }
     """
 
-    is_available = product_data.get("is_available", True)
-    status = "ACTIVE" if is_available else "DRAFT"
+    # ✅ variant with inventoryItem.tracked=true
+    price_float = 0.0
+    try:
+        price_float = float(product_data.get("price", 0) or 0)
+    except (ValueError, TypeError):
+        price_float = 0.0
 
     input_data = {
         "title": product_data.get("title") or "Untitled Product",
         "descriptionHtml": product_data.get("description", ""),
         "vendor": product_data.get("brand", ""),
         "status": status,
+        "variants": [
+            {
+                "inventoryItem": {
+                    "tracked": True,
+                },
+                "price": str(price_float),
+            }
+        ],
     }
 
     result = await shopify_graphql(
@@ -335,7 +397,7 @@ async def create_shopify_product(
     logger.info(f"   Product ID: {product_id}")
 
     # ========================================
-    # STEP 2: Variant + Inventory Item ID nikalo
+    # STEP 2: Variant + Inventory Item ID
     # ========================================
     variants_edges = (
         shopify_product.get("variants", {}).get("edges", [])
@@ -350,18 +412,14 @@ async def create_shopify_product(
         inventory_item_id = (
             variant_node.get("inventoryItem", {}).get("id")
         )
+        tracked = variant_node.get("inventoryItem", {}).get("tracked")
         logger.info(f"   Variant ID: {variant_id}")
         logger.info(f"   Inventory Item ID: {inventory_item_id}")
+        logger.info(f"   Tracked: {tracked}")
 
     # ========================================
-    # STEP 3: Price update (variant)
+    # STEP 3: Price update (if price > 0)
     # ========================================
-    price_value = product_data.get("price", "0.00")
-    try:
-        price_float = float(price_value) if price_value else 0.0
-    except (ValueError, TypeError):
-        price_float = 0.0
-
     logger.info(f"   Target price: ${price_float}")
 
     if product_id and variant_id and price_float > 0:
@@ -419,10 +477,9 @@ async def create_shopify_product(
                 logger.info(f"✅ Price updated to: ${final_price}")
 
     # ========================================
-    # ✅ STEP 4: INVENTORY SET KARO (NAYA)
+    # STEP 4: INVENTORY SET KARO
     # ========================================
     if inventory_item_id:
-        # Stock quantity nikaalo (default: 100 agar available hai)
         stock_qty = product_data.get("stock_quantity", 0)
 
         # Agar stock 0 hai lekin available hai → 100 default
@@ -522,8 +579,8 @@ async def update_shopify_product_status(
 ) -> bool:
     """
     Shopify product ka status update karta hai.
-    - is_available = True  → status = ACTIVE  (In Stock)
-    - is_available = False → status = DRAFT   (Out of Stock)
+    - is_available = True  → status = ACTIVE
+    - is_available = False → status = DRAFT
     """
     if not shopify_product_id.startswith("gid://"):
         product_gid = f"gid://shopify/Product/{shopify_product_id}"

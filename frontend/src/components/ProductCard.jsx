@@ -1,14 +1,16 @@
 // ============================================
 // frontend/src/components/ProductCard.jsx
 // Amazon-style product card (clean — no dummy data)
-// + Out of Stock tracking (NEW)
+// + Out of Stock + Low Stock tracking
 // ============================================
 
 import { Link } from 'react-router-dom'
 import { productUrl } from '../utils/slugify'
 
 function ProductCard({ product, totalVariants = 1 }) {
+  // ========================================
   // Discount calculate karo
+  // ========================================
   const discount =
     product.amazon_price && product.price && product.amazon_price > product.price
       ? Math.round(
@@ -16,13 +18,24 @@ function ProductCard({ product, totalVariants = 1 }) {
         )
       : 0
 
-  // ✅ NAYA — Out of stock check
+  // ========================================
+  // ✅ Availability checks
+  // ========================================
   const isOutOfStock = product.is_available === false
+  const isLowStock =
+    !isOutOfStock &&
+    product.availability &&
+    product.availability.toLowerCase().includes('left in stock')
 
   return (
     <Link
-      to={productUrl(product)}
-      className="group bg-white rounded-lg overflow-hidden border border-gray-200 hover:shadow-lg transition-all duration-200 flex flex-col"
+      to={isOutOfStock ? '#' : productUrl(product)}
+      onClick={(e) => {
+        if (isOutOfStock) e.preventDefault()
+      }}
+      className={`group bg-white rounded-lg overflow-hidden border border-gray-200 transition-all duration-200 flex flex-col ${
+        isOutOfStock ? 'opacity-90 cursor-not-allowed' : 'hover:shadow-lg'
+      }`}
     >
       {/* ========================================
           IMAGE AREA
@@ -33,7 +46,9 @@ function ProductCard({ product, totalVariants = 1 }) {
             src={product.image_url}
             alt={product.title || 'Product'}
             className={`w-full h-full object-contain transition-transform duration-300 ${
-              isOutOfStock ? 'opacity-50' : 'group-hover:scale-105'
+              isOutOfStock
+                ? 'opacity-60 grayscale'
+                : 'group-hover:scale-105'
             }`}
             loading="lazy"
           />
@@ -43,15 +58,22 @@ function ProductCard({ product, totalVariants = 1 }) {
           </div>
         )}
 
-        {/* ✅ NAYA — Out of Stock badge */}
+        {/* ✅ OUT OF STOCK badge */}
         {isOutOfStock && (
-          <span className="absolute top-2 right-2 bg-[#cc0c39] text-white text-xs font-bold px-2 py-1 rounded">
+          <span className="absolute top-2 right-2 bg-[#cc0c39] text-white text-xs font-bold px-2 py-1 rounded shadow-md">
             OUT OF STOCK
           </span>
         )}
 
+        {/* ✅ LOW STOCK badge */}
+        {isLowStock && (
+          <span className="absolute top-2 right-2 bg-orange-500 text-white text-[10px] font-bold px-2 py-1 rounded shadow-md">
+            LOW STOCK
+          </span>
+        )}
+
         {/* Variants badge */}
-        {totalVariants > 1 && !isOutOfStock && (
+        {totalVariants > 1 && !isOutOfStock && !isLowStock && (
           <span className="absolute top-2 left-2 bg-[#232f3e] text-white text-[10px] font-medium px-2 py-0.5 rounded">
             {totalVariants} variants
           </span>
@@ -59,7 +81,7 @@ function ProductCard({ product, totalVariants = 1 }) {
 
         {/* Discount badge */}
         {discount > 0 && !isOutOfStock && (
-          <span className="absolute top-2 right-2 bg-[#cc0c39] text-white text-xs font-bold px-2 py-1 rounded">
+          <span className="absolute top-2 left-2 bg-[#cc0c39] text-white text-xs font-bold px-2 py-1 rounded">
             -{discount}%
           </span>
         )}
@@ -80,6 +102,21 @@ function ProductCard({ product, totalVariants = 1 }) {
         <h3 className="text-sm text-[#0f1111] line-clamp-2 mb-2 leading-snug min-h-[2.5rem] group-hover:text-[#c7511f] transition-colors">
           {product.title || 'Untitled Product'}
         </h3>
+
+        {/* ✅ Availability text */}
+        {product.availability && (
+          <p
+            className={`text-xs mb-2 ${
+              isOutOfStock
+                ? 'text-red-600 font-medium'
+                : isLowStock
+                ? 'text-orange-600 font-medium'
+                : 'text-[#007185]'
+            }`}
+          >
+            {product.availability}
+          </p>
+        )}
 
         {/* Price */}
         <div className="mt-auto">
@@ -107,7 +144,7 @@ function ProductCard({ product, totalVariants = 1 }) {
           }}
           className={`mt-3 w-full text-sm font-medium py-2 rounded-full transition-colors ${
             isOutOfStock
-              ? 'bg-gray-300 text-gray-500 cursor-not-allowed'
+              ? 'bg-gray-200 text-gray-500 cursor-not-allowed'
               : 'bg-[#ffd814] hover:bg-[#f7ca00] text-[#0f1111]'
           }`}
         >
