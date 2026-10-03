@@ -2,7 +2,8 @@
 # app/services/scheduler.py
 # Har 24 ghante Amazon se fresh prices fetch karne wala scheduler
 # + Out of Stock tracking
-# + Shopify Status Sync (NEW — write_products scope)
+# + Shopify Status Sync (DB token use karta hai)
+# + Inventory quantity sync
 # ============================================
 
 import logging
@@ -12,9 +13,8 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.interval import IntervalTrigger
 from sqlalchemy.orm import Session
 
-from app.config import settings
 from app.database import SessionLocal
-from app.models import Product
+from app.models import Product, ShopifyStore
 from app.services.brightdata import (
     BrightDataError,
     calculate_final_price,
@@ -23,6 +23,9 @@ from app.services.brightdata import (
 from app.services.shopify import (
     update_shopify_product_status,
     get_shopify_product_by_sku,
+    set_inventory_quantity,
+    get_primary_location,
+    shopify_graphql,
 )
 
 logger = logging.getLogger(__name__)
@@ -35,25 +38,33 @@ scheduler = AsyncIOScheduler()
 
 
 # ============================================
-# ✅ HELPER: SHOPIFY STATUS UPDATE KARO
+# ✅ HELPER: SHOPIFY STATUS + INVENTORY SYNC
+# DB se access token use karta hai
 # ============================================
-async def sync_shopify_status(product: Product, is_available: bool):
+async def sync_shopify_product(
+    product: Product,
+    is_available: bool,
+    stock_quantity: int,
+    db: Session,
+):
     """
-    Product ka Shopify status update karta hai.
-    - is_available = True  → Shopify status = ACTIVE (In Stock)
-    - is_available = False → Shopify status = DRAFT (Out of Stock)
-
-    Yeh `write_products` scope se kaam karta hai.
+    Product ka Shopify status + inventory update karta hai.
+    - is_available = True  → status = ACTIVE
+    - is_available = False → status = DRAFT
+    - stock_quantity → inventory set
     """
-    shop = settings.SHOPIFY_SHOP_URL
-    access_token = settings.SHOPIFY_ACCESS_TOKEN
+    # ⚠️ DB se store dhundo (na ke .env se)
+    store = db.query(ShopifyStore).first()
 
-    if not shop or not access_token:
-        logger.warning("Shopify credentials missing — skip")
+    if not store or not store.access_token:
+        logger.warning("⚠️ No Shopify store in DB — skip sync")
         return
 
+    shop = store.shop_domain
+    access_token = store.access_token
+
     try:
-        # Product ID dhundo (agar saved nahi hai to SKU se)
+        # Product ID dhundo
         shopify_id = product.shopify_product_id
 
         if not shopify_id:
@@ -73,23 +84,70 @@ async def sync_shopify_status(product: Product, is_available: bool):
             )
             return
 
-        # Status update karo
-        success = await update_shopify_product_status(
+        # ── Step 1: Status update ──
+        status_success = await update_shopify_product_status(
             shop=shop,
             access_token=access_token,
             shopify_product_id=shopify_id,
             is_available=is_available,
         )
 
-        if success:
+        if status_success:
             logger.info(
-                f"✅ Shopify synced: ASIN={product.asin}, "
+                f"✅ Shopify status synced: ASIN={product.asin}, "
                 f"available={is_available}"
             )
-        else:
-            logger.warning(
-                f"⚠️ Shopify sync failed: ASIN={product.asin}"
+
+        # ── Step 2: Inventory quantity update ──
+        # Variant + inventory item ID nikalo
+        query = """
+        query getProductInventory($id: ID!) {
+          product(id: $id) {
+            variants(first: 1) {
+              edges {
+                node {
+                  id
+                  inventoryItem {
+                    id
+                  }
+                }
+              }
+            }
+          }
+        }
+        """
+
+        result = await shopify_graphql(
+            shop, access_token, query, {"id": shopify_id}
+        )
+
+        edges = (
+            result.get("data", {})
+            .get("product", {})
+            .get("variants", {})
+            .get("edges", [])
+        )
+
+        if edges:
+            inventory_item_id = (
+                edges[0]["node"]
+                .get("inventoryItem", {})
+                .get("id")
             )
+
+            if inventory_item_id:
+                # Stock quantity (0 ho lekin available ho → 100)
+                qty = stock_quantity
+                if qty == 0 and is_available:
+                    qty = 100
+
+                await set_inventory_quantity(
+                    shop=shop,
+                    access_token=access_token,
+                    inventory_item_id=inventory_item_id,
+                    quantity=qty,
+                )
+                logger.info(f"✅ Inventory synced: {qty}")
 
     except Exception as e:
         logger.error(f"❌ Shopify sync error: ASIN={product.asin}: {e}")
@@ -141,7 +199,6 @@ async def update_all_prices():
                 product.stock_quantity = data.get("stock_quantity", 0)
                 product.last_synced_at = datetime.now(timezone.utc)
 
-                # Availability change detect
                 availability_changed = (old_availability != new_availability)
 
                 if availability_changed:
@@ -153,11 +210,15 @@ async def update_all_prices():
                         out_of_stock_count += 1
 
                 # ========================================
-                # ✅ STEP 2: Shopify status update karo
-                # (sirf jab availability change hui ho)
+                # ✅ STEP 2: Shopify sync (status + inventory)
                 # ========================================
                 if availability_changed:
-                    await sync_shopify_status(product, new_availability)
+                    await sync_shopify_product(
+                        product=product,
+                        is_available=new_availability,
+                        stock_quantity=product.stock_quantity,
+                        db=db,
+                    )
                     shopify_synced_count += 1
 
                 # ========================================
@@ -183,10 +244,11 @@ async def update_all_prices():
                 old_price = product.price
                 old_amazon = product.amazon_price
 
+                # ✅ markup_type support
                 new_final_price = calculate_final_price(
                     amazon_price=new_amazon_price,
                     markup=product.markup or 2.0,
-                    markup_type=product.markup_type or "fixed",
+                    markup_type=getattr(product, "markup_type", "fixed") or "fixed",
                 )
 
                 # Update price

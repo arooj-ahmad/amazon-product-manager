@@ -2,6 +2,7 @@
 # app/services/shopify.py
 # Shopify OAuth + GraphQL Admin API + ID Token Verify
 # + Product Status Update (OUT OF STOCK tracking)
+# + Inventory Tracking (NEW)
 # ============================================
 
 import hashlib
@@ -23,10 +24,6 @@ logger = logging.getLogger(__name__)
 # OAUTH: AUTH URL BANAO
 # ============================================
 def build_auth_url(shop: str, state: str = "default") -> str:
-    """
-    Shopify OAuth authorization URL banata hai.
-    Merchant is URL par jaakar app install karega.
-    """
     params = {
         "client_id": settings.SHOPIFY_API_KEY,
         "scope": settings.SHOPIFY_SCOPES,
@@ -40,10 +37,6 @@ def build_auth_url(shop: str, state: str = "default") -> str:
 # OAUTH: HMAC VERIFY KARO
 # ============================================
 def verify_hmac(query_params: dict) -> bool:
-    """
-    Shopify se aane wale OAuth callback ka HMAC verify karta hai.
-    Security ke liye zaroori hai.
-    """
     received_hmac = query_params.get("hmac")
     if not received_hmac:
         return False
@@ -64,10 +57,6 @@ def verify_hmac(query_params: dict) -> bool:
 # ID TOKEN VERIFY KARO (Strict Mode)
 # ============================================
 def verify_id_token(token: str) -> dict:
-    """
-    Shopify ID token (JWT) verify karta hai.
-    Strict mode — saare claims check hote hain.
-    """
     try:
         payload = jwt.decode(
             token,
@@ -90,9 +79,7 @@ def verify_id_token(token: str) -> dict:
 
         iss_domain = iss.replace("https://", "").split("/")[0]
         dest_domain = (
-            payload.get("dest", "")
-            .replace("https://", "")
-            .split("/")[0]
+            payload.get("dest", "").replace("https://", "").split("/")[0]
         )
 
         if iss_domain != dest_domain:
@@ -114,10 +101,6 @@ def verify_id_token(token: str) -> dict:
 # OAUTH: ACCESS TOKEN EXCHANGE
 # ============================================
 async def exchange_code_for_token(shop: str, code: str) -> Optional[str]:
-    """
-    OAuth code ko access token se exchange karta hai.
-    Ye token permanent hai — DB mein save karna hai.
-    """
     url = f"https://{shop}/admin/oauth/access_token"
 
     payload = {
@@ -146,9 +129,6 @@ async def shopify_graphql(
     query: str,
     variables: dict = None,
 ) -> dict:
-    """
-    Shopify Admin GraphQL API ko call karta hai.
-    """
     url = (
         f"https://{shop}/admin/api/"
         f"{settings.SHOPIFY_API_VERSION}/graphql.json"
@@ -174,27 +154,68 @@ async def shopify_graphql(
 
 
 # ============================================
-# PRODUCT CREATE KARO (GraphQL)
+# ✅ NAYA — PRIMARY LOCATION DHUNDO
+# Inventory set karne ke liye zaroori hai
 # ============================================
-async def create_shopify_product(
-    shop: str,
-    access_token: str,
-    product_data: dict,
-) -> dict:
+async def get_primary_location(shop: str, access_token: str) -> Optional[str]:
     """
-    Shopify mein naya product create karta hai.
+    Shopify store ka primary location ID dhundo.
+    """
+    query = """
+    query {
+      locations(first: 1) {
+        edges {
+          node {
+            id
+            name
+            isActive
+          }
+        }
+      }
+    }
     """
 
-    # ========================================
-    # STEP 1: Product create
-    # ========================================
-    mutation_create = """
-    mutation productCreate($input: ProductCreateInput!) {
-      productCreate(product: $input) {
-        product {
-          id
-          title
-          handle
+    result = await shopify_graphql(shop, access_token, query)
+
+    if "errors" in result:
+        logger.error(f"Location query errors: {result['errors']}")
+        return None
+
+    edges = result.get("data", {}).get("locations", {}).get("edges", [])
+
+    if edges:
+        location_id = edges[0]["node"]["id"]
+        logger.info(f"Primary location: {location_id}")
+        return location_id
+
+    logger.warning("No location found")
+    return None
+
+
+# ============================================
+# ✅ NAYA — INVENTORY SET KARO
+# ============================================
+async def set_inventory_quantity(
+    shop: str,
+    access_token: str,
+    inventory_item_id: str,
+    quantity: int,
+) -> bool:
+    """
+    Product ka inventory quantity set karta hai.
+    """
+    # Location ID chahiye
+    location_id = await get_primary_location(shop, access_token)
+    if not location_id:
+        logger.warning("No location — inventory set nahi hoga")
+        return False
+
+    mutation = """
+    mutation inventorySetQuantities($input: InventorySetQuantitiesInput!) {
+      inventorySetQuantities(input: $input) {
+        inventoryAdjustmentGroup {
+          createdAt
+          reason
         }
         userErrors {
           field
@@ -204,11 +225,92 @@ async def create_shopify_product(
     }
     """
 
+    variables = {
+        "input": {
+            "name": "available",
+            "reason": "correction",
+            "quantities": [
+                {
+                    "inventoryItemId": inventory_item_id,
+                    "locationId": location_id,
+                    "quantity": quantity,
+                }
+            ],
+        }
+    }
+
+    result = await shopify_graphql(shop, access_token, mutation, variables)
+
+    if "errors" in result:
+        logger.error(f"❌ Inventory set GraphQL errors: {result['errors']}")
+        return False
+
+    inv_errors = (
+        result.get("data", {})
+        .get("inventorySetQuantities", {})
+        .get("userErrors", [])
+    )
+
+    if inv_errors:
+        logger.error(f"❌ Inventory set user errors: {inv_errors}")
+        return False
+
+    logger.info(f"✅ Inventory set to: {quantity}")
+    return True
+
+
+# ============================================
+# PRODUCT CREATE KARO (GraphQL) — WITH INVENTORY
+# ============================================
+async def create_shopify_product(
+    shop: str,
+    access_token: str,
+    product_data: dict,
+) -> dict:
+    """
+    Shopify mein naya product create karta hai
+    + inventory tracking + price + images.
+    """
+
+    # ========================================
+    # STEP 1: Product create (with tracked inventory)
+    # ========================================
+    mutation_create = """
+    mutation productCreate($input: ProductCreateInput!) {
+      productCreate(product: $input) {
+        product {
+          id
+          title
+          handle
+          variants(first: 1) {
+            edges {
+              node {
+                id
+                price
+                inventoryItem {
+                  id
+                  tracked
+                }
+              }
+            }
+          }
+        }
+        userErrors {
+          field
+          message
+        }
+      }
+    }
+    """
+
+    is_available = product_data.get("is_available", True)
+    status = "ACTIVE" if is_available else "DRAFT"
+
     input_data = {
         "title": product_data.get("title") or "Untitled Product",
         "descriptionHtml": product_data.get("description", ""),
         "vendor": product_data.get("brand", ""),
-        "status": "ACTIVE",
+        "status": status,
     }
 
     result = await shopify_graphql(
@@ -233,7 +335,26 @@ async def create_shopify_product(
     logger.info(f"   Product ID: {product_id}")
 
     # ========================================
-    # STEP 2: Price update (variant)
+    # STEP 2: Variant + Inventory Item ID nikalo
+    # ========================================
+    variants_edges = (
+        shopify_product.get("variants", {}).get("edges", [])
+    )
+
+    variant_id = None
+    inventory_item_id = None
+
+    if variants_edges:
+        variant_node = variants_edges[0]["node"]
+        variant_id = variant_node.get("id")
+        inventory_item_id = (
+            variant_node.get("inventoryItem", {}).get("id")
+        )
+        logger.info(f"   Variant ID: {variant_id}")
+        logger.info(f"   Inventory Item ID: {inventory_item_id}")
+
+    # ========================================
+    # STEP 3: Price update (variant)
     # ========================================
     price_value = product_data.get("price", "0.00")
     try:
@@ -243,97 +364,85 @@ async def create_shopify_product(
 
     logger.info(f"   Target price: ${price_float}")
 
-    if product_id and price_float > 0:
-        query_variants = """
-        query getProductVariants($id: ID!) {
-          product(id: $id) {
-            variants(first: 5) {
-              edges {
-                node {
-                  id
-                  price
-                  title
-                }
-              }
+    if product_id and variant_id and price_float > 0:
+        mutation_update = """
+        mutation productVariantsBulkUpdate(
+          $productId: ID!,
+          $variants: [ProductVariantsBulkInput!]!
+        ) {
+          productVariantsBulkUpdate(
+            productId: $productId,
+            variants: $variants
+          ) {
+            productVariants {
+              id
+              price
+            }
+            userErrors {
+              field
+              message
             }
           }
         }
         """
 
-        variant_result = await shopify_graphql(
-            shop, access_token, query_variants, {"id": product_id}
+        variables_update = {
+            "productId": product_id,
+            "variants": [
+                {
+                    "id": variant_id,
+                    "price": str(price_float),
+                }
+            ],
+        }
+
+        update_result = await shopify_graphql(
+            shop, access_token, mutation_update, variables_update
         )
 
-        variants_data = (
-            variant_result.get("data", {})
-            .get("product", {})
-            .get("variants", {})
-            .get("edges", [])
+        update_errors = (
+            update_result.get("data", {})
+            .get("productVariantsBulkUpdate", {})
+            .get("userErrors", [])
         )
 
-        logger.info(f"   Variants found: {len(variants_data)}")
-
-        if variants_data:
-            variant_id = variants_data[0]["node"]["id"]
-            logger.info(f"   Variant ID: {variant_id}")
-
-            mutation_update = """
-            mutation productVariantsBulkUpdate(
-              $productId: ID!,
-              $variants: [ProductVariantsBulkInput!]!
-            ) {
-              productVariantsBulkUpdate(
-                productId: $productId,
-                variants: $variants
-              ) {
-                productVariants {
-                  id
-                  price
-                }
-                userErrors {
-                  field
-                  message
-                }
-              }
-            }
-            """
-
-            variables_update = {
-                "productId": product_id,
-                "variants": [
-                    {
-                        "id": variant_id,
-                        "price": str(price_float),
-                    }
-                ],
-            }
-
-            update_result = await shopify_graphql(
-                shop, access_token, mutation_update, variables_update
-            )
-
-            update_errors = (
+        if update_errors:
+            logger.error(f"❌ Price update errors: {update_errors}")
+        else:
+            updated_variants = (
                 update_result.get("data", {})
                 .get("productVariantsBulkUpdate", {})
-                .get("userErrors", [])
+                .get("productVariants", [])
             )
-
-            if update_errors:
-                logger.error(f"❌ Price update errors: {update_errors}")
-            else:
-                updated_variants = (
-                    update_result.get("data", {})
-                    .get("productVariantsBulkUpdate", {})
-                    .get("productVariants", [])
-                )
-                if updated_variants:
-                    final_price = updated_variants[0].get("price")
-                    logger.info(f"✅ Price updated to: ${final_price}")
-        else:
-            logger.warning("⚠️ No variants found after create")
+            if updated_variants:
+                final_price = updated_variants[0].get("price")
+                logger.info(f"✅ Price updated to: ${final_price}")
 
     # ========================================
-    # STEP 3: Images add karo
+    # ✅ STEP 4: INVENTORY SET KARO (NAYA)
+    # ========================================
+    if inventory_item_id:
+        # Stock quantity nikaalo (default: 100 agar available hai)
+        stock_qty = product_data.get("stock_quantity", 0)
+
+        # Agar stock 0 hai lekin available hai → 100 default
+        if stock_qty == 0 and is_available:
+            stock_qty = 100
+            logger.info(f"   Stock 0 → Default 100 set kiya")
+
+        logger.info(f"   Setting inventory to: {stock_qty}")
+
+        await set_inventory_quantity(
+            shop=shop,
+            access_token=access_token,
+            inventory_item_id=inventory_item_id,
+            quantity=stock_qty,
+        )
+    else:
+        logger.warning("⚠️ No inventory_item_id — inventory set nahi hoga")
+
+    # ========================================
+    # STEP 5: Images add karo
     # ========================================
     images = product_data.get("images", [])
     if product_id and images:
@@ -360,9 +469,6 @@ async def add_product_images(
     product_id: str,
     image_urls: list,
 ) -> dict:
-    """
-    Product ke liye images add karta hai (Shopify Media API se).
-    """
     mutation = """
     mutation productCreateMedia(
       $productId: ID!,
@@ -406,9 +512,7 @@ async def add_product_images(
 
 
 # ============================================
-# ✅ NAYA — PRODUCT STATUS UPDATE
-# (In Stock ↔ Out of Stock)
-# write_products scope se kaam karta hai
+# PRODUCT STATUS UPDATE (In Stock ↔ Out of Stock)
 # ============================================
 async def update_shopify_product_status(
     shop: str,
@@ -418,14 +522,9 @@ async def update_shopify_product_status(
 ) -> bool:
     """
     Shopify product ka status update karta hai.
-
     - is_available = True  → status = ACTIVE  (In Stock)
-    - is_available = False → status = DRAFT   (Sold Out / Out of Stock)
-
-    Yeh `write_products` scope se kaam karta hai —
-    koi naya scope add karne ki zaroorat nahi.
+    - is_available = False → status = DRAFT   (Out of Stock)
     """
-    # ID format check karo
     if not shopify_product_id.startswith("gid://"):
         product_gid = f"gid://shopify/Product/{shopify_product_id}"
     else:
@@ -460,11 +559,8 @@ async def update_shopify_product_status(
         f"Shopify status update: product={product_gid}, status={new_status}"
     )
 
-    result = await shopify_graphql(
-        shop, access_token, mutation, variables
-    )
+    result = await shopify_graphql(shop, access_token, mutation, variables)
 
-    # Errors check
     if "errors" in result:
         logger.error(f"❌ Status update GraphQL errors: {result['errors']}")
         return False
@@ -485,7 +581,7 @@ async def update_shopify_product_status(
 
 
 # ============================================
-# ✅ NAYA — SHOPIFY PRODUCT DHUNDO SKU SE
+# SHOPIFY PRODUCT DHUNDO SKU SE
 # ============================================
 async def get_shopify_product_by_sku(
     shop: str,
@@ -494,7 +590,6 @@ async def get_shopify_product_by_sku(
 ) -> Optional[str]:
     """
     Shopify product ID dhundo SKU (ASIN) se.
-    Returns: Shopify Product GID (e.g., "gid://shopify/Product/12345")
     """
     query = """
     query getProductBySku($query: String!) {
@@ -504,6 +599,16 @@ async def get_shopify_product_by_sku(
             id
             title
             status
+            variants(first: 1) {
+              edges {
+                node {
+                  id
+                  inventoryItem {
+                    id
+                  }
+                }
+              }
+            }
           }
         }
       }
@@ -519,9 +624,7 @@ async def get_shopify_product_by_sku(
         return None
 
     edges = (
-        result.get("data", {})
-        .get("products", {})
-        .get("edges", [])
+        result.get("data", {}).get("products", {}).get("edges", [])
     )
 
     if edges:
