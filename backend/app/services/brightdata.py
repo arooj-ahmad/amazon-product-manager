@@ -159,23 +159,31 @@ async def fetch_product_from_brightdata(amazon_url: str) -> dict:
 
     # ----------------------------------------
     # ✅ NAYA: Availability extract karo
-    # ----------------------------------------
+    # ========================================
+    # ✅ IMPROVED: Amazon "Add to Cart" check
+    # ========================================
     availability_text = (
         raw.get("availability")
         or raw.get("availabilityText")
         or raw.get("availability_text")
-        or "In Stock"
+        or ""
     )
 
-    # Check karo out of stock hai ya nahi
-    is_available = True
-    stock_quantity = 0
+    # Priority 1: Direct boolean fields (sabse reliable)
+    add_to_cart_available = raw.get("add_to_cart_available")
+    buybox_available = raw.get("buybox_available")
 
-    if isinstance(availability_text, bool):
-        is_available = availability_text
-    elif isinstance(availability_text, str):
+    if isinstance(add_to_cart_available, bool):
+        is_available = add_to_cart_available
+        logger.info(f"Using add_to_cart_available: {is_available}")
+
+    elif isinstance(buybox_available, bool):
+        is_available = buybox_available
+        logger.info(f"Using buybox_available: {is_available}")
+
+    elif isinstance(availability_text, str) and availability_text:
+        # Priority 2: Text parsing
         avail_lower = availability_text.lower()
-        # Out of stock keywords
         out_of_stock_keywords = [
             "out of stock",
             "unavailable",
@@ -183,16 +191,31 @@ async def fetch_product_from_brightdata(amazon_url: str) -> dict:
             "not available",
             "sold out",
             "temporarily out",
+            "no disponible",
         ]
         is_available = not any(kw in avail_lower for kw in out_of_stock_keywords)
+        logger.info(
+            f"Using availability text: {availability_text} → {is_available}"
+        )
 
-    # Stock quantity (agar Bright Data deta hai)
+    else:
+        # Priority 3: Data missing → safe default
+        is_available = False
+        logger.warning("No availability data → defaulting to OUT OF STOCK")
+
+    # ----------------------------------------
+    # Stock quantity
+    # ----------------------------------------
     stock_quantity = raw.get("stock_quantity") or raw.get("stock") or 0
     try:
         stock_quantity = int(stock_quantity) if stock_quantity else 0
     except (ValueError, TypeError):
         stock_quantity = 0
 
+    # ✅ NAYA: Agar out of stock hai toh stock 0 force karo
+    if not is_available:
+        stock_quantity = 0
+        logger.info("Product out of stock → stock_quantity forced to 0")
     # ----------------------------------------
     # Specifications extract karo
     # ----------------------------------------

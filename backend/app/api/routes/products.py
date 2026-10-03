@@ -3,8 +3,10 @@
 # Product CRUD + Variation grouping + Slug
 # + Markup Settings endpoints
 # + Out of Stock tracking (NEW)
+# + Real-time availability check (Storefront API)
 # ============================================
 
+import logging
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -29,6 +31,12 @@ from app.services.brightdata import (
     calculate_final_price,
     fetch_product_from_brightdata,
 )
+
+# ✅ NAYA — Storefront availability check import
+from app.services.shopify import check_product_availability
+
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api", tags=["Products"])
 
@@ -88,6 +96,53 @@ def get_all_products(db: Session = Depends(get_db)):
         total=len(variant_groups),
         groups=variant_groups,
     )
+
+
+# ============================================
+# ✅ NAYA — AVAILABILITY CHECK (Storefront API)
+# ⚠️ IMPORTANT: Ye {product_id} route se PEHLE hona chahiye
+# ============================================
+@router.get("/products/{product_id}/availability")
+async def get_product_availability(
+    product_id: int,
+    db: Session = Depends(get_db),
+):
+    """
+    Product ki real-time availability check karta hai.
+    Pehle Shopify Storefront API try karta hai,
+    fail hone par Supabase (local DB) fallback.
+    """
+    product = db.query(Product).filter(Product.id == product_id).first()
+    if not product:
+        raise HTTPException(status_code=404, detail="Product not found")
+
+    # Agar Shopify ID nahi hai → Supabase fallback
+    if not product.shopify_product_id:
+        return {
+            "available": product.is_available,
+            "quantity": product.stock_quantity or 0,
+            "source": "supabase",
+        }
+
+    # Storefront API se check
+    availability = await check_product_availability(
+        shopify_product_id=product.shopify_product_id,
+    )
+
+    # Agar API fail ho jaye → Supabase fallback
+    if availability.get("source") == "none":
+        logger.warning(
+            f"Storefront API failed for product {product_id}, "
+            f"using Supabase fallback"
+        )
+        return {
+            "available": product.is_available,
+            "quantity": product.stock_quantity or 0,
+            "source": "supabase",
+            "fallback_reason": availability.get("error"),
+        }
+
+    return availability
 
 
 # ⚠️ SLUG ENDPOINT — numeric se PEHLE
@@ -239,7 +294,7 @@ async def admin_fetch_product(
             detail=f"Product already exists (ASIN: {asin})",
         )
 
-    # ✅ Admin ka markup use karo
+    # Admin ka markup use karo
     user_markup = payload.markup if payload.markup is not None else 2.0
     user_markup_type = payload.markup_type or "fixed"
 
@@ -266,7 +321,7 @@ async def admin_fetch_product(
         markup=user_markup,
         markup_type=user_markup_type,
         is_manual_override=False,
-        # ✅ NAYA — Out of Stock tracking
+        # NAYA — Out of Stock tracking
         availability=data.get("availability", "In Stock"),
         is_available=data.get("is_available", True),
         stock_quantity=data.get("stock_quantity", 0),

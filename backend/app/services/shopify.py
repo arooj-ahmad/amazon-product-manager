@@ -4,6 +4,7 @@
 # + Product Status Update (OUT OF STOCK tracking)
 # + Inventory Tracking (with changeFromQuantity)
 # + 2026-07 API compatible (variants removed from productCreate)
+# + Storefront API (real-time availability check)
 # ============================================
 
 import hashlib
@@ -122,7 +123,7 @@ async def exchange_code_for_token(shop: str, code: str) -> Optional[str]:
 
 
 # ============================================
-# GRAPHQL API CALL
+# GRAPHQL API CALL (Admin API)
 # ============================================
 async def shopify_graphql(
     shop: str,
@@ -157,9 +158,6 @@ async def shopify_graphql(
 # ============================================
 # PRIMARY LOCATION DHUNDO
 # ============================================
-# ============================================
-# PRIMARY LOCATION DHUNDO (Shop location preferred)
-# ============================================
 async def get_primary_location(shop: str, access_token: str) -> Optional[str]:
     """
     Shopify store ka primary location ID dhundo.
@@ -192,7 +190,7 @@ async def get_primary_location(shop: str, access_token: str) -> Optional[str]:
         logger.warning("No location found")
         return None
 
-    # ✅ Priority 1: Location named "Shop location"
+    # Priority 1: Location named "Shop location"
     for edge in edges:
         node = edge["node"]
         name = node.get("name", "")
@@ -200,14 +198,14 @@ async def get_primary_location(shop: str, access_token: str) -> Optional[str]:
             logger.info(f"✅ Shop location found: {node['id']}")
             return node["id"]
 
-    # ✅ Priority 2: Primary location (agar isPrimary true ho)
+    # Priority 2: Primary location
     for edge in edges:
         node = edge["node"]
         if node.get("isPrimary"):
             logger.info(f"✅ Primary location: {node['id']}")
             return node["id"]
 
-    # ✅ Priority 3: First active location
+    # Priority 3: First active location
     for edge in edges:
         node = edge["node"]
         if node.get("isActive"):
@@ -220,13 +218,6 @@ async def get_primary_location(shop: str, access_token: str) -> Optional[str]:
     return location_id
 
 
-
-# ============================================
-# INVENTORY SET KARO (with changeFromQuantity)
-# ============================================
-# ============================================
-# INVENTORY SET KARO (with changeFromQuantity)
-# ============================================
 # ============================================
 # INVENTORY SET KARO (with changeFromQuantity + @idempotent)
 # ============================================
@@ -281,10 +272,10 @@ async def set_inventory_quantity(
 
     logger.info(f"   Current inventory: {current_qty}, target: {quantity}")
 
-    # ✅ Unique idempotency key
+    # Unique idempotency key
     idempotency_key = str(uuid.uuid4())
 
-    # ✅ Mutation with @idempotent directive
+    # Mutation with @idempotent directive
     mutation = """
     mutation inventorySetQuantities($input: InventorySetQuantitiesInput!) {
       inventorySetQuantities(input: $input) @idempotent(key: "%s") {
@@ -336,7 +327,7 @@ async def set_inventory_quantity(
 
 
 # ============================================
-# ✅ NAYA — VARIANT UPDATE WITH TRACKED
+# VARIANT UPDATE WITH TRACKED
 # ============================================
 async def update_variant_with_tracked(
     shop: str,
@@ -420,8 +411,7 @@ async def update_variant_with_tracked(
 
 
 # ============================================
-# ✅ PRODUCT CREATE — 2026-07 COMPATIBLE
-# Product create karo → phir variant update karo
+# PRODUCT CREATE — 2026-07 COMPATIBLE
 # ============================================
 async def create_shopify_product(
     shop: str,
@@ -477,7 +467,6 @@ async def create_shopify_product(
     }
     """
 
-    # ✅ Koi variants field nahi
     input_data = {
         "title": product_data.get("title") or "Untitled Product",
         "descriptionHtml": product_data.get("description", ""),
@@ -639,7 +628,7 @@ async def update_shopify_product_status(
     is_available: bool,
 ) -> bool:
     if not shopify_product_id.startswith("gid://"):
-        product_gid = f"gid://shopify/Product/{shopify_product_id}"
+        product_gid = f"gid://Shopify/Product/{shopify_product_id}"
     else:
         product_gid = shopify_product_id
 
@@ -744,3 +733,141 @@ async def get_shopify_product_by_sku(
 
     logger.warning(f"No Shopify product found for SKU={sku}")
     return None
+
+
+# ============================================
+# ✅ STOREFRONT API — REAL-TIME AVAILABILITY CHECK
+# ============================================
+async def check_product_availability(
+    shopify_product_id: str,
+) -> dict:
+    """
+    Shopify Storefront API se product ki real-time availability check karta hai.
+    Admin API token ki zaroorat NAHI — Storefront token use hota hai.
+
+    Returns:
+        {
+            "available": True/False,
+            "quantity": X,
+            "title": "...",
+            "variants": [...],
+            "source": "shopify"
+        }
+    """
+    # GID banayein
+    if not shopify_product_id.startswith("gid://"):
+        product_gid = f"gid://shopify/Product/{shopify_product_id}"
+    else:
+        product_gid = shopify_product_id
+
+    store_domain = settings.SHOPIFY_SHOP_URL
+    storefront_token = settings.SHOPIFY_STOREFRONT_TOKEN
+
+    if not storefront_token:
+        logger.warning("Storefront token missing")
+        return {
+            "available": None,
+            "error": "Storefront token not configured",
+            "source": "none",
+        }
+
+    if not store_domain:
+        logger.warning("Shop URL missing")
+        return {
+            "available": None,
+            "error": "SHOPIFY_SHOP_URL not configured",
+            "source": "none",
+        }
+
+    # Storefront API URL
+    api_url = (
+        f"https://{store_domain}/api/"
+        f"{settings.SHOPIFY_API_VERSION}/graphql.json"
+    )
+
+    query = """
+    query getProductAvailability($id: ID!) {
+      product(id: $id) {
+        id
+        title
+        availableForSale
+        totalInventory
+        variants(first: 10) {
+          edges {
+            node {
+              id
+              title
+              availableForSale
+              quantityAvailable
+              price {
+                amount
+                currencyCode
+              }
+            }
+          }
+        }
+      }
+    }
+    """
+
+    # Storefront token header (Admin token header se different)
+    headers = {
+        "X-Shopify-Storefront-Access-Token": storefront_token,
+        "Content-Type": "application/json",
+    }
+
+    try:
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            response = await client.post(
+                api_url,
+                headers=headers,
+                json={"query": query, "variables": {"id": product_gid}},
+            )
+            response.raise_for_status()
+            data = response.json()
+
+        product = data.get("data", {}).get("product")
+        if not product:
+            return {
+                "available": False,
+                "source": "shopify",
+                "error": "Product not found in Shopify Storefront",
+            }
+
+        variants = []
+        for edge in product.get("variants", {}).get("edges", []):
+            v = edge["node"]
+            variants.append({
+                "id": v["id"],
+                "title": v["title"],
+                "available": v["availableForSale"],
+                "quantity": v.get("quantityAvailable", 0),
+                "price": float(v["price"]["amount"]),
+                "currency": v["price"]["currencyCode"],
+            })
+
+        return {
+            "available": product["availableForSale"],
+            "quantity": product.get("totalInventory", 0),
+            "title": product["title"],
+            "variants": variants,
+            "source": "shopify",
+        }
+
+    except httpx.HTTPStatusError as e:
+        logger.error(
+            f"Storefront API HTTP error: {e.response.status_code} — "
+            f"{e.response.text[:200]}"
+        )
+        return {
+            "available": None,
+            "error": f"HTTP {e.response.status_code}",
+            "source": "none",
+        }
+    except Exception as e:
+        logger.error(f"Storefront API error: {e}")
+        return {
+            "available": None,
+            "error": str(e),
+            "source": "none",
+        }
