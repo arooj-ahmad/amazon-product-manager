@@ -3,6 +3,7 @@
 # Shopify OAuth + GraphQL Admin API + ID Token Verify
 # + Product Status Update (OUT OF STOCK tracking)
 # + Inventory Tracking (with changeFromQuantity)
+# + 2026-07 API compatible (variants removed from productCreate)
 # ============================================
 
 import hashlib
@@ -157,9 +158,6 @@ async def shopify_graphql(
 # PRIMARY LOCATION DHUNDO
 # ============================================
 async def get_primary_location(shop: str, access_token: str) -> Optional[str]:
-    """
-    Shopify store ka primary location ID dhundo.
-    """
     query = """
     query {
       locations(first: 1) {
@@ -192,8 +190,7 @@ async def get_primary_location(shop: str, access_token: str) -> Optional[str]:
 
 
 # ============================================
-# ✅ INVENTORY SET KARO (with changeFromQuantity)
-# Shopify API 2026-07 format
+# INVENTORY SET KARO (with changeFromQuantity)
 # ============================================
 async def set_inventory_quantity(
     shop: str,
@@ -201,19 +198,12 @@ async def set_inventory_quantity(
     inventory_item_id: str,
     quantity: int,
 ) -> bool:
-    """
-    Product ka inventory quantity set karta hai.
-    Shopify API 2026-07 ke naye format ke saath.
-    """
-    # Location ID chahiye
     location_id = await get_primary_location(shop, access_token)
     if not location_id:
         logger.warning("No location — inventory set nahi hoga")
         return False
 
-    # ========================================
-    # Step 1: Current inventory fetch karo
-    # ========================================
+    # Current inventory fetch
     query_current = """
     query getInventoryLevel($inventoryItemId: ID!, $locationId: ID!) {
       inventoryItem(id: $inventoryItemId) {
@@ -234,7 +224,6 @@ async def set_inventory_quantity(
         {"inventoryItemId": inventory_item_id, "locationId": location_id},
     )
 
-    # Current quantity nikalo (default 0)
     current_qty = 0
     try:
         quantities = (
@@ -252,9 +241,7 @@ async def set_inventory_quantity(
 
     logger.info(f"   Current inventory: {current_qty}, target: {quantity}")
 
-    # ========================================
-    # Step 2: Inventory set karo with changeFromQuantity
-    # ========================================
+    # Set inventory
     mutation = """
     mutation inventorySetQuantities($input: InventorySetQuantitiesInput!) {
       inventorySetQuantities(input: $input) {
@@ -307,7 +294,92 @@ async def set_inventory_quantity(
 
 
 # ============================================
-# PRODUCT CREATE KARO (with tracked inventory)
+# ✅ NAYA — VARIANT UPDATE WITH TRACKED
+# ============================================
+async def update_variant_with_tracked(
+    shop: str,
+    access_token: str,
+    product_id: str,
+    variant_id: str,
+    price: float,
+) -> bool:
+    """
+    Variant update karta hai with:
+    - price
+    - inventoryItem.tracked = true
+    """
+    mutation = """
+    mutation productVariantsBulkUpdate(
+      $productId: ID!,
+      $variants: [ProductVariantsBulkInput!]!
+    ) {
+      productVariantsBulkUpdate(
+        productId: $productId,
+        variants: $variants
+      ) {
+        productVariants {
+          id
+          price
+          inventoryItem {
+            id
+            tracked
+          }
+        }
+        userErrors {
+          field
+          message
+        }
+      }
+    }
+    """
+
+    variables = {
+        "productId": product_id,
+        "variants": [
+            {
+                "id": variant_id,
+                "price": str(price),
+                "inventoryItem": {
+                    "tracked": True,
+                },
+            }
+        ],
+    }
+
+    result = await shopify_graphql(shop, access_token, mutation, variables)
+
+    if "errors" in result:
+        logger.error(f"❌ Variant update errors: {result['errors']}")
+        return False
+
+    update_errors = (
+        result.get("data", {})
+        .get("productVariantsBulkUpdate", {})
+        .get("userErrors", [])
+    )
+
+    if update_errors:
+        logger.error(f"❌ Variant update user errors: {update_errors}")
+        return False
+
+    updated = (
+        result.get("data", {})
+        .get("productVariantsBulkUpdate", {})
+        .get("productVariants", [])
+    )
+
+    if updated:
+        v = updated[0]
+        logger.info(f"✅ Variant updated: price=${v.get('price')}, "
+                    f"tracked={v.get('inventoryItem', {}).get('tracked')}")
+        return True
+
+    return False
+
+
+# ============================================
+# ✅ PRODUCT CREATE — 2026-07 COMPATIBLE
+# Product create karo → phir variant update karo
 # ============================================
 async def create_shopify_product(
     shop: str,
@@ -315,15 +387,25 @@ async def create_shopify_product(
     product_data: dict,
 ) -> dict:
     """
-    Shopify mein naya product create karta hai
-    + inventory tracking (tracked=true) + quantity + price + images.
+    Shopify mein naya product create karta hai.
+    2026-07 API ke saath compatible:
+      1. Product create (simple)
+      2. Variant update (tracked=true + price)
+      3. Inventory set
+      4. Images add
     """
 
     is_available = product_data.get("is_available", True)
     status = "ACTIVE" if is_available else "DRAFT"
 
+    price_float = 0.0
+    try:
+        price_float = float(product_data.get("price", 0) or 0)
+    except (ValueError, TypeError):
+        price_float = 0.0
+
     # ========================================
-    # STEP 1: Product create with tracked=true
+    # STEP 1: Product create (NO variants field)
     # ========================================
     mutation_create = """
     mutation productCreate($input: ProductCreateInput!) {
@@ -353,26 +435,12 @@ async def create_shopify_product(
     }
     """
 
-    # ✅ variant with inventoryItem.tracked=true
-    price_float = 0.0
-    try:
-        price_float = float(product_data.get("price", 0) or 0)
-    except (ValueError, TypeError):
-        price_float = 0.0
-
+    # ✅ Koi variants field nahi
     input_data = {
         "title": product_data.get("title") or "Untitled Product",
         "descriptionHtml": product_data.get("description", ""),
         "vendor": product_data.get("brand", ""),
         "status": status,
-        "variants": [
-            {
-                "inventoryItem": {
-                    "tracked": True,
-                },
-                "price": str(price_float),
-            }
-        ],
     }
 
     result = await shopify_graphql(
@@ -412,77 +480,28 @@ async def create_shopify_product(
         inventory_item_id = (
             variant_node.get("inventoryItem", {}).get("id")
         )
-        tracked = variant_node.get("inventoryItem", {}).get("tracked")
         logger.info(f"   Variant ID: {variant_id}")
         logger.info(f"   Inventory Item ID: {inventory_item_id}")
-        logger.info(f"   Tracked: {tracked}")
 
     # ========================================
-    # STEP 3: Price update (if price > 0)
+    # STEP 3: Variant update with tracked=true + price
     # ========================================
-    logger.info(f"   Target price: ${price_float}")
-
     if product_id and variant_id and price_float > 0:
-        mutation_update = """
-        mutation productVariantsBulkUpdate(
-          $productId: ID!,
-          $variants: [ProductVariantsBulkInput!]!
-        ) {
-          productVariantsBulkUpdate(
-            productId: $productId,
-            variants: $variants
-          ) {
-            productVariants {
-              id
-              price
-            }
-            userErrors {
-              field
-              message
-            }
-          }
-        }
-        """
-
-        variables_update = {
-            "productId": product_id,
-            "variants": [
-                {
-                    "id": variant_id,
-                    "price": str(price_float),
-                }
-            ],
-        }
-
-        update_result = await shopify_graphql(
-            shop, access_token, mutation_update, variables_update
+        logger.info(f"   Target price: ${price_float}")
+        await update_variant_with_tracked(
+            shop=shop,
+            access_token=access_token,
+            product_id=product_id,
+            variant_id=variant_id,
+            price=price_float,
         )
-
-        update_errors = (
-            update_result.get("data", {})
-            .get("productVariantsBulkUpdate", {})
-            .get("userErrors", [])
-        )
-
-        if update_errors:
-            logger.error(f"❌ Price update errors: {update_errors}")
-        else:
-            updated_variants = (
-                update_result.get("data", {})
-                .get("productVariantsBulkUpdate", {})
-                .get("productVariants", [])
-            )
-            if updated_variants:
-                final_price = updated_variants[0].get("price")
-                logger.info(f"✅ Price updated to: ${final_price}")
 
     # ========================================
-    # STEP 4: INVENTORY SET KARO
+    # STEP 4: INVENTORY SET
     # ========================================
     if inventory_item_id:
         stock_qty = product_data.get("stock_quantity", 0)
 
-        # Agar stock 0 hai lekin available hai → 100 default
         if stock_qty == 0 and is_available:
             stock_qty = 100
             logger.info(f"   Stock 0 → Default 100 set kiya")
@@ -577,11 +596,6 @@ async def update_shopify_product_status(
     shopify_product_id: str,
     is_available: bool,
 ) -> bool:
-    """
-    Shopify product ka status update karta hai.
-    - is_available = True  → status = ACTIVE
-    - is_available = False → status = DRAFT
-    """
     if not shopify_product_id.startswith("gid://"):
         product_gid = f"gid://shopify/Product/{shopify_product_id}"
     else:
@@ -645,9 +659,6 @@ async def get_shopify_product_by_sku(
     access_token: str,
     sku: str,
 ) -> Optional[str]:
-    """
-    Shopify product ID dhundo SKU (ASIN) se.
-    """
     query = """
     query getProductBySku($query: String!) {
       products(first: 1, query: $query) {
