@@ -29,6 +29,13 @@ export const getProductVariants = async (id) => {
   return response.data
 }
 
+// ✅ NAYA — Real-time availability check
+export const getProductAvailability = async (id) => {
+  const response = await api.get(`/api/products/${id}/availability`)
+  return response.data
+}
+
+
 // ============================================
 // ADMIN ENDPOINTS (Protected)
 // ============================================
@@ -58,6 +65,7 @@ export const adminDeleteProduct = async (id) => {
   return response.data
 }
 
+
 // ============================================
 // SHOPIFY ENDPOINTS
 // ============================================
@@ -77,10 +85,5 @@ export const adminPushToShopify = async (productId, shopDomain) => {
  */
 export const getShopifyStores = async () => {
   const response = await api.get('/api/shopify/stores')
-  return response.data
-}
-
-export const getProductAvailability = async (id) => {
-  const response = await api.get(`/api/products/${id}/availability`)
   return response.data
 }
