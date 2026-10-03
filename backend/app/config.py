@@ -57,6 +57,11 @@ class Settings(BaseSettings):
     SHOPIFY_REDIRECT_URI: str = "https://example.com/api/shopify/callback"
     SHOPIFY_API_VERSION: str = "2025-01"
 
+    # ✅ NAYA — Shopify Store URL aur Access Token
+    SHOPIFY_SHOP_URL: str = ""           # e.g., "amazon-product-manager.myshopify.com"
+    SHOPIFY_ACCESS_TOKEN: str = ""       # shpua_... or shpat_...
+    SHOPIFY_LOCATION_ID: str = ""        # optional (inventory update ke liye)
+
     # ----------------------------------------
     # BATCH IMPORT (ARQ)
     # ----------------------------------------
