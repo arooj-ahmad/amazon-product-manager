@@ -157,15 +157,23 @@ async def shopify_graphql(
 # ============================================
 # PRIMARY LOCATION DHUNDO
 # ============================================
+# ============================================
+# PRIMARY LOCATION DHUNDO (Shop location preferred)
+# ============================================
 async def get_primary_location(shop: str, access_token: str) -> Optional[str]:
+    """
+    Shopify store ka primary location ID dhundo.
+    Priority: Shop location > First active location
+    """
     query = """
     query {
-      locations(first: 1) {
+      locations(first: 10) {
         edges {
           node {
             id
             name
             isActive
+            isPrimary
           }
         }
       }
@@ -180,13 +188,37 @@ async def get_primary_location(shop: str, access_token: str) -> Optional[str]:
 
     edges = result.get("data", {}).get("locations", {}).get("edges", [])
 
-    if edges:
-        location_id = edges[0]["node"]["id"]
-        logger.info(f"Primary location: {location_id}")
-        return location_id
+    if not edges:
+        logger.warning("No location found")
+        return None
 
-    logger.warning("No location found")
-    return None
+    # ✅ Priority 1: Location named "Shop location"
+    for edge in edges:
+        node = edge["node"]
+        name = node.get("name", "")
+        if "shop location" in name.lower():
+            logger.info(f"✅ Shop location found: {node['id']}")
+            return node["id"]
+
+    # ✅ Priority 2: Primary location (agar isPrimary true ho)
+    for edge in edges:
+        node = edge["node"]
+        if node.get("isPrimary"):
+            logger.info(f"✅ Primary location: {node['id']}")
+            return node["id"]
+
+    # ✅ Priority 3: First active location
+    for edge in edges:
+        node = edge["node"]
+        if node.get("isActive"):
+            logger.info(f"✅ First active location: {node['id']}")
+            return node["id"]
+
+    # Fallback: First location
+    location_id = edges[0]["node"]["id"]
+    logger.info(f"✅ Fallback location: {location_id}")
+    return location_id
+
 
 
 # ============================================
