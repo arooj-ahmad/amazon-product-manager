@@ -5,7 +5,7 @@
 # + Inventory Tracking (with changeFromQuantity)
 # + 2026-07 API compatible (variants removed from productCreate)
 # + Storefront API (real-time availability check)
-# + Rating Metafield (via metafieldsSet)
+# + Rating + Amazon Price Metafields (via metafieldsSet)
 # ============================================
 
 import hashlib
@@ -488,6 +488,7 @@ async def set_product_metafields(
 
 # ============================================
 # PRODUCT CREATE — WITH METAFIELDS VIA metafieldsSet
+# + Rating + Amazon Price
 # ============================================
 async def create_shopify_product(
     shop: str,
@@ -496,7 +497,7 @@ async def create_shopify_product(
 ) -> dict:
     """
     Shopify mein naya product create karta hai.
-    Rating metafield ke saath (alag mutation se).
+    Rating aur Amazon Price metafields ke saath (alag mutation se).
     """
 
     is_available = product_data.get("is_available", True)
@@ -509,11 +510,12 @@ async def create_shopify_product(
         price_float = 0.0
 
     # ========================================
-    # ✅ METAFIELD: Rating (prepare only)
+    # ✅ METAFIELDS: Rating + Amazon Price
     # ========================================
-    rating_value = str(product_data.get("rating", "") or "")
-
     metafields_input = []
+
+    # --- Rating ---
+    rating_value = str(product_data.get("rating", "") or "")
     if rating_value and rating_value != "None":
         metafields_input.append({
             "namespace": "custom",
@@ -522,6 +524,19 @@ async def create_shopify_product(
             "type": "single_line_text_field",
         })
         logger.info(f"   Rating metafield: {rating_value}")
+
+    # --- Amazon Price ---
+    amazon_price_value = product_data.get("amazon_price")
+    if amazon_price_value is not None:
+        amazon_price_str = str(amazon_price_value)
+        if amazon_price_str and amazon_price_str != "None":
+            metafields_input.append({
+                "namespace": "custom",
+                "key": "amazon_price",
+                "value": amazon_price_str,
+                "type": "single_line_text_field",
+            })
+            logger.info(f"   Amazon Price metafield: {amazon_price_str}")
 
     # ========================================
     # STEP 1: Product create (metafields nahi bhejenge)
