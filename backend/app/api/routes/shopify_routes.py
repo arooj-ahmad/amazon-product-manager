@@ -2,7 +2,7 @@
 # app/api/routes/shopify_routes.py
 # Shopify OAuth + Product Push + Embedded App
 # + Availability + Inventory tracking
-# + Rating + Reviews metafields
+# + Rating + Reviews + Amazon Price metafields
 # ============================================
 
 import logging
@@ -192,7 +192,7 @@ async def push_product_to_shopify(
             detail=f"Store {shop_domain} not connected",
         )
 
-    # ✅ Product data with availability + inventory + rating
+    # ✅ Product data with availability + inventory + rating + amazon_price
     product_data = {
         "title": product.title,
         "description": product.description or "",
@@ -212,6 +212,8 @@ async def push_product_to_shopify(
         # ✅ rating + reviews
         "rating": product.rating,
         "reviews_count": product.reviews_count,
+        # ✅ amazon_price
+        "amazon_price": product.amazon_price,
     }
 
     result = await create_shopify_product(
@@ -261,7 +263,7 @@ async def push_product_to_shopify(
 
 # ============================================
 # ADD PRODUCT FROM SHOPIFY APP (Iframe Se)
-# ✅ markup + availability + inventory + rating support
+# ✅ markup + availability + inventory + rating + amazon_price support
 # ============================================
 @router.post("/app/add-product")
 async def add_product_from_shopify_app(
@@ -366,7 +368,7 @@ async def add_product_from_shopify_app(
         f"Amazon: {data['amazon_price']} → Final: {final_price}"
     )
 
-    # ── Step 8: Save to DB with availability + rating ──
+    # ── Step 8: Save to DB with availability + rating + amazon_price ──
     new_product = Product(
         asin=asin,
         parent_asin=data["parent_asin"],
@@ -397,7 +399,7 @@ async def add_product_from_shopify_app(
 
     logger.info(f"✅ Product saved to Supabase: {asin}")
 
-    # ── Step 9: Push to Shopify (with inventory + rating) ──
+    # ── Step 9: Push to Shopify (with inventory + rating + amazon_price) ──
     shopify_pushed = False
     shopify_product_id = None
 
@@ -424,6 +426,8 @@ async def add_product_from_shopify_app(
                 # ✅ rating + reviews
                 "rating": new_product.rating,
                 "reviews_count": new_product.reviews_count,
+                # ✅ amazon_price
+                "amazon_price": new_product.amazon_price,
             },
         )
 
@@ -466,6 +470,7 @@ async def add_product_from_shopify_app(
         "markup": user_markup,
         "markup_type": user_markup_type,
         "final_price": final_price,
+        "amazon_price": new_product.amazon_price,
         "availability": new_product.availability,
         "is_available": new_product.is_available,
         "rating": new_product.rating,

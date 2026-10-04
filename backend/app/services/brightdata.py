@@ -3,6 +3,7 @@
 # Bright Data Scraper API se Amazon data fetch karne ke liye
 # + Out of Stock tracking (IMPROVED)
 # + Rating field (multiple names support)
+# + Amazon Original Price extraction
 # ============================================
 
 import logging
@@ -45,6 +46,28 @@ def extract_asin_from_url(url: str) -> Optional[str]:
             return match.group(1)
 
     return None
+
+
+# ============================================
+# PRICE PARSE HELPER
+# ============================================
+def parse_price(value) -> Optional[float]:
+    """
+    Price ko float mein parse karta hai.
+    "$49.99", "49.99", "1,299.00" sab handle karega.
+    """
+    if value is None:
+        return None
+    try:
+        if isinstance(value, str):
+            cleaned = value.replace("$", "").replace(",", "").strip()
+            # Khaali string check
+            if not cleaned:
+                return None
+            return float(cleaned)
+        return float(value)
+    except (ValueError, TypeError):
+        return None
 
 
 # ============================================
@@ -120,6 +143,14 @@ async def fetch_product_from_brightdata(amazon_url: str) -> dict:
     logger.info(f"customer_rating: {raw.get('customer_rating')}")
     logger.info(f"star_rating: {raw.get('star_rating')}")
     logger.info(f"rating_value: {raw.get('rating_value')}")
+    logger.info(f"--- PRICE FIELDS ---")
+    logger.info(f"final_price: {raw.get('final_price')}")
+    logger.info(f"price: {raw.get('price')}")
+    logger.info(f"buybox_price: {raw.get('buybox_price')}")
+    logger.info(f"initial_price: {raw.get('initial_price')}")
+    logger.info(f"list_price: {raw.get('list_price')}")
+    logger.info(f"original_price: {raw.get('original_price')}")
+    logger.info(f"--- STOCK FIELDS ---")
     logger.info(f"add_to_cart_available: {raw.get('add_to_cart_available')}")
     logger.info(f"buybox_available: {raw.get('buybox_available')}")
     logger.info(f"availability: {raw.get('availability')}")
@@ -134,29 +165,33 @@ async def fetch_product_from_brightdata(amazon_url: str) -> dict:
     parent_asin = raw.get("parent_asin") or None
     is_variation = bool(parent_asin)
 
-    # Price
-    amazon_price = (
+    # ========================================
+    # ✅ PRICE EXTRACTION (multi-field support)
+    # ========================================
+    # Amazon ka "actual" selling price
+    amazon_price_raw = (
         raw.get("final_price")
         or raw.get("price")
         or raw.get("buybox_price")
         or raw.get("initial_price")
     )
-
+    amazon_price = parse_price(amazon_price_raw)
     if amazon_price is not None:
-        try:
-            if isinstance(amazon_price, str):
-                amazon_price = float(
-                    amazon_price.replace("$", "").replace(",", "").strip()
-                )
-            else:
-                amazon_price = float(amazon_price)
-        except (ValueError, TypeError):
-            logger.warning(f"Price parse fail: {amazon_price}")
-            amazon_price = None
+        logger.info(f"✅ Amazon Price extracted: ${amazon_price}")
 
-    # ----------------------------------------
-    # ✅ RATING extract karo (multiple names try)
-    # ----------------------------------------
+    # Amazon ka "list price" (original/MRP)
+    list_price_raw = (
+        raw.get("list_price")
+        or raw.get("original_price")
+        or raw.get("initial_price")
+    )
+    list_price = parse_price(list_price_raw)
+    if list_price is not None:
+        logger.info(f"✅ List Price extracted: ${list_price}")
+
+    # ========================================
+    # ✅ RATING EXTRACT
+    # ========================================
     rating_raw = (
         raw.get("rating")
         or raw.get("average_rating")
@@ -168,12 +203,10 @@ async def fetch_product_from_brightdata(amazon_url: str) -> dict:
         or raw.get("review_rating")
     )
 
-    # Clean rating value
     rating_value = None
     if rating_raw is not None:
         try:
             if isinstance(rating_raw, str):
-                # "4.5 out of 5 stars" → 4.5
                 import re
                 match = re.search(r"(\d+\.?\d*)", rating_raw)
                 if match:
@@ -187,9 +220,9 @@ async def fetch_product_from_brightdata(amazon_url: str) -> dict:
     else:
         logger.warning("⚠️ No rating field found in Bright Data response")
 
-    # ----------------------------------------
-    # ✅ REVIEWS COUNT extract karo
-    # ----------------------------------------
+    # ========================================
+    # ✅ REVIEWS COUNT EXTRACT
+    # ========================================
     reviews_raw = (
         raw.get("reviews_count")
         or raw.get("review_count")
@@ -213,9 +246,9 @@ async def fetch_product_from_brightdata(amazon_url: str) -> dict:
             logger.warning(f"Reviews parse fail: {reviews_raw}")
             reviews_count = None
 
-    # ----------------------------------------
+    # ========================================
     # Images extract karo
-    # ----------------------------------------
+    # ========================================
     images_list = raw.get("images") or []
     if not isinstance(images_list, list):
         images_list = []
@@ -243,11 +276,9 @@ async def fetch_product_from_brightdata(amazon_url: str) -> dict:
         or ""
     )
 
-    # Priority 1: Direct boolean fields (sabse reliable)
     add_to_cart_available = raw.get("add_to_cart_available")
     buybox_available = raw.get("buybox_available")
 
-    # ✅ Available keywords (in stock detection)
     in_stock_keywords = [
         "in stock",
         "only",
@@ -257,7 +288,6 @@ async def fetch_product_from_brightdata(amazon_url: str) -> dict:
         "in stock soon",
     ]
 
-    # ❌ Out of stock keywords
     out_of_stock_keywords = [
         "out of stock",
         "unavailable",
@@ -299,9 +329,9 @@ async def fetch_product_from_brightdata(amazon_url: str) -> dict:
         is_available = True
         logger.warning("No availability data → defaulting to AVAILABLE")
 
-    # ----------------------------------------
+    # ========================================
     # Stock quantity
-    # ----------------------------------------
+    # ========================================
     stock_quantity = raw.get("stock_quantity") or raw.get("stock") or 0
     try:
         stock_quantity = int(stock_quantity) if stock_quantity else 0
@@ -315,9 +345,9 @@ async def fetch_product_from_brightdata(amazon_url: str) -> dict:
         stock_quantity = 100
         logger.info("Product available but no stock quantity → defaulting to 100")
 
-    # ----------------------------------------
+    # ========================================
     # Specifications extract karo
-    # ----------------------------------------
+    # ========================================
     specs = {}
 
     product_details = raw.get("product_details") or []
@@ -348,8 +378,8 @@ async def fetch_product_from_brightdata(amazon_url: str) -> dict:
             specs[key] = str(value).strip()
 
     logger.info(
-        f"Parsed product: ASIN={asin}, Price=${amazon_price}, "
-        f"Rating={rating_value}, Reviews={reviews_count}, "
+        f"Parsed product: ASIN={asin}, AmazonPrice=${amazon_price}, "
+        f"ListPrice=${list_price}, Rating={rating_value}, Reviews={reviews_count}, "
         f"Images={len(unique_images)}, Specs={len(specs)}, "
         f"Availability='{availability_text}', Available={is_available}, "
         f"Stock={stock_quantity}"
@@ -361,7 +391,12 @@ async def fetch_product_from_brightdata(amazon_url: str) -> dict:
         "is_variation": is_variation,
         "title": raw.get("title"),
         "brand": raw.get("brand"),
+
+        # ✅ Amazon Price (original selling price)
         "amazon_price": amazon_price,
+        # ✅ List Price (original/MRP)
+        "list_price": list_price,
+
         "image_url": main_image,
         "images": unique_images,
         "specifications": specs,
