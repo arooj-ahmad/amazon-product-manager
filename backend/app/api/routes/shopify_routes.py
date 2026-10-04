@@ -2,7 +2,7 @@
 # app/api/routes/shopify_routes.py
 # Shopify OAuth + Product Push + Embedded App
 # + Availability + Inventory tracking
-# + Rating + Reviews + Amazon Price metafields
+# + ASIN + Rating + Reviews + Amazon Price metafields
 # ============================================
 
 import logging
@@ -192,7 +192,7 @@ async def push_product_to_shopify(
             detail=f"Store {shop_domain} not connected",
         )
 
-    # ✅ Product data with availability + inventory + rating + amazon_price
+    # ✅ Product data with availability + inventory + rating + amazon_price + asin
     product_data = {
         "title": product.title,
         "description": product.description or "",
@@ -214,6 +214,8 @@ async def push_product_to_shopify(
         "reviews_count": product.reviews_count,
         # ✅ amazon_price
         "amazon_price": product.amazon_price,
+        # ✅ asin
+        "asin": product.asin,
     }
 
     result = await create_shopify_product(
@@ -263,7 +265,7 @@ async def push_product_to_shopify(
 
 # ============================================
 # ADD PRODUCT FROM SHOPIFY APP (Iframe Se)
-# ✅ markup + availability + inventory + rating + amazon_price support
+# ✅ markup + availability + inventory + rating + amazon_price + asin
 # ============================================
 @router.post("/app/add-product")
 async def add_product_from_shopify_app(
@@ -399,7 +401,7 @@ async def add_product_from_shopify_app(
 
     logger.info(f"✅ Product saved to Supabase: {asin}")
 
-    # ── Step 9: Push to Shopify (with inventory + rating + amazon_price) ──
+    # ── Step 9: Push to Shopify (with inventory + rating + amazon_price + asin) ──
     shopify_pushed = False
     shopify_product_id = None
 
@@ -428,6 +430,8 @@ async def add_product_from_shopify_app(
                 "reviews_count": new_product.reviews_count,
                 # ✅ amazon_price
                 "amazon_price": new_product.amazon_price,
+                # ✅ asin
+                "asin": new_product.asin,
             },
         )
 

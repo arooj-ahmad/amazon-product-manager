@@ -5,7 +5,7 @@
 # + Inventory Tracking (with changeFromQuantity)
 # + 2026-07 API compatible (variants removed from productCreate)
 # + Storefront API (real-time availability check)
-# + Rating + Amazon Price Metafields (via metafieldsSet)
+# + ASIN + Rating + Amazon Price Metafields (via metafieldsSet)
 # ============================================
 
 import hashlib
@@ -488,7 +488,7 @@ async def set_product_metafields(
 
 # ============================================
 # PRODUCT CREATE — WITH METAFIELDS VIA metafieldsSet
-# + Rating + Amazon Price
+# + ASIN + Rating + Amazon Price
 # ============================================
 async def create_shopify_product(
     shop: str,
@@ -497,7 +497,7 @@ async def create_shopify_product(
 ) -> dict:
     """
     Shopify mein naya product create karta hai.
-    Rating aur Amazon Price metafields ke saath (alag mutation se).
+    ASIN, Rating aur Amazon Price metafields ke saath (alag mutation se).
     """
 
     is_available = product_data.get("is_available", True)
@@ -510,9 +510,20 @@ async def create_shopify_product(
         price_float = 0.0
 
     # ========================================
-    # ✅ METAFIELDS: Rating + Amazon Price
+    # ✅ METAFIELDS: ASIN + Rating + Amazon Price
     # ========================================
     metafields_input = []
+
+    # --- ASIN ---
+    asin_value = str(product_data.get("asin", "") or "")
+    if asin_value and asin_value != "None":
+        metafields_input.append({
+            "namespace": "custom",
+            "key": "asin",
+            "value": asin_value,
+            "type": "single_line_text_field",
+        })
+        logger.info(f"   ASIN metafield: {asin_value}")
 
     # --- Rating ---
     rating_value = str(product_data.get("rating", "") or "")
