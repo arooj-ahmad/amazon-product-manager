@@ -2,6 +2,7 @@
 # app/api/routes/shopify_routes.py
 # Shopify OAuth + Product Push + Embedded App
 # + Availability + Inventory tracking
+# + Rating + Reviews metafields
 # ============================================
 
 import logging
@@ -191,7 +192,7 @@ async def push_product_to_shopify(
             detail=f"Store {shop_domain} not connected",
         )
 
-    # ✅ Product data with availability + inventory
+    # ✅ Product data with availability + inventory + rating
     product_data = {
         "title": product.title,
         "description": product.description or "",
@@ -200,10 +201,17 @@ async def push_product_to_shopify(
             [product.image_url] if product.image_url else []
         ),
         "price": str(product.price) if product.price else "0.00",
-        # ✅ NAYA — availability + stock
+        # availability + inventory
         "stock_quantity": product.stock_quantity or 0,
-        "is_available": product.is_available if product.is_available is not None else True,
+        "is_available": (
+            product.is_available
+            if product.is_available is not None
+            else True
+        ),
         "availability": product.availability or "In Stock",
+        # ✅ rating + reviews
+        "rating": product.rating,
+        "reviews_count": product.reviews_count,
     }
 
     result = await create_shopify_product(
@@ -253,7 +261,7 @@ async def push_product_to_shopify(
 
 # ============================================
 # ADD PRODUCT FROM SHOPIFY APP (Iframe Se)
-# ✅ markup + availability + inventory support
+# ✅ markup + availability + inventory + rating support
 # ============================================
 @router.post("/app/add-product")
 async def add_product_from_shopify_app(
@@ -271,7 +279,8 @@ async def add_product_from_shopify_app(
     # ── Step 1: Auth header ──
     if not authorization or not authorization.startswith("Bearer "):
         raise HTTPException(
-            status_code=401, detail="Missing or invalid authorization header"
+            status_code=401,
+            detail="Missing or invalid authorization header",
         )
 
     token = authorization.replace("Bearer ", "").strip()
@@ -357,7 +366,7 @@ async def add_product_from_shopify_app(
         f"Amazon: {data['amazon_price']} → Final: {final_price}"
     )
 
-    # ── Step 8: Save to DB with availability ──
+    # ── Step 8: Save to DB with availability + rating ──
     new_product = Product(
         asin=asin,
         parent_asin=data["parent_asin"],
@@ -370,7 +379,7 @@ async def add_product_from_shopify_app(
         specifications=data.get("specifications", {}),
         rating=data.get("rating"),
         reviews_count=data.get("reviews_count"),
-        # ✅ NAYA — availability + inventory
+        # availability + inventory
         availability=data.get("availability", "In Stock"),
         is_available=data.get("is_available", True),
         stock_quantity=data.get("stock_quantity", 0),
@@ -388,7 +397,7 @@ async def add_product_from_shopify_app(
 
     logger.info(f"✅ Product saved to Supabase: {asin}")
 
-    # ── Step 9: Push to Shopify (with inventory) ──
+    # ── Step 9: Push to Shopify (with inventory + rating) ──
     shopify_pushed = False
     shopify_product_id = None
 
@@ -404,12 +413,17 @@ async def add_product_from_shopify_app(
                     [new_product.image_url] if new_product.image_url else []
                 ),
                 "price": str(new_product.price),
-                # ✅ NAYA — availability + inventory
+                # availability + inventory
                 "stock_quantity": new_product.stock_quantity or 0,
-                "is_available": new_product.is_available
-                if new_product.is_available is not None
-                else True,
+                "is_available": (
+                    new_product.is_available
+                    if new_product.is_available is not None
+                    else True
+                ),
                 "availability": new_product.availability or "In Stock",
+                # ✅ rating + reviews
+                "rating": new_product.rating,
+                "reviews_count": new_product.reviews_count,
             },
         )
 
@@ -454,6 +468,8 @@ async def add_product_from_shopify_app(
         "final_price": final_price,
         "availability": new_product.availability,
         "is_available": new_product.is_available,
+        "rating": new_product.rating,
+        "reviews_count": new_product.reviews_count,
         "shopify_pushed": shopify_pushed,
         "shopify_product_id": shopify_product_id,
         "shop_domain": shop_domain,
