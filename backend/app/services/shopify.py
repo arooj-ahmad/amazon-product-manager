@@ -5,7 +5,7 @@
 # + Inventory Tracking (with changeFromQuantity)
 # + 2026-07 API compatible (variants removed from productCreate)
 # + Storefront API (real-time availability check)
-# + Rating Metafield
+# + Rating Metafield (via metafieldsSet)
 # ============================================
 
 import hashlib
@@ -412,8 +412,82 @@ async def update_variant_with_tracked(
 
 
 # ============================================
-# PRODUCT CREATE — 2026-07 COMPATIBLE
-# + RATING METAFIELD
+# ✅ SET PRODUCT METAFIELDS (Separate Mutation)
+# ============================================
+async def set_product_metafields(
+    shop: str,
+    access_token: str,
+    product_id: str,
+    metafields: list,
+) -> bool:
+    """
+    Product ke metafields alag se set karta hai.
+    productCreate ke baad call karein — kyunki productCreate
+    mutation metafields accept nahi karta.
+    """
+    if not metafields:
+        logger.info("   No metafields to set")
+        return True
+
+    mutation = """
+    mutation metafieldsSet($metafields: [MetafieldsSetInput!]!) {
+      metafieldsSet(metafields: $metafields) {
+        metafields {
+          id
+          namespace
+          key
+          value
+        }
+        userErrors {
+          field
+          message
+          code
+        }
+      }
+    }
+    """
+
+    # ✅ ownerId add karo har metafield mein
+    metafields_with_owner = [
+        {
+            "ownerId": product_id,
+            "namespace": mf["namespace"],
+            "key": mf["key"],
+            "value": mf["value"],
+            "type": mf["type"],
+        }
+        for mf in metafields
+    ]
+
+    variables = {"metafields": metafields_with_owner}
+
+    logger.info(f"   Setting {len(metafields)} metafields...")
+
+    result = await shopify_graphql(
+        shop, access_token, mutation, variables
+    )
+
+    if "errors" in result:
+        logger.error(f"❌ Metafields set GraphQL errors: {result['errors']}")
+        return False
+
+    mf_data = result.get("data", {}).get("metafieldsSet", {})
+    user_errors = mf_data.get("userErrors", [])
+
+    if user_errors:
+        logger.error(f"❌ Metafields set user errors: {user_errors}")
+        return False
+
+    created = mf_data.get("metafields", [])
+    logger.info(f"✅ Metafields set successfully: {len(created)}")
+    for mf in created:
+        logger.info(f"   • {mf['namespace']}.{mf['key']} = {mf['value']}")
+
+    return True
+
+
+# ============================================
+# PRODUCT CREATE — WITH METAFIELDS VIA metafieldsSet
 # ============================================
 async def create_shopify_product(
     shop: str,
@@ -422,7 +496,7 @@ async def create_shopify_product(
 ) -> dict:
     """
     Shopify mein naya product create karta hai.
-    Rating metafield ke saath.
+    Rating metafield ke saath (alag mutation se).
     """
 
     is_available = product_data.get("is_available", True)
@@ -435,7 +509,7 @@ async def create_shopify_product(
         price_float = 0.0
 
     # ========================================
-    # ✅ METAFIELD: Rating
+    # ✅ METAFIELD: Rating (prepare only)
     # ========================================
     rating_value = str(product_data.get("rating", "") or "")
 
@@ -450,7 +524,7 @@ async def create_shopify_product(
         logger.info(f"   Rating metafield: {rating_value}")
 
     # ========================================
-    # STEP 1: Product create with metafields
+    # STEP 1: Product create (metafields nahi bhejenge)
     # ========================================
     mutation_create = """
     mutation productCreate($input: ProductCreateInput!) {
@@ -459,15 +533,6 @@ async def create_shopify_product(
           id
           title
           handle
-          metafields(first: 5) {
-            edges {
-              node {
-                namespace
-                key
-                value
-              }
-            }
-          }
           variants(first: 1) {
             edges {
               node {
@@ -496,10 +561,6 @@ async def create_shopify_product(
         "status": status,
     }
 
-    # ✅ Rating metafield add karo (agar hai)
-    if metafields_input:
-        input_data["metafields"] = metafields_input
-
     result = await shopify_graphql(
         shop, access_token, mutation_create, {"input": input_data}
     )
@@ -521,18 +582,19 @@ async def create_shopify_product(
     logger.info(f"✅ Product created: {shopify_product.get('title')}")
     logger.info(f"   Product ID: {product_id}")
 
-    # ✅ Metafields verify karo
-    created_metafields = (
-        shopify_product.get("metafields", {}).get("edges", [])
-    )
-    if created_metafields:
-        logger.info(f"✅ Metafields created: {len(created_metafields)}")
-        for mf_edge in created_metafields:
-            mf = mf_edge["node"]
-            logger.info(f"   • {mf['namespace']}.{mf['key']} = {mf['value']}")
+    # ========================================
+    # STEP 2: Metafields ALAG SE set karo
+    # ========================================
+    if product_id and metafields_input:
+        await set_product_metafields(
+            shop=shop,
+            access_token=access_token,
+            product_id=product_id,
+            metafields=metafields_input,
+        )
 
     # ========================================
-    # STEP 2: Variant + Inventory Item ID
+    # STEP 3: Variant + Inventory Item ID
     # ========================================
     variants_edges = (
         shopify_product.get("variants", {}).get("edges", [])
@@ -551,7 +613,7 @@ async def create_shopify_product(
         logger.info(f"   Inventory Item ID: {inventory_item_id}")
 
     # ========================================
-    # STEP 3: Variant update with tracked=true + price
+    # STEP 4: Variant update with tracked=true + price
     # ========================================
     if product_id and variant_id and price_float > 0:
         logger.info(f"   Target price: ${price_float}")
@@ -564,7 +626,7 @@ async def create_shopify_product(
         )
 
     # ========================================
-    # STEP 4: INVENTORY SET
+    # STEP 5: INVENTORY SET
     # ========================================
     if inventory_item_id:
         stock_qty = product_data.get("stock_quantity", 0)
@@ -585,7 +647,7 @@ async def create_shopify_product(
         logger.warning("⚠️ No inventory_item_id — inventory set nahi hoga")
 
     # ========================================
-    # STEP 5: Images add karo
+    # STEP 6: Images add karo
     # ========================================
     images = product_data.get("images", [])
     if product_id and images:
