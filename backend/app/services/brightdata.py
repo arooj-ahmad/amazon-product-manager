@@ -3,7 +3,8 @@
 # Bright Data Scraper API se Amazon data fetch karne ke liye
 # + Out of Stock tracking (IMPROVED)
 # + Rating field (multiple names support)
-# + Amazon Original Price extraction
+# + Amazon Original Price + List Price extraction
+# + Parent ASIN + Availability (for metafields)
 # ============================================
 
 import logging
@@ -155,6 +156,9 @@ async def fetch_product_from_brightdata(amazon_url: str) -> dict:
     logger.info(f"buybox_available: {raw.get('buybox_available')}")
     logger.info(f"availability: {raw.get('availability')}")
     logger.info(f"stock_quantity: {raw.get('stock_quantity')}")
+    logger.info(f"--- VARIATION FIELDS ---")
+    logger.info(f"parent_asin: {raw.get('parent_asin')}")
+    logger.info(f"is_variation: {raw.get('is_variation')}")
     logger.info(f"=== END RAW RESPONSE ===")
 
     # Extract fields
@@ -162,6 +166,7 @@ async def fetch_product_from_brightdata(amazon_url: str) -> dict:
     if not asin:
         raise BrightDataError("ASIN nahi mila - na response mein, na URL mein")
 
+    # ✅ Parent ASIN
     parent_asin = raw.get("parent_asin") or None
     is_variation = bool(parent_asin)
 
@@ -377,11 +382,19 @@ async def fetch_product_from_brightdata(amazon_url: str) -> dict:
         if value is not None and str(value).strip() and key not in specs:
             specs[key] = str(value).strip()
 
+    # ========================================
+    # ✅ Final availability text (default)
+    # ========================================
+    final_availability = (
+        str(availability_text) if availability_text else "In Stock"
+    )
+
     logger.info(
-        f"Parsed product: ASIN={asin}, AmazonPrice=${amazon_price}, "
-        f"ListPrice=${list_price}, Rating={rating_value}, Reviews={reviews_count}, "
+        f"Parsed product: ASIN={asin}, ParentASIN={parent_asin}, "
+        f"AmazonPrice=${amazon_price}, ListPrice=${list_price}, "
+        f"Rating={rating_value}, Reviews={reviews_count}, "
         f"Images={len(unique_images)}, Specs={len(specs)}, "
-        f"Availability='{availability_text}', Available={is_available}, "
+        f"Availability='{final_availability}', Available={is_available}, "
         f"Stock={stock_quantity}"
     )
 
@@ -407,7 +420,7 @@ async def fetch_product_from_brightdata(amazon_url: str) -> dict:
         "reviews_count": reviews_count,
 
         # ✅ Availability
-        "availability": str(availability_text) if availability_text else "In Stock",
+        "availability": final_availability,
         "is_available": is_available,
         "stock_quantity": stock_quantity,
     }

@@ -2,7 +2,7 @@
 # app/api/routes/shopify_routes.py
 # Shopify OAuth + Product Push + Embedded App
 # + Availability + Inventory tracking
-# + ASIN + Rating + Reviews + Amazon Price metafields
+# + ASIN + Parent ASIN + Rating + Reviews Count + Amazon Price + Availability
 # ============================================
 
 import logging
@@ -192,7 +192,7 @@ async def push_product_to_shopify(
             detail=f"Store {shop_domain} not connected",
         )
 
-    # ✅ Product data with availability + inventory + rating + amazon_price + asin
+    # ✅ Product data with ALL 6 metafields fields
     product_data = {
         "title": product.title,
         "description": product.description or "",
@@ -214,8 +214,9 @@ async def push_product_to_shopify(
         "reviews_count": product.reviews_count,
         # ✅ amazon_price
         "amazon_price": product.amazon_price,
-        # ✅ asin
+        # ✅ asin + parent_asin
         "asin": product.asin,
+        "parent_asin": product.parent_asin,
     }
 
     result = await create_shopify_product(
@@ -265,7 +266,7 @@ async def push_product_to_shopify(
 
 # ============================================
 # ADD PRODUCT FROM SHOPIFY APP (Iframe Se)
-# ✅ markup + availability + inventory + rating + amazon_price + asin
+# ✅ All 6 metafields fields: asin, parent_asin, rating, reviews_count, amazon_price, availability
 # ============================================
 @router.post("/app/add-product")
 async def add_product_from_shopify_app(
@@ -370,7 +371,7 @@ async def add_product_from_shopify_app(
         f"Amazon: {data['amazon_price']} → Final: {final_price}"
     )
 
-    # ── Step 8: Save to DB with availability + rating + amazon_price ──
+    # ── Step 8: Save to DB with all fields ──
     new_product = Product(
         asin=asin,
         parent_asin=data["parent_asin"],
@@ -401,7 +402,7 @@ async def add_product_from_shopify_app(
 
     logger.info(f"✅ Product saved to Supabase: {asin}")
 
-    # ── Step 9: Push to Shopify (with inventory + rating + amazon_price + asin) ──
+    # ── Step 9: Push to Shopify with ALL 6 metafields fields ──
     shopify_pushed = False
     shopify_product_id = None
 
@@ -430,8 +431,9 @@ async def add_product_from_shopify_app(
                 "reviews_count": new_product.reviews_count,
                 # ✅ amazon_price
                 "amazon_price": new_product.amazon_price,
-                # ✅ asin
+                # ✅ asin + parent_asin
                 "asin": new_product.asin,
+                "parent_asin": new_product.parent_asin,
             },
         )
 
@@ -471,6 +473,7 @@ async def add_product_from_shopify_app(
         + (" and pushed to Shopify ✅" if shopify_pushed else ""),
         "product_id": new_product.id,
         "asin": asin,
+        "parent_asin": new_product.parent_asin,
         "markup": user_markup,
         "markup_type": user_markup_type,
         "final_price": final_price,

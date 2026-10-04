@@ -5,7 +5,7 @@
 # + Inventory Tracking (with changeFromQuantity)
 # + 2026-07 API compatible (variants removed from productCreate)
 # + Storefront API (real-time availability check)
-# + ASIN + Rating + Amazon Price Metafields (via metafieldsSet)
+# + 6 Metafields: asin, rating, amazon_price, reviews_count, availability, parent_asin
 # ============================================
 
 import hashlib
@@ -487,8 +487,8 @@ async def set_product_metafields(
 
 
 # ============================================
-# PRODUCT CREATE — WITH METAFIELDS VIA metafieldsSet
-# + ASIN + Rating + Amazon Price
+# PRODUCT CREATE — WITH 6 METAFIELDS VIA metafieldsSet
+# + asin, rating, amazon_price, reviews_count, availability, parent_asin
 # ============================================
 async def create_shopify_product(
     shop: str,
@@ -497,7 +497,13 @@ async def create_shopify_product(
 ) -> dict:
     """
     Shopify mein naya product create karta hai.
-    ASIN, Rating aur Amazon Price metafields ke saath (alag mutation se).
+    6 metafields ke saath (alag mutation se):
+      - custom.asin
+      - custom.rating
+      - custom.amazon_price
+      - custom.reviews_count
+      - custom.availability
+      - custom.parent_asin
     """
 
     is_available = product_data.get("is_available", True)
@@ -510,7 +516,7 @@ async def create_shopify_product(
         price_float = 0.0
 
     # ========================================
-    # ✅ METAFIELDS: ASIN + Rating + Amazon Price
+    # ✅ METAFIELDS: 6 fields
     # ========================================
     metafields_input = []
 
@@ -525,6 +531,17 @@ async def create_shopify_product(
         })
         logger.info(f"   ASIN metafield: {asin_value}")
 
+    # --- Parent ASIN ---
+    parent_asin_value = str(product_data.get("parent_asin", "") or "")
+    if parent_asin_value and parent_asin_value != "None":
+        metafields_input.append({
+            "namespace": "custom",
+            "key": "parent_asin",
+            "value": parent_asin_value,
+            "type": "single_line_text_field",
+        })
+        logger.info(f"   Parent ASIN metafield: {parent_asin_value}")
+
     # --- Rating ---
     rating_value = str(product_data.get("rating", "") or "")
     if rating_value and rating_value != "None":
@@ -535,6 +552,19 @@ async def create_shopify_product(
             "type": "single_line_text_field",
         })
         logger.info(f"   Rating metafield: {rating_value}")
+
+    # --- Reviews Count ---
+    reviews_count_value = product_data.get("reviews_count")
+    if reviews_count_value is not None:
+        reviews_count_str = str(reviews_count_value)
+        if reviews_count_str and reviews_count_str != "None":
+            metafields_input.append({
+                "namespace": "custom",
+                "key": "reviews_count",
+                "value": reviews_count_str,
+                "type": "single_line_text_field",
+            })
+            logger.info(f"   Reviews Count metafield: {reviews_count_str}")
 
     # --- Amazon Price ---
     amazon_price_value = product_data.get("amazon_price")
@@ -548,6 +578,19 @@ async def create_shopify_product(
                 "type": "single_line_text_field",
             })
             logger.info(f"   Amazon Price metafield: {amazon_price_str}")
+
+    # --- Availability ---
+    availability_value = str(product_data.get("availability", "") or "")
+    if availability_value and availability_value != "None":
+        metafields_input.append({
+            "namespace": "custom",
+            "key": "availability",
+            "value": availability_value,
+            "type": "single_line_text_field",
+        })
+        logger.info(f"   Availability metafield: {availability_value}")
+
+    logger.info(f"   Total metafields to set: {len(metafields_input)}")
 
     # ========================================
     # STEP 1: Product create (metafields nahi bhejenge)
