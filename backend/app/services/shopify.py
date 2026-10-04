@@ -5,7 +5,8 @@
 # + Inventory Tracking (with changeFromQuantity)
 # + 2026-07 API compatible (variants removed from productCreate)
 # + Storefront API (real-time availability check)
-# + 6 Metafields: asin, rating, amazon_price, reviews_count, availability, parent_asin
+# + 5 Metafields: asin, rating, amazon_price, reviews_count, availability
+#   (parent_asin — temporarily disabled due to fake ASINs from Bright Data)
 # ============================================
 
 import hashlib
@@ -487,8 +488,9 @@ async def set_product_metafields(
 
 
 # ============================================
-# PRODUCT CREATE — WITH 6 METAFIELDS VIA metafieldsSet
-# + asin, rating, amazon_price, reviews_count, availability, parent_asin
+# PRODUCT CREATE — WITH 5 METAFIELDS VIA metafieldsSet
+# + asin, rating, amazon_price, reviews_count, availability
+# ⚠️ parent_asin — temporarily disabled
 # ============================================
 async def create_shopify_product(
     shop: str,
@@ -497,13 +499,14 @@ async def create_shopify_product(
 ) -> dict:
     """
     Shopify mein naya product create karta hai.
-    6 metafields ke saath (alag mutation se):
+    5 metafields ke saath (alag mutation se):
       - custom.asin
       - custom.rating
       - custom.amazon_price
       - custom.reviews_count
       - custom.availability
-      - custom.parent_asin
+
+    ⚠️ parent_asin temporarily disabled (fake ASINs from Bright Data).
     """
 
     is_available = product_data.get("is_available", True)
@@ -516,7 +519,7 @@ async def create_shopify_product(
         price_float = 0.0
 
     # ========================================
-    # ✅ METAFIELDS: 6 fields
+    # ✅ METAFIELDS: 5 fields (parent_asin disabled)
     # ========================================
     metafields_input = []
 
@@ -531,16 +534,10 @@ async def create_shopify_product(
         })
         logger.info(f"   ASIN metafield: {asin_value}")
 
-    # --- Parent ASIN ---
-    parent_asin_value = str(product_data.get("parent_asin", "") or "")
-    if parent_asin_value and parent_asin_value != "None":
-        metafields_input.append({
-            "namespace": "custom",
-            "key": "parent_asin",
-            "value": parent_asin_value,
-            "type": "single_line_text_field",
-        })
-        logger.info(f"   Parent ASIN metafield: {parent_asin_value}")
+    # --- Parent ASIN (TEMPORARILY DISABLED) ---
+    # ⚠️ Fake parent ASINs (like B0D7FVTHMQ) don't exist on Amazon.
+    # Will re-enable after implementing proper Amazon verification.
+    logger.info(f"   ⏭️ Parent ASIN skipped (temporarily disabled)")
 
     # --- Rating ---
     rating_value = str(product_data.get("rating", "") or "")

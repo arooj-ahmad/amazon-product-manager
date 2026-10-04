@@ -4,7 +4,7 @@
 # + Out of Stock tracking (IMPROVED)
 # + Rating field (multiple names support)
 # + Amazon Original Price + List Price extraction
-# + Parent ASIN + Availability (for metafields)
+# + Parent ASIN validation (fake ASIN skip)
 # ============================================
 
 import logging
@@ -62,13 +62,54 @@ def parse_price(value) -> Optional[float]:
     try:
         if isinstance(value, str):
             cleaned = value.replace("$", "").replace(",", "").strip()
-            # Khaali string check
             if not cleaned:
                 return None
             return float(cleaned)
         return float(value)
     except (ValueError, TypeError):
         return None
+
+
+# ============================================
+# PARENT ASIN VALIDATION
+# ============================================
+def validate_parent_asin(parent_asin, asin: str) -> Optional[str]:
+    """
+    Parent ASIN validate karta hai.
+    Returns valid parent_asin ya None.
+    """
+    # Rule 1: Empty / None / "None" check
+    if not parent_asin or parent_asin == "None" or parent_asin == "":
+        return None
+
+    # Rule 2: String type check
+    if not isinstance(parent_asin, str):
+        logger.info(f"⚠️ Parent ASIN not string: {parent_asin} → ignoring")
+        return None
+
+    # Rule 3: Strip whitespace
+    parent_asin = parent_asin.strip()
+
+    # Rule 4: Same as ASIN → parent nahi hai
+    if parent_asin == asin:
+        logger.info(f"⚠️ Parent ASIN same as ASIN ({asin}) → ignoring")
+        return None
+
+    # Rule 5: 10 characters ka hona chahiye
+    if len(parent_asin) != 10:
+        logger.info(f"⚠️ Parent ASIN length invalid: '{parent_asin}' → ignoring")
+        return None
+
+    # Rule 6: Alphanumeric hona chahiye
+    if not parent_asin.isalnum():
+        logger.info(f"⚠️ Parent ASIN not alphanumeric: '{parent_asin}' → ignoring")
+        return None
+
+    # Rule 7: Uppercase check (Amazon ASINs uppercase hote hain)
+    parent_asin = parent_asin.upper()
+
+    logger.info(f"✅ Valid Parent ASIN: {parent_asin}")
+    return parent_asin
 
 
 # ============================================
@@ -135,7 +176,7 @@ async def fetch_product_from_brightdata(amazon_url: str) -> dict:
         raise BrightDataError(f"Bright Data error: {raw['error']}")
 
     # ========================================
-    # ✅ DEBUG LOGS — Bright Data ka raw response
+    # ✅ DEBUG LOGS
     # ========================================
     logger.info(f"=== BRIGHT DATA RAW RESPONSE ===")
     logger.info(f"Keys: {list(raw.keys())}")
@@ -166,14 +207,21 @@ async def fetch_product_from_brightdata(amazon_url: str) -> dict:
     if not asin:
         raise BrightDataError("ASIN nahi mila - na response mein, na URL mein")
 
-    # ✅ Parent ASIN
-    parent_asin = raw.get("parent_asin") or None
+    # ========================================
+    # ✅ PARENT ASIN VALIDATION
+    # ========================================
+    parent_asin_raw = raw.get("parent_asin") or None
+    parent_asin = validate_parent_asin(parent_asin_raw, asin)
     is_variation = bool(parent_asin)
 
+    if parent_asin:
+        logger.info(f"✅ Parent ASIN accepted: {parent_asin}")
+    else:
+        logger.info(f"ℹ️ No valid parent ASIN → standalone product")
+
     # ========================================
-    # ✅ PRICE EXTRACTION (multi-field support)
+    # ✅ PRICE EXTRACTION
     # ========================================
-    # Amazon ka "actual" selling price
     amazon_price_raw = (
         raw.get("final_price")
         or raw.get("price")
@@ -184,7 +232,6 @@ async def fetch_product_from_brightdata(amazon_url: str) -> dict:
     if amazon_price is not None:
         logger.info(f"✅ Amazon Price extracted: ${amazon_price}")
 
-    # Amazon ka "list price" (original/MRP)
     list_price_raw = (
         raw.get("list_price")
         or raw.get("original_price")
@@ -223,7 +270,7 @@ async def fetch_product_from_brightdata(amazon_url: str) -> dict:
             logger.warning(f"Rating parse fail: {rating_raw}")
             rating_value = None
     else:
-        logger.warning("⚠️ No rating field found in Bright Data response")
+        logger.warning("⚠️ No rating field found")
 
     # ========================================
     # ✅ REVIEWS COUNT EXTRACT
@@ -252,7 +299,7 @@ async def fetch_product_from_brightdata(amazon_url: str) -> dict:
             reviews_count = None
 
     # ========================================
-    # Images extract karo
+    # Images
     # ========================================
     images_list = raw.get("images") or []
     if not isinstance(images_list, list):
@@ -351,7 +398,7 @@ async def fetch_product_from_brightdata(amazon_url: str) -> dict:
         logger.info("Product available but no stock quantity → defaulting to 100")
 
     # ========================================
-    # Specifications extract karo
+    # Specifications
     # ========================================
     specs = {}
 
@@ -365,7 +412,6 @@ async def fetch_product_from_brightdata(amazon_url: str) -> dict:
                     if key not in specs:
                         specs[key] = str(value).strip()
 
-    # Extra useful fields
     extra_fields = {
         "Rating": rating_value if rating_value is not None else raw.get("rating"),
         "Reviews": reviews_count if reviews_count is not None else raw.get("reviews_count"),
@@ -382,9 +428,6 @@ async def fetch_product_from_brightdata(amazon_url: str) -> dict:
         if value is not None and str(value).strip() and key not in specs:
             specs[key] = str(value).strip()
 
-    # ========================================
-    # ✅ Final availability text (default)
-    # ========================================
     final_availability = (
         str(availability_text) if availability_text else "In Stock"
     )
@@ -400,26 +443,18 @@ async def fetch_product_from_brightdata(amazon_url: str) -> dict:
 
     return {
         "asin": asin,
-        "parent_asin": parent_asin,
+        "parent_asin": parent_asin,  # ✅ Validated
         "is_variation": is_variation,
         "title": raw.get("title"),
         "brand": raw.get("brand"),
-
-        # ✅ Amazon Price (original selling price)
         "amazon_price": amazon_price,
-        # ✅ List Price (original/MRP)
         "list_price": list_price,
-
         "image_url": main_image,
         "images": unique_images,
         "specifications": specs,
         "description": raw.get("description"),
-
-        # ✅ Rating & Reviews
         "rating": rating_value,
         "reviews_count": reviews_count,
-
-        # ✅ Availability
         "availability": final_availability,
         "is_available": is_available,
         "stock_quantity": stock_quantity,
@@ -438,9 +473,6 @@ def calculate_final_price(
 ) -> Optional[float]:
     """
     Final website price calculate karta hai.
-
-    - fixed:   amazon_price + markup
-    - percent: amazon_price * (1 + markup/100)
     """
     if amazon_price is None:
         return admin_price
