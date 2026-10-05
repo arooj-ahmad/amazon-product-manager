@@ -2,6 +2,7 @@
 # app/models/product.py
 # Product model — Amazon product data
 # + Out of Stock tracking (NEW)
+# + Variant attributes (Shopify options ke liye)
 # ============================================
 
 from sqlalchemy import (
@@ -51,6 +52,13 @@ class Product(Base):
     is_available = Column(Boolean, default=True)
     stock_quantity = Column(Integer, default=0)
     last_synced_at = Column(DateTime(timezone=True), nullable=True)
+
+    # ----------------------------------------
+    # ✅ NAYA — Variant Attributes
+    # Shopify options ke liye
+    # Format: [{"name": "Size", "value": "Large"}, ...]
+    # ----------------------------------------
+    variant_attributes = Column(JSON, default=list)
 
     # ----------------------------------------
     # ⚠️ NAYA — Shopify Product ID (for updates)

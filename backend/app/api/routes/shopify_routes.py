@@ -263,9 +263,9 @@ async def push_product_to_shopify(
             f"{existing_parent.shopify_product_id}"
         )
 
-        # Smart variation detection
+        # Smart variation detection (from variant_attributes column)
         option_name, variant_title = extract_variation_info({
-            "variant_attributes": product.specifications.get("variant_attributes") if product.specifications else [],
+            "variant_attributes": product.variant_attributes or [],
             "specifications": product.specifications or {},
         })
 
@@ -323,6 +323,7 @@ async def push_product_to_shopify(
         "amazon_price": product.amazon_price,
         "asin": product.asin,
         "parent_asin": product.parent_asin,
+        "variant_attributes": product.variant_attributes or [],  # ✅ NAYA
     }
 
     result = await create_shopify_product(
@@ -507,6 +508,7 @@ async def add_product_from_shopify_app(
         markup=user_markup,
         markup_type=user_markup_type,
         is_manual_override=False,
+        variant_attributes=data.get("variant_attributes", []),  # ✅ NAYA
     )
 
     db.add(new_product)
@@ -587,6 +589,7 @@ async def add_product_from_shopify_app(
                     "amazon_price": new_product.amazon_price,
                     "asin": new_product.asin,
                     "parent_asin": new_product.parent_asin,
+                    "variant_attributes": new_product.variant_attributes or [],  # ✅ NAYA
                 },
             )
 

@@ -326,6 +326,7 @@ async def admin_fetch_product(
         is_available=data.get("is_available", True),
         stock_quantity=data.get("stock_quantity", 0),
         last_synced_at=datetime.now(timezone.utc),
+        variant_attributes=data.get("variant_attributes", []),
     )
 
     db.add(new_product)

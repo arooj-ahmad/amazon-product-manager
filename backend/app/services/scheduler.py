@@ -255,7 +255,7 @@ async def update_all_prices():
                 product.amazon_price = new_amazon_price
                 product.price = new_final_price
 
-                # Optional fields update
+                               # Optional fields update
                 if data.get("title") and data["title"] != product.title:
                     product.title = data["title"]
                 if data.get("image_url") and data["image_url"] != product.image_url:
@@ -267,6 +267,12 @@ async def update_all_prices():
                     and data["specifications"] != product.specifications
                 ):
                     product.specifications = data["specifications"]
+                # ✅ NAYA — variant_attributes bhi sync karo
+                if (
+                    data.get("variant_attributes")
+                    and data["variant_attributes"] != product.variant_attributes
+                ):
+                    product.variant_attributes = data["variant_attributes"]
 
                 db.commit()
                 db.refresh(product)
