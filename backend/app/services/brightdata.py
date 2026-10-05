@@ -5,6 +5,7 @@
 # + Rating field (multiple names support)
 # + Amazon Original Price + List Price extraction
 # + Parent ASIN validation (fake ASIN skip)
+# + Variations + Variant Attributes (for Shopify grouping)
 # ============================================
 
 import logging
@@ -105,7 +106,7 @@ def validate_parent_asin(parent_asin, asin: str) -> Optional[str]:
         logger.info(f"⚠️ Parent ASIN not alphanumeric: '{parent_asin}' → ignoring")
         return None
 
-    # Rule 7: Uppercase check (Amazon ASINs uppercase hote hain)
+    # Rule 7: Uppercase check
     parent_asin = parent_asin.upper()
 
     logger.info(f"✅ Valid Parent ASIN: {parent_asin}")
@@ -182,24 +183,18 @@ async def fetch_product_from_brightdata(amazon_url: str) -> dict:
     logger.info(f"Keys: {list(raw.keys())}")
     logger.info(f"rating: {raw.get('rating')}")
     logger.info(f"average_rating: {raw.get('average_rating')}")
-    logger.info(f"customer_rating: {raw.get('customer_rating')}")
-    logger.info(f"star_rating: {raw.get('star_rating')}")
-    logger.info(f"rating_value: {raw.get('rating_value')}")
     logger.info(f"--- PRICE FIELDS ---")
     logger.info(f"final_price: {raw.get('final_price')}")
     logger.info(f"price: {raw.get('price')}")
-    logger.info(f"buybox_price: {raw.get('buybox_price')}")
-    logger.info(f"initial_price: {raw.get('initial_price')}")
     logger.info(f"list_price: {raw.get('list_price')}")
-    logger.info(f"original_price: {raw.get('original_price')}")
     logger.info(f"--- STOCK FIELDS ---")
     logger.info(f"add_to_cart_available: {raw.get('add_to_cart_available')}")
-    logger.info(f"buybox_available: {raw.get('buybox_available')}")
     logger.info(f"availability: {raw.get('availability')}")
-    logger.info(f"stock_quantity: {raw.get('stock_quantity')}")
     logger.info(f"--- VARIATION FIELDS ---")
     logger.info(f"parent_asin: {raw.get('parent_asin')}")
     logger.info(f"is_variation: {raw.get('is_variation')}")
+    logger.info(f"variations: {raw.get('variations')}")
+    logger.info(f"variant_attributes: {raw.get('variant_attributes')}")
     logger.info(f"=== END RAW RESPONSE ===")
 
     # Extract fields
@@ -218,6 +213,48 @@ async def fetch_product_from_brightdata(amazon_url: str) -> dict:
         logger.info(f"✅ Parent ASIN accepted: {parent_asin}")
     else:
         logger.info(f"ℹ️ No valid parent ASIN → standalone product")
+
+    # ========================================
+    # ✅ VARIANT ATTRIBUTES (Color, Size)
+    # ========================================
+    variant_attrs_raw = raw.get("variant_attributes") or []
+    variant_attributes = []
+
+    if isinstance(variant_attrs_raw, list):
+        for attr in variant_attrs_raw:
+            if isinstance(attr, dict):
+                name = attr.get("name") or ""
+                value = attr.get("value") or ""
+                if name and value:
+                    variant_attributes.append({
+                        "name": str(name).strip(),
+                        "value": str(value).strip(),
+                    })
+
+    logger.info(f"✅ Variant attributes: {len(variant_attributes)}")
+    for attr in variant_attributes:
+        logger.info(f"   • {attr['name']}: {attr['value']}")
+
+    # ========================================
+    # ✅ VARIATIONS (option names + values)
+    # ========================================
+    variations_raw = raw.get("variations") or []
+    variations = []
+
+    if isinstance(variations_raw, list):
+        for v in variations_raw:
+            if isinstance(v, dict):
+                v_name = v.get("variation_name") or ""
+                v_value = v.get("variation_value") or ""
+                if v_name and v_value:
+                    variations.append({
+                        "name": str(v_name).strip(),
+                        "value": str(v_value).strip(),
+                    })
+
+    logger.info(f"✅ Variations: {len(variations)}")
+    for v in variations:
+        logger.info(f"   • {v['name']}: {v['value']}")
 
     # ========================================
     # ✅ PRICE EXTRACTION
@@ -436,6 +473,7 @@ async def fetch_product_from_brightdata(amazon_url: str) -> dict:
         f"Parsed product: ASIN={asin}, ParentASIN={parent_asin}, "
         f"AmazonPrice=${amazon_price}, ListPrice=${list_price}, "
         f"Rating={rating_value}, Reviews={reviews_count}, "
+        f"Variations={len(variations)}, VarAttrs={len(variant_attributes)}, "
         f"Images={len(unique_images)}, Specs={len(specs)}, "
         f"Availability='{final_availability}', Available={is_available}, "
         f"Stock={stock_quantity}"
@@ -458,6 +496,9 @@ async def fetch_product_from_brightdata(amazon_url: str) -> dict:
         "availability": final_availability,
         "is_available": is_available,
         "stock_quantity": stock_quantity,
+        # ✅ NAYA — Variations ke liye
+        "variations": variations,                    # [{name, value}]
+        "variant_attributes": variant_attributes,    # [{name, value}]
     }
 
 

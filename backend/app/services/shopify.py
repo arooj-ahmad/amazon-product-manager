@@ -7,6 +7,7 @@
 # + Storefront API (real-time availability check)
 # + 5 Metafields: asin, rating, amazon_price, reviews_count, availability
 #   (parent_asin — temporarily disabled due to fake ASINs from Bright Data)
+# + Variations Support (parent + variant creation & auto-grouping)
 # ============================================
 
 import hashlib
@@ -161,10 +162,6 @@ async def shopify_graphql(
 # PRIMARY LOCATION DHUNDO
 # ============================================
 async def get_primary_location(shop: str, access_token: str) -> Optional[str]:
-    """
-    Shopify store ka primary location ID dhundo.
-    Priority: Shop location > First active location
-    """
     query = """
     query {
       locations(first: 10) {
@@ -192,7 +189,6 @@ async def get_primary_location(shop: str, access_token: str) -> Optional[str]:
         logger.warning("No location found")
         return None
 
-    # Priority 1: Location named "Shop location"
     for edge in edges:
         node = edge["node"]
         name = node.get("name", "")
@@ -200,28 +196,25 @@ async def get_primary_location(shop: str, access_token: str) -> Optional[str]:
             logger.info(f"✅ Shop location found: {node['id']}")
             return node["id"]
 
-    # Priority 2: Primary location
     for edge in edges:
         node = edge["node"]
         if node.get("isPrimary"):
             logger.info(f"✅ Primary location: {node['id']}")
             return node["id"]
 
-    # Priority 3: First active location
     for edge in edges:
         node = edge["node"]
         if node.get("isActive"):
             logger.info(f"✅ First active location: {node['id']}")
             return node["id"]
 
-    # Fallback: First location
     location_id = edges[0]["node"]["id"]
     logger.info(f"✅ Fallback location: {location_id}")
     return location_id
 
 
 # ============================================
-# INVENTORY SET KARO (with changeFromQuantity + @idempotent)
+# INVENTORY SET KARO
 # ============================================
 async def set_inventory_quantity(
     shop: str,
@@ -236,7 +229,6 @@ async def set_inventory_quantity(
         logger.warning("No location — inventory set nahi hoga")
         return False
 
-    # Current inventory fetch
     query_current = """
     query getInventoryLevel($inventoryItemId: ID!, $locationId: ID!) {
       inventoryItem(id: $inventoryItemId) {
@@ -274,10 +266,8 @@ async def set_inventory_quantity(
 
     logger.info(f"   Current inventory: {current_qty}, target: {quantity}")
 
-    # Unique idempotency key
     idempotency_key = str(uuid.uuid4())
 
-    # Mutation with @idempotent directive
     mutation = """
     mutation inventorySetQuantities($input: InventorySetQuantitiesInput!) {
       inventorySetQuantities(input: $input) @idempotent(key: "%s") {
@@ -338,11 +328,6 @@ async def update_variant_with_tracked(
     variant_id: str,
     price: float,
 ) -> bool:
-    """
-    Variant update karta hai with:
-    - price
-    - inventoryItem.tracked = true
-    """
     mutation = """
     mutation productVariantsBulkUpdate(
       $productId: ID!,
@@ -421,11 +406,6 @@ async def set_product_metafields(
     product_id: str,
     metafields: list,
 ) -> bool:
-    """
-    Product ke metafields alag se set karta hai.
-    productCreate ke baad call karein — kyunki productCreate
-    mutation metafields accept nahi karta.
-    """
     if not metafields:
         logger.info("   No metafields to set")
         return True
@@ -448,7 +428,6 @@ async def set_product_metafields(
     }
     """
 
-    # ✅ ownerId add karo har metafield mein
     metafields_with_owner = [
         {
             "ownerId": product_id,
@@ -488,26 +467,391 @@ async def set_product_metafields(
 
 
 # ============================================
-# PRODUCT CREATE — WITH 5 METAFIELDS VIA metafieldsSet
-# + asin, rating, amazon_price, reviews_count, availability
-# ⚠️ parent_asin — temporarily disabled
+# ✅ CREATE PRODUCT WITH VARIANTS (Amazon jaisa)
+# ============================================
+async def create_shopify_product_with_variants(
+    shop: str,
+    access_token: str,
+    product_data: dict,
+    variants: list,
+) -> dict:
+    """
+    Product with multiple variants create karta hai (1 product, N variants).
+
+    variants = [
+        {"title": "Charcoal", "price": 49.99, "sku": "B08N5WRWNW", "stock": 100},
+        {"title": "Deep Sea Blue", "price": 49.99, "sku": "B09B8V1LZ3", "stock": 50},
+    ]
+    """
+    is_available = product_data.get("is_available", True)
+    status = "ACTIVE" if is_available else "DRAFT"
+
+    # ========================================
+    # STEP 1: Product create with options
+    # ========================================
+    mutation_create = """
+    mutation productCreate($input: ProductCreateInput!) {
+      productCreate(product: $input) {
+        product {
+          id
+          title
+          handle
+          options {
+            id
+            name
+            values
+          }
+          variants(first: 50) {
+            edges {
+              node {
+                id
+                title
+                price
+                inventoryItem {
+                  id
+                  sku
+                  tracked
+                }
+              }
+            }
+          }
+        }
+        userErrors {
+          field
+          message
+        }
+      }
+    }
+    """
+
+    # Option values variations se nikalo
+    option_values = [{"name": v["title"]} for v in variants if v.get("title")]
+
+    if not option_values:
+        logger.warning("No option values provided — using default")
+        option_values = [{"name": "Default"}]
+
+    input_data = {
+        "title": product_data.get("title") or "Untitled Product",
+        "descriptionHtml": product_data.get("description", ""),
+        "vendor": product_data.get("brand", ""),
+        "status": status,
+        "productOptions": [
+            {
+                "name": "Style",
+                "values": option_values,
+            }
+        ],
+    }
+
+    result = await shopify_graphql(
+        shop, access_token, mutation_create, {"input": input_data}
+    )
+
+    if "errors" in result:
+        logger.error(f"❌ Product create error: {result['errors']}")
+        return result
+
+    product_create = result.get("data", {}).get("productCreate", {})
+    user_errors = product_create.get("userErrors", [])
+
+    if user_errors:
+        logger.error(f"❌ Product user errors: {user_errors}")
+        return result
+
+    shopify_product = product_create.get("product", {})
+    product_id = shopify_product.get("id")
+
+    logger.info(f"✅ Product created with {len(option_values)} variants: {shopify_product.get('title')}")
+    logger.info(f"   Product ID: {product_id}")
+
+    # ========================================
+    # STEP 2: Har variant update karo (price, SKU)
+    # ========================================
+    variant_edges = (
+        shopify_product.get("variants", {}).get("edges", [])
+    )
+
+    variants_to_update = []
+    for idx, edge in enumerate(variant_edges):
+        if idx >= len(variants):
+            break
+
+        shopify_variant = edge["node"]
+        our_variant = variants[idx]
+
+        variants_to_update.append({
+            "id": shopify_variant["id"],
+            "price": str(our_variant.get("price", 0)),
+            "inventoryItem": {
+                "sku": our_variant.get("sku", ""),
+                "tracked": True,
+            },
+        })
+
+    if variants_to_update:
+        mutation_var = """
+        mutation productVariantsBulkUpdate(
+          $productId: ID!,
+          $variants: [ProductVariantsBulkInput!]!
+        ) {
+          productVariantsBulkUpdate(
+            productId: $productId,
+            variants: $variants
+          ) {
+            productVariants {
+              id
+              title
+              price
+              inventoryItem {
+                id
+                sku
+                tracked
+              }
+            }
+            userErrors {
+              field
+              message
+            }
+          }
+        }
+        """
+
+        var_result = await shopify_graphql(
+            shop,
+            access_token,
+            mutation_var,
+            {"productId": product_id, "variants": variants_to_update},
+        )
+
+        var_errors = (
+            var_result.get("data", {})
+            .get("productVariantsBulkUpdate", {})
+            .get("userErrors", [])
+        )
+        if var_errors:
+            logger.error(f"❌ Variant update errors: {var_errors}")
+        else:
+            logger.info(f"✅ {len(variants_to_update)} variants updated")
+
+        # ========================================
+        # STEP 3: Har variant ka inventory set karo
+        # ========================================
+        updated_variants = (
+            var_result.get("data", {})
+            .get("productVariantsBulkUpdate", {})
+            .get("productVariants", [])
+        )
+
+        for idx, var in enumerate(updated_variants):
+            if idx >= len(variants):
+                break
+
+            our_variant = variants[idx]
+            inv_item_id = var.get("inventoryItem", {}).get("id")
+            stock = our_variant.get("stock", 0)
+
+            if inv_item_id:
+                await set_inventory_quantity(
+                    shop=shop,
+                    access_token=access_token,
+                    inventory_item_id=inv_item_id,
+                    quantity=stock,
+                )
+
+    # ========================================
+    # STEP 4: Images add karo
+    # ========================================
+    images = product_data.get("images", [])
+    if product_id and images:
+        await add_product_images(
+            shop=shop,
+            access_token=access_token,
+            product_id=product_id,
+            image_urls=images[:10],
+        )
+
+    # ========================================
+    # STEP 5: Metafields set karo
+    # ========================================
+    metafields_input = []
+
+    asin_value = str(product_data.get("asin", "") or "")
+    if asin_value and asin_value != "None":
+        metafields_input.append({
+            "namespace": "custom",
+            "key": "asin",
+            "value": asin_value,
+            "type": "single_line_text_field",
+        })
+
+    rating_value = str(product_data.get("rating", "") or "")
+    if rating_value and rating_value != "None":
+        metafields_input.append({
+            "namespace": "custom",
+            "key": "rating",
+            "value": rating_value,
+            "type": "single_line_text_field",
+        })
+
+    reviews_count_value = product_data.get("reviews_count")
+    if reviews_count_value is not None:
+        reviews_count_str = str(reviews_count_value)
+        if reviews_count_str and reviews_count_str != "None":
+            metafields_input.append({
+                "namespace": "custom",
+                "key": "reviews_count",
+                "value": reviews_count_str,
+                "type": "single_line_text_field",
+            })
+
+    amazon_price_value = product_data.get("amazon_price")
+    if amazon_price_value is not None:
+        amazon_price_str = str(amazon_price_value)
+        if amazon_price_str and amazon_price_str != "None":
+            metafields_input.append({
+                "namespace": "custom",
+                "key": "amazon_price",
+                "value": amazon_price_str,
+                "type": "single_line_text_field",
+            })
+
+    availability_value = str(product_data.get("availability", "") or "")
+    if availability_value and availability_value != "None":
+        metafields_input.append({
+            "namespace": "custom",
+            "key": "availability",
+            "value": availability_value,
+            "type": "single_line_text_field",
+        })
+
+    if product_id and metafields_input:
+        await set_product_metafields(
+            shop=shop,
+            access_token=access_token,
+            product_id=product_id,
+            metafields=metafields_input,
+        )
+
+    return result
+
+
+# ============================================
+# ✅ ADD VARIANT TO EXISTING PRODUCT
+# ============================================
+async def add_variant_to_existing_product(
+    shop: str,
+    access_token: str,
+    product_id: str,
+    variant_data: dict,
+) -> dict:
+    """
+    Existing product mein naya variant add karta hai.
+
+    variant_data = {
+        "title": "Large",
+        "option_name": "Size",
+        "price": 49.99,
+        "sku": "B0787P86ZZ",
+        "stock": 100,
+    }
+    """
+    option_name = variant_data.get("option_name") or "Style"
+    option_value = variant_data.get("title") or "Default"
+
+    logger.info(f"   Adding variant: {option_name}={option_value}")
+
+    mutation = """
+    mutation productVariantsBulkCreate(
+      $productId: ID!,
+      $variants: [ProductVariantsBulkInput!]!
+    ) {
+      productVariantsBulkCreate(
+        productId: $productId,
+        variants: $variants
+      ) {
+        productVariants {
+          id
+          title
+          price
+          inventoryItem {
+            id
+            sku
+            tracked
+          }
+        }
+        userErrors {
+          field
+          message
+        }
+      }
+    }
+    """
+
+    variables = {
+        "productId": product_id,
+        "variants": [
+            {
+                "optionValues": [
+                    {"name": option_value, "optionName": option_name}
+                ],
+                "price": str(variant_data.get("price", 0)),
+                "inventoryItem": {
+                    "sku": variant_data.get("sku", ""),
+                    "tracked": True,
+                },
+            }
+        ],
+    }
+
+    result = await shopify_graphql(shop, access_token, mutation, variables)
+
+    if "errors" in result:
+        logger.error(f"❌ Variant create error: {result['errors']}")
+        return result
+
+    var_errors = (
+        result.get("data", {})
+        .get("productVariantsBulkCreate", {})
+        .get("userErrors", [])
+    )
+    if var_errors:
+        logger.error(f"❌ Variant create user errors: {var_errors}")
+        return result
+
+    created = (
+        result.get("data", {})
+        .get("productVariantsBulkCreate", {})
+        .get("productVariants", [])
+    )
+
+    if created:
+        v = created[0]
+        logger.info(f"✅ Variant added: {v.get('title')} — ${v.get('price')}")
+
+        # Inventory set karo
+        inv_item_id = v.get("inventoryItem", {}).get("id")
+        stock = variant_data.get("stock", 0)
+        if inv_item_id and stock:
+            await set_inventory_quantity(
+                shop=shop,
+                access_token=access_token,
+                inventory_item_id=inv_item_id,
+                quantity=stock,
+            )
+
+    return result
+
+
+# ============================================
+# PRODUCT CREATE (SIMPLE — for non-variation)
 # ============================================
 async def create_shopify_product(
     shop: str,
     access_token: str,
     product_data: dict,
 ) -> dict:
-    """
-    Shopify mein naya product create karta hai.
-    5 metafields ke saath (alag mutation se):
-      - custom.asin
-      - custom.rating
-      - custom.amazon_price
-      - custom.reviews_count
-      - custom.availability
-
-    ⚠️ parent_asin temporarily disabled (fake ASINs from Bright Data).
-    """
+    """Simple product create (no variations)."""
 
     is_available = product_data.get("is_available", True)
     status = "ACTIVE" if is_available else "DRAFT"
@@ -518,12 +862,9 @@ async def create_shopify_product(
     except (ValueError, TypeError):
         price_float = 0.0
 
-    # ========================================
-    # ✅ METAFIELDS: 5 fields (parent_asin disabled)
-    # ========================================
+    # Metafields prepare
     metafields_input = []
 
-    # --- ASIN ---
     asin_value = str(product_data.get("asin", "") or "")
     if asin_value and asin_value != "None":
         metafields_input.append({
@@ -534,12 +875,8 @@ async def create_shopify_product(
         })
         logger.info(f"   ASIN metafield: {asin_value}")
 
-    # --- Parent ASIN (TEMPORARILY DISABLED) ---
-    # ⚠️ Fake parent ASINs (like B0D7FVTHMQ) don't exist on Amazon.
-    # Will re-enable after implementing proper Amazon verification.
     logger.info(f"   ⏭️ Parent ASIN skipped (temporarily disabled)")
 
-    # --- Rating ---
     rating_value = str(product_data.get("rating", "") or "")
     if rating_value and rating_value != "None":
         metafields_input.append({
@@ -550,7 +887,6 @@ async def create_shopify_product(
         })
         logger.info(f"   Rating metafield: {rating_value}")
 
-    # --- Reviews Count ---
     reviews_count_value = product_data.get("reviews_count")
     if reviews_count_value is not None:
         reviews_count_str = str(reviews_count_value)
@@ -563,7 +899,6 @@ async def create_shopify_product(
             })
             logger.info(f"   Reviews Count metafield: {reviews_count_str}")
 
-    # --- Amazon Price ---
     amazon_price_value = product_data.get("amazon_price")
     if amazon_price_value is not None:
         amazon_price_str = str(amazon_price_value)
@@ -576,7 +911,6 @@ async def create_shopify_product(
             })
             logger.info(f"   Amazon Price metafield: {amazon_price_str}")
 
-    # --- Availability ---
     availability_value = str(product_data.get("availability", "") or "")
     if availability_value and availability_value != "None":
         metafields_input.append({
@@ -589,9 +923,7 @@ async def create_shopify_product(
 
     logger.info(f"   Total metafields to set: {len(metafields_input)}")
 
-    # ========================================
-    # STEP 1: Product create (metafields nahi bhejenge)
-    # ========================================
+    # Product create
     mutation_create = """
     mutation productCreate($input: ProductCreateInput!) {
       productCreate(product: $input) {
@@ -648,9 +980,7 @@ async def create_shopify_product(
     logger.info(f"✅ Product created: {shopify_product.get('title')}")
     logger.info(f"   Product ID: {product_id}")
 
-    # ========================================
-    # STEP 2: Metafields ALAG SE set karo
-    # ========================================
+    # Metafields set
     if product_id and metafields_input:
         await set_product_metafields(
             shop=shop,
@@ -659,9 +989,7 @@ async def create_shopify_product(
             metafields=metafields_input,
         )
 
-    # ========================================
-    # STEP 3: Variant + Inventory Item ID
-    # ========================================
+    # Variant + Inventory
     variants_edges = (
         shopify_product.get("variants", {}).get("edges", [])
     )
@@ -675,14 +1003,9 @@ async def create_shopify_product(
         inventory_item_id = (
             variant_node.get("inventoryItem", {}).get("id")
         )
-        logger.info(f"   Variant ID: {variant_id}")
-        logger.info(f"   Inventory Item ID: {inventory_item_id}")
 
-    # ========================================
-    # STEP 4: Variant update with tracked=true + price
-    # ========================================
+    # Variant update
     if product_id and variant_id and price_float > 0:
-        logger.info(f"   Target price: ${price_float}")
         await update_variant_with_tracked(
             shop=shop,
             access_token=access_token,
@@ -691,17 +1014,11 @@ async def create_shopify_product(
             price=price_float,
         )
 
-    # ========================================
-    # STEP 5: INVENTORY SET
-    # ========================================
+    # Inventory set
     if inventory_item_id:
         stock_qty = product_data.get("stock_quantity", 0)
-
         if stock_qty == 0 and is_available:
             stock_qty = 100
-            logger.info(f"   Stock 0 → Default 100 set kiya")
-
-        logger.info(f"   Setting inventory to: {stock_qty}")
 
         await set_inventory_quantity(
             shop=shop,
@@ -709,30 +1026,22 @@ async def create_shopify_product(
             inventory_item_id=inventory_item_id,
             quantity=stock_qty,
         )
-    else:
-        logger.warning("⚠️ No inventory_item_id — inventory set nahi hoga")
 
-    # ========================================
-    # STEP 6: Images add karo
-    # ========================================
+    # Images
     images = product_data.get("images", [])
     if product_id and images:
-        logger.info(f"   Adding {len(images)} images...")
-        images_result = await add_product_images(
+        await add_product_images(
             shop=shop,
             access_token=access_token,
             product_id=product_id,
             image_urls=images[:10],
         )
 
-        if "errors" in images_result:
-            logger.warning(f"⚠️ Images add fail: {images_result['errors']}")
-
     return result
 
 
 # ============================================
-# PRODUCT IMAGES ADD KARO (Media API)
+# PRODUCT IMAGES ADD
 # ============================================
 async def add_product_images(
     shop: str,
@@ -783,7 +1092,7 @@ async def add_product_images(
 
 
 # ============================================
-# PRODUCT STATUS UPDATE (In Stock ↔ Out of Stock)
+# PRODUCT STATUS UPDATE
 # ============================================
 async def update_shopify_product_status(
     shop: str,
@@ -821,10 +1130,6 @@ async def update_shopify_product_status(
         }
     }
 
-    logger.info(
-        f"Shopify status update: product={product_gid}, status={new_status}"
-    )
-
     result = await shopify_graphql(shop, access_token, mutation, variables)
 
     if "errors" in result:
@@ -838,11 +1143,6 @@ async def update_shopify_product_status(
         logger.error(f"❌ Status update user errors: {user_errors}")
         return False
 
-    product = update_data.get("product", {})
-    logger.info(
-        f"✅ Shopify status updated: "
-        f"{product.get('title')} → {product.get('status')}"
-    )
     return True
 
 
@@ -900,14 +1200,11 @@ async def get_shopify_product_by_sku(
 
 
 # ============================================
-# ✅ STOREFRONT API — REAL-TIME AVAILABILITY CHECK
+# ✅ STOREFRONT API — AVAILABILITY CHECK
 # ============================================
 async def check_product_availability(
     shopify_product_id: str,
 ) -> dict:
-    """
-    Shopify Storefront API se product ki real-time availability check karta hai.
-    """
     if not shopify_product_id.startswith("gid://"):
         product_gid = f"gid://shopify/Product/{shopify_product_id}"
     else:
