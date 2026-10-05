@@ -8,7 +8,7 @@
 # + 5 Metafields: asin, rating, amazon_price, reviews_count, availability
 #   (parent_asin — temporarily disabled due to fake ASINs from Bright Data)
 # + Variations Support (parent + variant creation & auto-grouping)
-# + Option Existence Check (via productUpdate — works on all API versions)
+# + Option Existence Check (fix for "Option does not exist" error)
 # ============================================
 
 import hashlib
@@ -468,7 +468,7 @@ async def set_product_metafields(
 
 
 # ============================================
-# ✅ ENSURE PRODUCT HAS OPTION (FIXED — productUpdate)
+# ✅ ENSURE PRODUCT HAS OPTION (FIXED)
 # ============================================
 async def ensure_product_has_option(
     shop: str,
@@ -479,7 +479,7 @@ async def ensure_product_has_option(
 ) -> bool:
     """
     Product mein option exist karta hai ya nahi, check karta hai.
-    Agar nahi, toh create karta hai (via productUpdate).
+    Agar nahi, toh create karta hai.
     """
     # Pehle current options fetch karo
     query = """
@@ -556,10 +556,16 @@ async def ensure_product_has_option(
         "values": new_option_values,
     })
 
-    # ✅ productUpdate mutation (sab API versions mein kaam karta hai)
+    # ✅ productOptionsUpdate mutation
     mutation = """
-    mutation productUpdateOptions($input: ProductInput!) {
-      productUpdate(input: $input) {
+    mutation productOptionsUpdate(
+      $productId: ID!,
+      $options: [OptionUpdateInput!]!
+    ) {
+      productOptionsUpdate(
+        productId: $productId,
+        options: $options
+      ) {
         product {
           id
           options {
@@ -577,10 +583,8 @@ async def ensure_product_has_option(
     """
 
     variables = {
-        "input": {
-            "id": product_id,
-            "options": new_options,
-        }
+        "productId": product_id,
+        "options": new_options,
     }
 
     update_result = await shopify_graphql(
@@ -595,7 +599,7 @@ async def ensure_product_has_option(
 
     user_errors = (
         update_result.get("data", {})
-        .get("productUpdate", {})
+        .get("productOptionsUpdate", {})
         .get("userErrors", [])
     )
 
