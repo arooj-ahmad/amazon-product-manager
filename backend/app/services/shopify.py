@@ -8,7 +8,7 @@
 # + 5 Metafields: asin, rating, amazon_price, reviews_count, availability
 #   (parent_asin — temporarily disabled due to fake ASINs from Bright Data)
 # + Variations Support (parent + variant creation & auto-grouping)
-# + Option Existence Check (via productUpdate — works on all API versions)
+# + Option Existence Check (via productSet — 2026-07 compatible)
 # ============================================
 
 import hashlib
@@ -468,7 +468,7 @@ async def set_product_metafields(
 
 
 # ============================================
-# ✅ ENSURE PRODUCT HAS OPTION (FIXED — productUpdate)
+# ✅ ENSURE PRODUCT HAS OPTION (productSet — 2026-07 compatible)
 # ============================================
 async def ensure_product_has_option(
     shop: str,
@@ -479,7 +479,8 @@ async def ensure_product_has_option(
 ) -> bool:
     """
     Product mein option exist karta hai ya nahi, check karta hai.
-    Agar nahi, toh create karta hai (via productUpdate).
+    Agar nahi, toh `productSet` mutation se add karta hai.
+    Shopify API 2026-07 compatible.
     """
     # Pehle current options fetch karo
     query = """
@@ -516,21 +517,19 @@ async def ensure_product_has_option(
         logger.info(f"   ✅ Option '{option_name}' already exists")
         return True
 
-    # ❌ Agar nahi exist karta, toh create karo
+    # ❌ Agar nahi exist karta, toh productSet se update karo
     logger.info(f"   ➕ Creating option '{option_name}' with values: {option_values}")
 
-    # ✅ Existing options ko dict format mein convert karo
+    # ✅ Existing options prepare karo (Default Title skip karo)
     new_options = []
 
     for opt in existing_options:
         name = opt.get("name", "")
         values = opt.get("values", [])
 
-        # Skip "Default Title" option
         if name.lower() == "default title":
             continue
 
-        # ✅ Values string array hai — dict mein convert karo
         values_as_dicts = []
         for v in values:
             if isinstance(v, str) and v:
@@ -556,10 +555,10 @@ async def ensure_product_has_option(
         "values": new_option_values,
     })
 
-    # ✅ productUpdate mutation (sab API versions mein kaam karta hai)
+    # ✅ productSet mutation (2026-07 compatible)
     mutation = """
-    mutation productUpdateOptions($input: ProductInput!) {
-      productUpdate(input: $input) {
+    mutation productSet($input: ProductSetInput!) {
+      productSet(input: $input) {
         product {
           id
           options {
@@ -579,7 +578,7 @@ async def ensure_product_has_option(
     variables = {
         "input": {
             "id": product_id,
-            "options": new_options,
+            "productOptions": new_options,
         }
     }
 
@@ -595,7 +594,7 @@ async def ensure_product_has_option(
 
     user_errors = (
         update_result.get("data", {})
-        .get("productUpdate", {})
+        .get("productSet", {})
         .get("userErrors", [])
     )
 
@@ -608,7 +607,7 @@ async def ensure_product_has_option(
 
 
 # ============================================
-# ✅ CREATE PRODUCT WITH VARIANTS (Amazon jaisa)
+# ✅ CREATE PRODUCT WITH VARIANTS
 # ============================================
 async def create_shopify_product_with_variants(
     shop: str,
@@ -616,9 +615,6 @@ async def create_shopify_product_with_variants(
     product_data: dict,
     variants: list,
 ) -> dict:
-    """
-    Product with multiple variants create karta hai (1 product, N variants).
-    """
     is_available = product_data.get("is_available", True)
     status = "ACTIVE" if is_available else "DRAFT"
 
@@ -857,7 +853,7 @@ async def create_shopify_product_with_variants(
 
 
 # ============================================
-# ✅ ADD VARIANT TO EXISTING PRODUCT (WITH OPTION CHECK)
+# ✅ ADD VARIANT TO EXISTING PRODUCT
 # ============================================
 async def add_variant_to_existing_product(
     shop: str,
@@ -865,10 +861,6 @@ async def add_variant_to_existing_product(
     product_id: str,
     variant_data: dict,
 ) -> dict:
-    """
-    Existing product mein naya variant add karta hai.
-    Pehle ensure karta hai ke option exist karta hai.
-    """
     option_name = variant_data.get("option_name") or "Style"
     option_value = variant_data.get("title") or "Default"
 
@@ -976,16 +968,13 @@ async def add_variant_to_existing_product(
 
 
 # ============================================
-# PRODUCT CREATE (SIMPLE — for non-variation)
-# ✅ With productOptions support
+# PRODUCT CREATE (SIMPLE)
 # ============================================
 async def create_shopify_product(
     shop: str,
     access_token: str,
     product_data: dict,
 ) -> dict:
-    """Simple product create (with optional productOptions)."""
-
     is_available = product_data.get("is_available", True)
     status = "ACTIVE" if is_available else "DRAFT"
 
@@ -995,7 +984,6 @@ async def create_shopify_product(
     except (ValueError, TypeError):
         price_float = 0.0
 
-    # Metafields prepare
     metafields_input = []
 
     asin_value = str(product_data.get("asin", "") or "")
@@ -1056,9 +1044,6 @@ async def create_shopify_product(
 
     logger.info(f"   Total metafields to set: {len(metafields_input)}")
 
-    # ========================================
-    # ✅ Product options (Size/Color) add karo
-    # ========================================
     input_data = {
         "title": product_data.get("title") or "Untitled Product",
         "descriptionHtml": product_data.get("description", ""),
@@ -1079,13 +1064,12 @@ async def create_shopify_product(
                 "name": name,
                 "values": [{"name": value}],
             })
-            break  # Sirf pehla relevant option
+            break
 
     if product_options:
         input_data["productOptions"] = product_options
         logger.info(f"   ✅ Product options: {product_options}")
 
-    # Product create
     mutation_create = """
     mutation productCreate($input: ProductCreateInput!) {
       productCreate(product: $input) {
@@ -1141,7 +1125,6 @@ async def create_shopify_product(
     logger.info(f"✅ Product created: {shopify_product.get('title')}")
     logger.info(f"   Product ID: {product_id}")
 
-    # Metafields set
     if product_id and metafields_input:
         await set_product_metafields(
             shop=shop,
@@ -1150,7 +1133,6 @@ async def create_shopify_product(
             metafields=metafields_input,
         )
 
-    # Variant + Inventory
     variants_edges = (
         shopify_product.get("variants", {}).get("edges", [])
     )
@@ -1165,7 +1147,6 @@ async def create_shopify_product(
             variant_node.get("inventoryItem", {}).get("id")
         )
 
-    # Variant update
     if product_id and variant_id and price_float > 0:
         await update_variant_with_tracked(
             shop=shop,
@@ -1175,7 +1156,6 @@ async def create_shopify_product(
             price=price_float,
         )
 
-    # Inventory set
     if inventory_item_id:
         stock_qty = product_data.get("stock_quantity", 0)
         if stock_qty == 0 and is_available:
@@ -1188,7 +1168,6 @@ async def create_shopify_product(
             quantity=stock_qty,
         )
 
-    # Images
     images = product_data.get("images", [])
     if product_id and images:
         await add_product_images(
