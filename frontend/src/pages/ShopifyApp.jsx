@@ -41,57 +41,56 @@ export default function ShopifyApp() {
 
   // ========================================
   // Subscription Required — Show Plans
-  // (Uncomment agar billing chahiye)
   // ========================================
-  // if (!subscription?.active) {
-  //   return (
-  //     <div style={styles.page}>
-  //       <div style={styles.container}>
-  //         <h1 style={styles.h1}>🛒 Amazon Product Manager</h1>
-  //         <p style={styles.subtitle}>
-  //           Choose a plan to start adding Amazon products
-  //         </p>
-  //
-  //         {plans.length === 0 ? (
-  //           <div
-  //             style={{
-  //               ...styles.messageBox,
-  //               background: theme.colors.errorBg,
-  //               color: theme.colors.errorText,
-  //               border: `1px solid ${theme.colors.errorBorder}`,
-  //             }}
-  //           >
-  //             No plans available. Please try again later.
-  //           </div>
-  //         ) : (
-  //           <div style={styles.grid}>
-  //             {plans.map((plan) => (
-  //               <PlanCard
-  //                 key={plan.key}
-  //                 plan={plan}
-  //                 onSubscribe={handleSubscribe}
-  //                 isSubscribing={isSubscribing}
-  //               />
-  //             ))}
-  //           </div>
-  //         )}
-  //
-  //         {message && (
-  //           <div
-  //             style={{
-  //               ...styles.messageBox,
-  //               background: theme.colors.errorBg,
-  //               color: theme.colors.errorText,
-  //               border: `1px solid ${theme.colors.errorBorder}`,
-  //             }}
-  //           >
-  //             {message.text}
-  //           </div>
-  //         )}
-  //       </div>
-  //     </div>
-  //   )
-  // }
+  if (!subscription?.active) {
+    return (
+      <div style={styles.page}>
+        <div style={styles.container}>
+          <h1 style={styles.h1}>🛒 Amazon Product Manager</h1>
+          <p style={styles.subtitle}>
+            Choose a plan to start adding Amazon products
+          </p>
+
+          {plans.length === 0 ? (
+            <div
+              style={{
+                ...styles.messageBox,
+                background: theme.colors.errorBg,
+                color: theme.colors.errorText,
+                border: `1px solid ${theme.colors.errorBorder}`,
+              }}
+            >
+              No plans available. Please try again later.
+            </div>
+          ) : (
+            <div style={styles.grid}>
+              {plans.map((plan) => (
+                <PlanCard
+                  key={plan.key}
+                  plan={plan}
+                  onSubscribe={handleSubscribe}
+                  isSubscribing={isSubscribing}
+                />
+              ))}
+            </div>
+          )}
+
+          {message && (
+            <div
+              style={{
+                ...styles.messageBox,
+                background: theme.colors.errorBg,
+                color: theme.colors.errorText,
+                border: `1px solid ${theme.colors.errorBorder}`,
+              }}
+            >
+              {message.text}
+            </div>
+          )}
+        </div>
+      </div>
+    )
+  }
 
   // ========================================
   // Main App — Subscription Active

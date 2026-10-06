@@ -1,7 +1,15 @@
 // src/components/PlanCard.jsx
 import { styles, theme } from '../styles/theme'
 
-export default function PlanCard({ plan, onSubscribe, isSubscribing }) {
+export default function PlanCard({
+  plan,
+  onSubscribe,
+  isSubscribing,       // global subscribing state
+  subscribingPlanKey,  // ← NAYA: kaunsa plan currently loading hai
+}) {
+  // ✅ Check karein ke yeh card currently loading hai ya nahi
+  const isThisLoading = isSubscribing && subscribingPlanKey === plan.key
+
   return (
     <div style={styles.planCard}>
       <h3
@@ -70,18 +78,19 @@ export default function PlanCard({ plan, onSubscribe, isSubscribing }) {
         ))}
       </ul>
 
+      {/* ✅ Sirf yeh button apni loading state dikhata hai */}
       <button
         onClick={() => onSubscribe(plan.key)}
-        disabled={isSubscribing}
+        disabled={isSubscribing}  // ✅ Sab buttons disable — but only this one shows loading
         style={{
           ...styles.primaryBtn,
-          background: isSubscribing
+          background: isThisLoading
             ? theme.colors.primaryDisabled
             : theme.colors.primary,
           cursor: isSubscribing ? 'not-allowed' : 'pointer',
         }}
       >
-        {isSubscribing ? '⏳ Redirecting...' : 'Start Free Trial'}
+        {isThisLoading ? '⏳ Redirecting...' : 'Start Free Trial'}
       </button>
     </div>
   )

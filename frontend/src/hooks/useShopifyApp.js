@@ -70,7 +70,51 @@ export function useShopifyApp() {
   const bridgeCheckRef = useRef(null)
 
   // ========================================
-  // 1. App Bridge ready + shop domain
+  // 1. Load billing data (plans + subscription)
+  // ========================================
+  const loadBillingData = useCallback(async () => {
+    setCheckingSub(true)
+    try {
+      // ✅ Plans hamesha load karein (auth ki zaroorat nahi)
+      const plansRes = await safeFetch(`${API_URL}/api/billing/plans`)
+      if (plansRes.ok) {
+        setPlans(plansRes.data.plans || [])
+      } else {
+        console.warn('Plans fetch failed:', plansRes.data)
+      }
+
+      // Subscription check — sirf agar App Bridge hai
+      try {
+        const idToken = await getIdToken()
+        const subRes = await safeFetch(`${API_URL}/api/billing/status`, {
+          headers: { Authorization: `Bearer ${idToken}` },
+        })
+
+        if (subRes.ok) {
+          setSubscription(subRes.data)
+        } else if (subRes.status === 401) {
+          setMessage({
+            type: 'error',
+            text: '❌ Session expired. Please reload the app.',
+          })
+        } else {
+          setSubscription({ active: false })
+        }
+      } catch (tokenErr) {
+        // ✅ App Bridge nahi hai — testing mode
+        console.warn('Token unavailable (testing mode):', tokenErr.message)
+        setSubscription({ active: false })
+      }
+    } catch (err) {
+      console.error('Billing load failed:', err)
+      setSubscription({ active: false })
+    } finally {
+      setCheckingSub(false)
+    }
+  }, [])
+
+  // ========================================
+  // 2. App Bridge ready + shop domain
   // ========================================
   useEffect(() => {
     let attempts = 0
@@ -95,65 +139,26 @@ export function useShopifyApp() {
         }
 
         showToast('Amazon Product Manager loaded!')
+        loadBillingData()
         return
       }
 
       if (attempts >= MAX_ATTEMPTS) {
         clearInterval(bridgeCheckRef.current)
         bridgeCheckRef.current = null
-        setCheckingSub(false)
         setMessage({
           type: 'error',
-          text: '❌ Shopify App Bridge load nahi hua. Please reload from Shopify Admin.',
+          text: '⚠️ Shopify Admin se app kholein. Filhal testing mode active hai.',
         })
+        // ✅ Bridge fail hone par bhi plans load karein
+        loadBillingData()
       }
     }, 500)
 
     return () => {
       if (bridgeCheckRef.current) clearInterval(bridgeCheckRef.current)
     }
-  }, [])
-
-  // ========================================
-  // 2. Load plans + subscription
-  // ========================================
-  const loadBillingData = useCallback(async () => {
-    setCheckingSub(true)
-    try {
-      const plansRes = await safeFetch(`${API_URL}/api/billing/plans`)
-      if (plansRes.ok) {
-        setPlans(plansRes.data.plans || [])
-      } else {
-        console.warn('Plans fetch failed:', plansRes.data)
-      }
-
-      const idToken = await getIdToken()
-      const subRes = await safeFetch(`${API_URL}/api/billing/status`, {
-        headers: { Authorization: `Bearer ${idToken}` },
-      })
-
-      if (subRes.ok) {
-        setSubscription(subRes.data)
-      } else if (subRes.status === 401) {
-        setMessage({
-          type: 'error',
-          text: '❌ Session expired. Please reload the app.',
-        })
-      } else {
-        setSubscription({ active: false })
-      }
-    } catch (err) {
-      console.error('Billing load failed:', err)
-      setSubscription({ active: false })
-      setMessage({ type: 'error', text: `❌ ${err.message}` })
-    } finally {
-      setCheckingSub(false)
-    }
-  }, [])
-
-  useEffect(() => {
-    if (shopifyReady) loadBillingData()
-  }, [shopifyReady, loadBillingData])
+  }, [loadBillingData])
 
   // ========================================
   // 3. Subscribe handler
@@ -164,6 +169,22 @@ export function useShopifyApp() {
     setMessage(null)
 
     try {
+      // ✅ TEST MODE: Agar App Bridge nahi hai toh demo alert
+      const bridge = getAppBridge()
+      if (!bridge) {
+        // Simulate loading
+        await new Promise((r) => setTimeout(r, 800))
+
+        const planName = plans.find((p) => p.key === planKey)?.name || planKey
+        setMessage({
+          type: 'success',
+          text: `🧪 TEST MODE: Aapne "${planName}" plan select kiya. Real subscription ke liye Shopify Admin se app kholein.`,
+        })
+        setIsSubscribing(false)
+        return
+      }
+
+      // ✅ Real subscription flow (Shopify Admin ke andar)
       const idToken = await getIdToken()
       const res = await safeFetch(
         `${API_URL}/api/billing/subscribe/${planKey}`,
@@ -209,7 +230,7 @@ export function useShopifyApp() {
     try {
       const idToken = await getIdToken()
 
-      const res = await safeFetch(`${API_URL}/api/shopify/app/add-product`, {
+      const res = await safeFetch(`${API_URL}/shopify/app/add-product`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
