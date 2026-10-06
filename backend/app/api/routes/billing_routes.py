@@ -6,22 +6,23 @@
 import logging
 
 from fastapi import APIRouter, Depends, Header, HTTPException
-from sqlalchemy import text                              # ✅ NAYA
 from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app.models import ShopifyStore
-from app.models.shopify_subscription import ShopifySubscription
+from app.models.shopify_subscription import ShopifySubscription   # ✅ NAYA
 from app.services.billing import (
     BILLING_PLANS,
     create_subscription,
     get_active_subscription,
 )
-from app.services.shopify import verify_id_token, shopify_graphql  # ✅ NAYA
+from app.services.shopify import verify_id_token
 
 logger = logging.getLogger(__name__)
 
+# ⚠️⚠️⚠️ YE LINE ZAROORI HAI — ISKE BINA ROUTER KAAM NAHI KAREGA
 router = APIRouter(prefix="/api/billing", tags=["Billing"])
+# ⚠️⚠️⚠️
 
 
 # ============================================
@@ -165,124 +166,10 @@ async def subscribe(
         except Exception as e:
             logger.error(f"❌ Failed to save subscription to DB: {e}")
             db.rollback()
+            # Don't fail the request — Shopify subscription already created
 
     return {
         "success": True,
         "confirmation_url": result.get("confirmation_url"),
         "subscription": result.get("subscription"),
-    }
-
-
-# ============================================
-# ✅ CANCEL SUBSCRIPTION (Testing + Production)
-# ============================================
-@router.post("/cancel-subscription")
-async def cancel_subscription(
-    authorization: str = Header(...),
-    db: Session = Depends(get_db),
-):
-    """
-    Current Shopify subscription cancel karein.
-    Testing ke liye useful hai — naya subscribe flow test karne ke liye.
-    """
-    if not authorization.startswith("Bearer "):
-        raise HTTPException(status_code=401, detail="Invalid authorization")
-
-    token = authorization.replace("Bearer ", "").strip()
-
-    try:
-        payload = verify_id_token(token)
-    except ValueError as e:
-        raise HTTPException(status_code=401, detail=str(e))
-
-    shop_domain = payload.get("dest", "").replace("https://", "").split("/")[0]
-
-    store = (
-        db.query(ShopifyStore)
-        .filter(ShopifyStore.shop_domain == shop_domain)
-        .first()
-    )
-
-    if not store:
-        raise HTTPException(status_code=404, detail="Store not connected")
-
-    # Step 1: Active subscription fetch
-    query = """
-    query {
-      currentAppInstallation {
-        activeSubscriptions {
-          id
-          name
-          status
-        }
-      }
-    }
-    """
-    result = await shopify_graphql(shop_domain, store.access_token, query)
-
-    subs = (
-        result.get("data", {})
-        .get("currentAppInstallation", {})
-        .get("activeSubscriptions", [])
-    )
-
-    if not subs:
-        # DB clean karein anyway
-        db.execute(
-            text("DELETE FROM shopify_subscriptions WHERE shop_domain = :shop"),
-            {"shop": shop_domain},
-        )
-        db.commit()
-        return {
-            "success": True,
-            "message": "No active subscription found",
-            "cancelled": 0,
-        }
-
-    # Step 2: Cancel mutation
-    sub_id = subs[0]["id"]
-    logger.info(f"🗑️ Cancelling subscription: {sub_id}")
-
-    mutation = """
-    mutation appSubscriptionCancel($id: ID!) {
-      appSubscriptionCancel(id: $id) {
-        appSubscription {
-          id
-          status
-        }
-        userErrors {
-          field
-          message
-        }
-      }
-    }
-    """
-
-    cancel_result = await shopify_graphql(
-        shop_domain, store.access_token, mutation, {"id": sub_id}
-    )
-    logger.info(f"Cancelled: {cancel_result}")
-
-    user_errors = (
-        cancel_result.get("data", {})
-        .get("appSubscriptionCancel", {})
-        .get("userErrors", [])
-    )
-
-    if user_errors:
-        logger.error(f"❌ Cancel errors: {user_errors}")
-        raise HTTPException(status_code=400, detail=str(user_errors))
-
-    # Step 3: DB clean
-    db.execute(
-        text("DELETE FROM shopify_subscriptions WHERE shop_domain = :shop"),
-        {"shop": shop_domain},
-    )
-    db.commit()
-
-    return {
-        "success": True,
-        "message": "Subscription cancelled",
-        "cancelled": sub_id,
-        "result": cancel_result,
     }
