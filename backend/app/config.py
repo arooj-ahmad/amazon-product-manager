@@ -48,6 +48,11 @@ class Settings(BaseSettings):
     FRONTEND_URL: str = "http://localhost:5173"
 
     # ----------------------------------------
+    # COUNTRY / TAX API
+    # ----------------------------------------
+    COUNTRY_STATE_CITY_API_KEY: str = ""
+
+    # ----------------------------------------
     # SHOPIFY INTEGRATION (Admin API — OAuth)
     # ----------------------------------------
     SHOPIFY_API_KEY: str = ""
@@ -57,12 +62,12 @@ class Settings(BaseSettings):
     SHOPIFY_REDIRECT_URI: str = "https://example.com/api/shopify/callback"
     SHOPIFY_API_VERSION: str = "2025-01"
 
-    # ✅ NAYA — Shopify Store URL & Access Token (Admin API)
+    # ✅ Shopify Store URL & Access Token (Admin API)
     SHOPIFY_SHOP_URL: str = ""           # e.g., "amazon-product-manager.myshopify.com"
     SHOPIFY_ACCESS_TOKEN: str = ""       # shpat_... (Admin API)
     SHOPIFY_LOCATION_ID: str = ""        # optional (inventory update ke liye)
 
-    # ✅ NAYA — Storefront API (for real-time availability check)
+    # ✅ Storefront API (for real-time availability check)
     SHOPIFY_STOREFRONT_TOKEN: str = ""   # 4a2c... (public token)
 
     # ----------------------------------------
