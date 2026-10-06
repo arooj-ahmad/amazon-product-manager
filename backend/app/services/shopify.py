@@ -64,12 +64,14 @@ def verify_hmac(query_params: dict) -> bool:
 # ID TOKEN VERIFY (Strict Mode)
 # ============================================
 def verify_id_token(token: str) -> dict:
+    secret = (settings.SHOPIFY_API_SECRET or "").strip().strip('"').strip("'")
+    api_key = (settings.SHOPIFY_API_KEY or "").strip().strip('"').strip("'")
     try:
         payload = jwt.decode(
             token,
-            settings.SHOPIFY_API_SECRET,
+            secret,
             algorithms=["HS256"],
-            audience=settings.SHOPIFY_API_KEY,
+            audience=api_key,
         )
 
         now = int(time.time())
@@ -101,6 +103,15 @@ def verify_id_token(token: str) -> dict:
     except jwt.ExpiredSignatureError:
         raise ValueError("Token expired")
     except jwt.InvalidTokenError as e:
+        try:
+            unverified = jwt.decode(token, options={"verify_signature": False})
+            logger.warning(
+                f"ID token diag | token aud={unverified.get('aud')} "
+                f"iss={unverified.get('iss')} | server api_key={api_key} "
+                f"secret_prefix={secret[:10]}... secret_len={len(secret)}"
+            )
+        except Exception:
+            pass
         raise ValueError(f"Invalid token: {e}")
 
 
