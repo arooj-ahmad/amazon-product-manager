@@ -4,8 +4,10 @@
 # ============================================
 
 import logging
+from datetime import datetime, timedelta
 
 from app.services.shopify import shopify_graphql
+from app.config import settings
 
 logger = logging.getLogger(__name__)
 
@@ -57,6 +59,9 @@ async def create_subscription(
     if not plan:
         return {"error": f"Invalid plan: {plan_key}"}
 
+    # ✅ Production mein real charge, development mein test
+    is_test = settings.ENVIRONMENT != "production"
+
     mutation = """
     mutation appSubscriptionCreate(
       $name: String!
@@ -79,6 +84,7 @@ async def create_subscription(
           name
           trialDays
           currentPeriodEnd
+          createdAt
         }
         userErrors {
           field
@@ -92,7 +98,7 @@ async def create_subscription(
         "name": plan["name"],
         "returnUrl": return_url,
         "trialDays": plan["trial_days"],
-        "test": True,
+        "test": is_test,
         "lineItems": [
             {
                 "plan": {
@@ -120,6 +126,8 @@ async def create_subscription(
     if user_errors:
         logger.error(f"Subscription user errors: {user_errors}")
         return {"errors": user_errors}
+
+    logger.info(f"✅ Subscription created for {shop}: {plan['name']} (test={is_test})")
 
     return {
         "confirmation_url": sub_data.get("confirmationUrl"),
@@ -175,5 +183,6 @@ async def get_active_subscription(
             "status": sub.get("status"),
             "current_period_end": sub.get("currentPeriodEnd"),
             "trial_days": sub.get("trialDays"),
+            "created_at": sub.get("createdAt"),
         },
     }

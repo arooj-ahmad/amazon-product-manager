@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app.models import ShopifyStore
+from app.models.shopify_subscription import ShopifySubscription   # ✅ NAYA
 from app.services.billing import (
     BILLING_PLANS,
     create_subscription,
@@ -136,6 +137,36 @@ async def subscribe(
 
     if "errors" in result:
         raise HTTPException(status_code=400, detail=str(result["errors"]))
+
+    # ✅ Subscription record DB mein save karein (status: pending)
+    subscription = result.get("subscription", {})
+    if subscription:
+        try:
+            existing = (
+                db.query(ShopifySubscription)
+                .filter(ShopifySubscription.shop_domain == shop_domain)
+                .first()
+            )
+
+            if existing:
+                existing.subscription_id = subscription.get("id")
+                existing.subscription_status = "pending"
+                existing.plan_name = subscription.get("name")
+            else:
+                new_sub = ShopifySubscription(
+                    shop_domain=shop_domain,
+                    subscription_id=subscription.get("id"),
+                    subscription_status="pending",
+                    plan_name=subscription.get("name"),
+                )
+                db.add(new_sub)
+
+            db.commit()
+            logger.info(f"✅ Subscription saved to DB: {shop_domain} → pending")
+        except Exception as e:
+            logger.error(f"❌ Failed to save subscription to DB: {e}")
+            db.rollback()
+            # Don't fail the request — Shopify subscription already created
 
     return {
         "success": True,

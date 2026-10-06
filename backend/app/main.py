@@ -11,7 +11,15 @@ from fastapi.middleware.cors import CORSMiddleware
 from arq import create_pool
 from arq.connections import RedisSettings
 
-from app.api.routes import auth, products, shopify_routes, billing_routes, batch_routes, pricing
+from app.api.routes import (
+    auth,
+    products,
+    shopify_routes,
+    billing_routes,
+    batch_routes,
+    pricing,
+    webhooks,           # ✅ NAYA
+)
 from app.config import settings
 from app.services.scheduler import start_scheduler, stop_scheduler
 
@@ -123,7 +131,8 @@ app.include_router(products.router)
 app.include_router(shopify_routes.router)
 app.include_router(billing_routes.router)
 app.include_router(batch_routes.router)   # ← Batch import routes
-app.include_router(pricing.router, prefix="/api/pricing", tags=["Pricing"])  # ← NAYA
+app.include_router(pricing.router, prefix="/api/pricing", tags=["Pricing"])  # ← Pricing
+app.include_router(webhooks.router)       # ← ✅ NAYA — Shopify webhooks
 
 
 # ============================================

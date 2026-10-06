@@ -14,6 +14,13 @@ class Settings(BaseSettings):
     """
 
     # ----------------------------------------
+    # ENVIRONMENT (Development / Production)
+    # ----------------------------------------
+    # development → Shopify Billing "test mode" (no real charges)
+    # production  → Real charges
+    ENVIRONMENT: str = "development"
+
+    # ----------------------------------------
     # DATABASE
     # ----------------------------------------
     DATABASE_URL: str
