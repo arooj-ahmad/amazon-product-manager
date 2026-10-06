@@ -64,6 +64,7 @@ async def subscription_status(
     try:
         payload = verify_id_token(token)
     except ValueError as e:
+        logger.warning(f"/billing/status token rejected: {e}")
         raise HTTPException(status_code=401, detail=str(e))
 
     shop_domain = payload.get("dest", "").replace("https://", "").split("/")[0]
@@ -107,6 +108,7 @@ async def subscribe(
     try:
         payload = verify_id_token(token)
     except ValueError as e:
+        logger.warning(f"/billing/subscribe token rejected: {e}")
         raise HTTPException(status_code=401, detail=str(e))
 
     shop_domain = payload.get("dest", "").replace("https://", "").split("/")[0]
