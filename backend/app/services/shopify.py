@@ -9,6 +9,7 @@
 #   (parent_asin — temporarily disabled due to fake ASINs from Bright Data)
 # + Variations Support (parent + variant creation & auto-grouping)
 # + Option Existence Check (via productSet — 2026-07 compatible)
+# + Sync Price Update (for pricing settings)
 # ============================================
 
 import hashlib
@@ -482,7 +483,6 @@ async def ensure_product_has_option(
     Agar nahi, toh `productSet` mutation se add karta hai.
     Shopify API 2026-07 compatible.
     """
-    # Pehle current options fetch karo
     query = """
     query getProductOptions($id: ID!) {
       product(id: $id) {
@@ -512,15 +512,12 @@ async def ensure_product_has_option(
     existing_options = product.get("options", [])
     existing_names = [opt.get("name", "").lower() for opt in existing_options]
 
-    # ✅ Agar option already exist karta hai, toh kuch nahi karna
     if option_name.lower() in existing_names:
         logger.info(f"   ✅ Option '{option_name}' already exists")
         return True
 
-    # ❌ Agar nahi exist karta, toh productSet se update karo
     logger.info(f"   ➕ Creating option '{option_name}' with values: {option_values}")
 
-    # ✅ Existing options prepare karo (Default Title skip karo)
     new_options = []
 
     for opt in existing_options:
@@ -542,7 +539,6 @@ async def ensure_product_has_option(
             "values": values_as_dicts,
         })
 
-    # ✅ Naya option add karo
     new_option_values = []
     for v in option_values:
         if isinstance(v, str) and v:
@@ -555,7 +551,6 @@ async def ensure_product_has_option(
         "values": new_option_values,
     })
 
-    # ✅ productSet mutation (2026-07 compatible)
     mutation = """
     mutation productSet($input: ProductSetInput!) {
       productSet(input: $input) {
@@ -866,7 +861,6 @@ async def add_variant_to_existing_product(
 
     logger.info(f"   Adding variant: {option_name}={option_value}")
 
-    # ✅ STEP 0: Ensure option exists
     option_exists = await ensure_product_has_option(
         shop=shop,
         access_token=access_token,
@@ -885,7 +879,6 @@ async def add_variant_to_existing_product(
             ]
         }
 
-    # STEP 1: Add variant
     mutation = """
     mutation productVariantsBulkCreate(
       $productId: ID!,
@@ -1459,3 +1452,174 @@ async def check_product_availability(
             "error": str(e),
             "source": "none",
         }
+
+
+# ============================================
+# ✅ SYNC SHOPIFY PRICE UPDATE (NAYA — Pricing Settings ke liye)
+# FastAPI sync context (SQLAlchemy) se call karne ke liye
+# Yeh function Shopify variant price synchronously update karta hai
+# ============================================
+def sync_update_shopify_price(
+    shop_domain: str,
+    access_token: str,
+    shopify_product_id: str,
+    new_price: float,
+) -> bool:
+    """
+    Shopify product ka price synchronously update karein.
+    All variants ka price set ho jayega.
+    
+    Args:
+        shop_domain: "amazon-product-manager.myshopify.com"
+        access_token: Shopify Admin API access token
+        shopify_product_id: Numeric ID (e.g., "10336018530535") ya GID
+        new_price: New price in shop currency
+    
+    Returns:
+        True if success, False otherwise
+    """
+    if not all([shop_domain, access_token, shopify_product_id]):
+        logger.warning("Shopify sync skipped: missing config")
+        return False
+    
+    # GID format
+    if not str(shopify_product_id).startswith("gid://"):
+        product_gid = f"gid://shopify/Product/{shopify_product_id}"
+    else:
+        product_gid = shopify_product_id
+    
+    api_url = (
+        f"https://{shop_domain}/admin/api/"
+        f"{settings.SHOPIFY_API_VERSION}/graphql.json"
+    )
+    
+    headers = {
+        "X-Shopify-Access-Token": access_token,
+        "Content-Type": "application/json",
+    }
+    
+    # Step 1: Fetch variants
+    get_variants_query = """
+    query getProductVariants($id: ID!) {
+      product(id: $id) {
+        id
+        title
+        variants(first: 50) {
+          edges {
+            node {
+              id
+              title
+              price
+            }
+          }
+        }
+      }
+    }
+    """
+    
+    try:
+        with httpx.Client(timeout=30.0) as client:
+            res = client.post(
+                api_url,
+                headers=headers,
+                json={
+                    "query": get_variants_query,
+                    "variables": {"id": product_gid},
+                },
+            )
+            res.raise_for_status()
+            data = res.json()
+        
+        if "errors" in data:
+            logger.error(f"❌ Shopify variants fetch errors: {data['errors']}")
+            return False
+        
+        product = data.get("data", {}).get("product")
+        if not product:
+            logger.error(f"❌ Shopify product not found: {product_gid}")
+            return False
+        
+        variant_edges = product.get("variants", {}).get("edges", [])
+        if not variant_edges:
+            logger.warning(f"⚠️ No variants found for: {product_gid}")
+            return False
+        
+        # Step 2: Update all variants' price
+        variants_to_update = [
+            {
+                "id": edge["node"]["id"],
+                "price": str(new_price),
+            }
+            for edge in variant_edges
+        ]
+        
+        mutation = """
+        mutation productVariantsBulkUpdate(
+          $productId: ID!,
+          $variants: [ProductVariantsBulkInput!]!
+        ) {
+          productVariantsBulkUpdate(
+            productId: $productId,
+            variants: $variants
+          ) {
+            productVariants {
+              id
+              price
+            }
+            userErrors {
+              field
+              message
+            }
+          }
+        }
+        """
+        
+        with httpx.Client(timeout=30.0) as client:
+            update_res = client.post(
+                api_url,
+                headers=headers,
+                json={
+                    "query": mutation,
+                    "variables": {
+                        "productId": product_gid,
+                        "variants": variants_to_update,
+                    },
+                },
+            )
+            update_res.raise_for_status()
+            update_data = update_res.json()
+        
+        if "errors" in update_data:
+            logger.error(f"❌ Shopify update errors: {update_data['errors']}")
+            return False
+        
+        user_errors = (
+            update_data.get("data", {})
+            .get("productVariantsBulkUpdate", {})
+            .get("userErrors", [])
+        )
+        
+        if user_errors:
+            logger.error(f"❌ Shopify user errors: {user_errors}")
+            return False
+        
+        updated = (
+            update_data.get("data", {})
+            .get("productVariantsBulkUpdate", {})
+            .get("productVariants", [])
+        )
+        
+        logger.info(
+            f"✅ Shopify price updated: {len(updated)} variant(s) → ${new_price}"
+        )
+        return True
+        
+    except httpx.HTTPStatusError as e:
+        logger.error(
+            f"❌ Shopify HTTP error: {e.response.status_code} — "
+            f"{e.response.text[:200]}"
+        )
+        return False
+    except Exception as e:
+        logger.error(f"❌ Shopify sync failed: {e}")
+        return False

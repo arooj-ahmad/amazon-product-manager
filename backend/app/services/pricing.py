@@ -1,33 +1,28 @@
 """
 Pricing Service - Business Logic (SQLAlchemy version)
-Yeh service pricing calculation handle karti hai
++ Shopify real-time sync (SYNC — no asyncio)
 """
 from decimal import Decimal, ROUND_HALF_UP
 from typing import Dict, Optional, List
 from sqlalchemy import text
 from app.database import SessionLocal
+import logging
+
+logger = logging.getLogger(__name__)
 
 
 class PricingService:
     """Central pricing logic"""
     
     @staticmethod
-    def calculate(
-        amazon_price: float,
-        markup_type: str,
-        markup_value: float,
-        tax_rate: float,
-    ) -> Dict[str, float]:
-        """
-        Industry-standard calculation using Decimal (no float errors)
-        """
+    def calculate(amazon_price, markup_type, markup_value, tax_rate):
         amazon = Decimal(str(amazon_price))
         markup = Decimal(str(markup_value))
         tax_pct = Decimal(str(tax_rate))
         
         if markup_type == "fixed":
             subtotal = amazon + markup
-        else:  # percentage
+        else:
             subtotal = amazon * (Decimal("1") + markup / Decimal("100"))
         
         tax_amount = subtotal * (tax_pct / Decimal("100"))
@@ -44,7 +39,6 @@ class PricingService:
     
     @classmethod
     def get_all_countries(cls) -> List[Dict]:
-        """Saari active countries"""
         db = SessionLocal()
         try:
             result = db.execute(text("""
@@ -73,7 +67,6 @@ class PricingService:
     
     @classmethod
     def get_pricing_for_product(cls, product_id) -> List[Dict]:
-        """Ek product ki saari pricing"""
         db = SessionLocal()
         try:
             result = db.execute(text("""
@@ -97,7 +90,7 @@ class PricingService:
         markup_value,
         tax_rate=None,
     ) -> Dict:
-        """Ek product ka pricing update"""
+        """Ek product ka pricing update + Shopify sync (synchronous)"""
         db = SessionLocal()
         try:
             # Country fetch
@@ -111,23 +104,27 @@ class PricingService:
             if tax_rate is None:
                 tax_rate = float(country[0] or 0)
             
-            # Product fetch
+            # Product fetch (WITH shopify_product_id)
             product = db.execute(text("""
-                SELECT amazon_price FROM products WHERE id = :pid
+                SELECT amazon_price, shopify_product_id 
+                FROM products WHERE id = :pid
             """), {"pid": product_id}).fetchone()
             
             if not product:
                 raise ValueError("Product not found")
             
+            amazon_price = float(product[0] or 0)
+            shopify_product_id = product[1]
+            
             # Calculate
             calc = cls.calculate(
-                amazon_price=float(product[0] or 0),
+                amazon_price=amazon_price,
                 markup_type=markup_type,
                 markup_value=markup_value,
                 tax_rate=tax_rate,
             )
             
-            # Upsert
+            # Upsert product_pricing
             db.execute(text("""
                 INSERT INTO product_pricing 
                     (product_id, country_id, markup_type, markup_value,
@@ -151,7 +148,50 @@ class PricingService:
                 "tamt": calc["tax_amount"],
                 "fprice": calc["final_price"],
             })
+            
+            # ✅ Products table mein bhi final price update
+            db.execute(text("""
+                UPDATE products 
+                SET price = :fprice 
+                WHERE id = :pid
+            """), {
+                "pid": product_id,
+                "fprice": calc["final_price"],
+            })
+            
             db.commit()
+            
+            # ✅ SHOPIFY SYNC (synchronous — no asyncio)
+            shopify_synced = False
+            
+            if shopify_product_id:
+                try:
+                    # Access token fetch from shopify_store
+                    store = db.execute(text("""
+                        SELECT shop_domain, access_token 
+                        FROM shopify_store 
+                        LIMIT 1
+                    """)).fetchone()
+                    
+                    if store and store[0] and store[1]:
+                        from app.services.shopify import sync_update_shopify_price
+                        
+                        shopify_synced = sync_update_shopify_price(
+                            shop_domain=store[0],
+                            access_token=store[1],
+                            shopify_product_id=shopify_product_id,
+                            new_price=calc["final_price"],
+                        )
+                        
+                        if shopify_synced:
+                            logger.info(f"✅ Shopify synced: ${calc['final_price']}")
+                        else:
+                            logger.warning("⚠️ Shopify sync failed (DB saved)")
+                    else:
+                        logger.warning("⚠️ No Shopify store connected")
+                except Exception as e:
+                    logger.error(f"❌ Shopify sync error: {e}")
+                    # DB save already ho gaya, sirf sync fail hua
             
             return {
                 "product_id": product_id,
@@ -161,6 +201,7 @@ class PricingService:
                 "tax_rate": tax_rate,
                 "tax_amount": calc["tax_amount"],
                 "final_price": calc["final_price"],
+                "shopify_synced": shopify_synced,
             }
         except Exception:
             db.rollback()
@@ -169,17 +210,10 @@ class PricingService:
             db.close()
     
     @classmethod
-    def bulk_update(
-        cls,
-        country_id,
-        markup_type,
-        markup_value,
-        tax_rate=None,
-    ) -> Dict:
-        """Saare products par apply"""
+    def bulk_update(cls, country_id, markup_type, markup_value, tax_rate=None):
+        """Saare products par apply (Shopify sync skipped — bulk ke liye)"""
         db = SessionLocal()
         try:
-            # Country fetch
             country = db.execute(text("""
                 SELECT default_tax_rate FROM countries WHERE id = :cid
             """), {"cid": country_id}).fetchone()
@@ -190,7 +224,6 @@ class PricingService:
             if tax_rate is None:
                 tax_rate = float(country[0] or 0)
             
-            # Saare products
             products = db.execute(text("""
                 SELECT id, amazon_price FROM products
             """)).fetchall()
@@ -230,6 +263,12 @@ class PricingService:
                     "tamt": calc["tax_amount"],
                     "fprice": calc["final_price"],
                 })
+                
+                # ✅ Product price bhi update
+                db.execute(text("""
+                    UPDATE products SET price = :fprice WHERE id = :pid
+                """), {"pid": p[0], "fprice": calc["final_price"]})
+                
                 updated += 1
             
             db.commit()
