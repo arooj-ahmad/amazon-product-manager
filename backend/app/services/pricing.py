@@ -166,10 +166,10 @@ class PricingService:
             
             if shopify_product_id:
                 try:
-                    # Access token fetch from shopify_store
+                    # ✅ FIX: shopify_stores (plural — as per models/shopify_store.py)
                     store = db.execute(text("""
                         SELECT shop_domain, access_token 
-                        FROM shopify_store 
+                        FROM shopify_stores
                         LIMIT 1
                     """)).fetchone()
                     
