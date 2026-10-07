@@ -75,7 +75,6 @@ export function useShopifyApp() {
   const loadBillingData = useCallback(async () => {
     setCheckingSub(true)
     try {
-      // ✅ Plans hamesha load karein (auth ki zaroorat nahi)
       const plansRes = await safeFetch(`${API_URL}/api/billing/plans`)
       if (plansRes.ok) {
         setPlans(plansRes.data.plans || [])
@@ -83,7 +82,6 @@ export function useShopifyApp() {
         console.warn('Plans fetch failed:', plansRes.data)
       }
 
-      // Subscription check — sirf agar App Bridge hai
       try {
         const idToken = await getIdToken()
         const subRes = await safeFetch(`${API_URL}/api/billing/status`, {
@@ -101,7 +99,6 @@ export function useShopifyApp() {
           setSubscription({ active: false })
         }
       } catch (tokenErr) {
-        // ✅ App Bridge nahi hai — testing mode
         console.warn('Token unavailable (testing mode):', tokenErr.message)
         setSubscription({ active: false })
       }
@@ -150,7 +147,6 @@ export function useShopifyApp() {
           type: 'error',
           text: '⚠️ Shopify Admin se app kholein. Filhal testing mode active hai.',
         })
-        // ✅ Bridge fail hone par bhi plans load karein
         loadBillingData()
       }
     }, 500)
@@ -169,12 +165,9 @@ export function useShopifyApp() {
     setMessage(null)
 
     try {
-      // ✅ TEST MODE: Agar App Bridge nahi hai toh demo alert
       const bridge = getAppBridge()
       if (!bridge) {
-        // Simulate loading
         await new Promise((r) => setTimeout(r, 800))
-
         const planName = plans.find((p) => p.key === planKey)?.name || planKey
         setMessage({
           type: 'success',
@@ -184,7 +177,6 @@ export function useShopifyApp() {
         return
       }
 
-      // ✅ Real subscription flow (Shopify Admin ke andar)
       const idToken = await getIdToken()
       const res = await safeFetch(
         `${API_URL}/api/billing/subscribe/${planKey}`,
@@ -225,10 +217,15 @@ export function useShopifyApp() {
   useEffect(() => {
     const params = new URLSearchParams(window.location.search)
     const isSuccess = params.get('subscription') === 'success'
-    const queryShop = params.get('shop') || shopDomain || 'amazon-product-manager.myshopify.com'
+    const queryShop =
+      params.get('shop') || shopDomain || 'amazon-product-manager.myshopify.com'
 
-    // Agar merchant direct browser window mein return hua (outside iframe)
-    if (isSuccess && typeof window !== 'undefined' && window.top === window.self && queryShop) {
+    if (
+      isSuccess &&
+      typeof window !== 'undefined' &&
+      window.top === window.self &&
+      queryShop
+    ) {
       const shopSlug = queryShop.replace('.myshopify.com', '')
       const adminUrl = `https://admin.shopify.com/store/${shopSlug}/apps/stock-sync-partner`
       setMessage({
@@ -251,7 +248,10 @@ export function useShopifyApp() {
       const res = await safeFetch(`${API_URL}/api/billing/activate-test`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ shop_domain: targetShop, plan_name: 'Basic Plan (Test)' }),
+        body: JSON.stringify({
+          shop_domain: targetShop,
+          plan_name: 'Basic Plan (Test)',
+        }),
       })
       if (res.ok) {
         setSubscription({
@@ -272,6 +272,7 @@ export function useShopifyApp() {
 
   // ========================================
   // 4. Add product handler
+  // ✅ FIXED: /api prefix added
   // ========================================
   const handleAddProduct = async (e) => {
     e.preventDefault()
@@ -283,18 +284,22 @@ export function useShopifyApp() {
     try {
       const idToken = await getIdToken()
 
-      const res = await safeFetch(`${API_URL}/shopify/app/add-product`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${idToken}`,
-        },
-        body: JSON.stringify({
-          amazon_url: amazonUrl.trim(),
-          markup: parseFloat(markup) || 2.0,
-          markup_type: markupType,
-        }),
-      })
+      // ✅ YAHAN /api ADD KIYA HAI
+      const res = await safeFetch(
+        `${API_URL}/api/shopify/app/add-product`,
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${idToken}`,
+          },
+          body: JSON.stringify({
+            amazon_url: amazonUrl.trim(),
+            markup: parseFloat(markup) || 2.0,
+            markup_type: markupType,
+          }),
+        }
+      )
 
       if (!res.ok) {
         if (res.status === 401) {
@@ -335,7 +340,6 @@ export function useShopifyApp() {
   }
 
   return {
-    // State
     amazonUrl,
     markup,
     markupType,
@@ -348,12 +352,10 @@ export function useShopifyApp() {
     plans,
     checkingSub,
 
-    // Setters
     setAmazonUrl,
     setMarkup,
     setMarkupType,
 
-    // Handlers
     handleAddProduct,
     handleSubscribe,
     handleTestActivate,
