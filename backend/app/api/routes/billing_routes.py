@@ -16,13 +16,61 @@ from app.services.billing import (
     create_subscription,
     get_active_subscription,
 )
-from app.services.shopify import verify_id_token
+from app.services.shopify import (
+    exchange_id_token_for_offline_token,
+    verify_id_token,
+)
+from app.config import settings
 
 logger = logging.getLogger(__name__)
 
 # ⚠️⚠️⚠️ YE LINE ZAROORI HAI — ISKE BINA ROUTER KAAM NAHI KAREGA
 router = APIRouter(prefix="/api/billing", tags=["Billing"])
 # ⚠️⚠️⚠️
+
+
+# ============================================
+# HELPER: STORE DHUNDO YA TOKEN EXCHANGE SE INSTALL KARO
+# ============================================
+async def get_or_install_store(
+    db: Session,
+    shop_domain: str,
+    id_token: str,
+    force_refresh: bool = False,
+):
+    """DB mein store ho to return, warna (ya force_refresh par) token
+    exchange karke naya offline token Supabase mein save karta hai."""
+    store = (
+        db.query(ShopifyStore)
+        .filter(ShopifyStore.shop_domain == shop_domain)
+        .first()
+    )
+
+    if store and store.access_token and not force_refresh:
+        return store
+
+    token_data = await exchange_id_token_for_offline_token(shop_domain, id_token)
+    if not token_data or not token_data.get("access_token"):
+        return store  # exchange fail — jo hai wahi (ya None)
+
+    scopes = token_data.get("scope") or settings.SHOPIFY_SCOPES
+
+    if store:
+        store.access_token = token_data["access_token"]
+        store.scopes = scopes
+        logger.info(f"🔄 Token refreshed via token exchange: {shop_domain}")
+    else:
+        store = ShopifyStore(
+            shop_domain=shop_domain,
+            access_token=token_data["access_token"],
+            scopes=scopes,
+        )
+        db.add(store)
+        logger.info(f"🆕 Store saved via token exchange: {shop_domain}")
+
+    db.commit()
+    db.refresh(store)
+    return store
 
 
 # ============================================
@@ -69,11 +117,7 @@ async def subscription_status(
 
     shop_domain = payload.get("dest", "").replace("https://", "").split("/")[0]
 
-    store = (
-        db.query(ShopifyStore)
-        .filter(ShopifyStore.shop_domain == shop_domain)
-        .first()
-    )
+    store = await get_or_install_store(db, shop_domain, token)
 
     if not store:
         raise HTTPException(status_code=404, detail="Store not connected")
@@ -113,11 +157,7 @@ async def subscribe(
 
     shop_domain = payload.get("dest", "").replace("https://", "").split("/")[0]
 
-    store = (
-        db.query(ShopifyStore)
-        .filter(ShopifyStore.shop_domain == shop_domain)
-        .first()
-    )
+    store = await get_or_install_store(db, shop_domain, token)
 
     if not store:
         raise HTTPException(status_code=404, detail="Store not connected")
@@ -133,6 +173,20 @@ async def subscribe(
         plan_key=plan_key,
         return_url=return_url,
     )
+
+    # ✅ Purana "Shop-owned" token ho to naya token lekar ek baar retry
+    if "owned by a Shop" in str(result.get("errors", "")):
+        logger.warning(f"Stale shop-owned token for {shop_domain}, refreshing...")
+        store = await get_or_install_store(
+            db, shop_domain, token, force_refresh=True
+        )
+        if store:
+            result = await create_subscription(
+                shop=shop_domain,
+                access_token=store.access_token,
+                plan_key=plan_key,
+                return_url=return_url,
+            )
 
     if "error" in result:
         raise HTTPException(status_code=400, detail=result["error"])

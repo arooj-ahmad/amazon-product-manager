@@ -140,6 +140,52 @@ async def exchange_code_for_token(shop: str, code: str) -> Optional[str]:
 
 
 # ============================================
+# TOKEN EXCHANGE (Session/ID token → Offline access token)
+# Managed install wale embedded apps ke liye — Shopify OAuth
+# callback call nahi karta, is liye frontend ka session token
+# exchange karke offline token lete hain.
+# ============================================
+async def exchange_id_token_for_offline_token(
+    shop: str, id_token: str
+) -> Optional[dict]:
+    url = f"https://{shop}/admin/oauth/access_token"
+
+    payload = {
+        "client_id": (settings.SHOPIFY_API_KEY or "").strip(),
+        "client_secret": (settings.SHOPIFY_API_SECRET or "").strip(),
+        "grant_type": "urn:ietf:params:oauth:grant-type:token-exchange",
+        "subject_token": id_token,
+        "subject_token_type": "urn:ietf:params:oauth:token-type:id_token",
+        "requested_token_type": (
+            "urn:shopify:params:oauth:token-type:offline-access-token"
+        ),
+    }
+
+    try:
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            response = await client.post(
+                url,
+                json=payload,
+                headers={"Accept": "application/json"},
+            )
+            if response.status_code != 200:
+                logger.error(
+                    f"❌ Token exchange (id_token) failed for {shop}: "
+                    f"{response.status_code} {response.text}"
+                )
+                return None
+            data = response.json()
+            logger.info(f"✅ Offline token obtained via token exchange: {shop}")
+            return {
+                "access_token": data.get("access_token"),
+                "scope": data.get("scope"),
+            }
+    except Exception as e:
+        logger.error(f"Token exchange (id_token) error for {shop}: {e}")
+        return None
+
+
+# ============================================
 # GRAPHQL API CALL (Admin API)
 # ============================================
 async def shopify_graphql(
