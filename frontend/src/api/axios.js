@@ -8,7 +8,9 @@ import axios from 'axios'
 // ----------------------------------------
 // Backend URL (Vite env variable se aayega)
 // ----------------------------------------
-const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000'
+const API_URL =
+  (import.meta.env.VITE_API_URL || '').trim() ||
+  'https://amazon-product-manager-production.up.railway.app'
 
 // ----------------------------------------
 // Axios instance banao

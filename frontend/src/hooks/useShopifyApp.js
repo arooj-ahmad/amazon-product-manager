@@ -1,7 +1,9 @@
 // src/hooks/useShopifyApp.js
 import { useState, useEffect, useCallback, useRef } from 'react'
 
-const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000'
+const API_URL =
+  (import.meta.env.VITE_API_URL || '').trim() ||
+  'https://amazon-product-manager-production.up.railway.app'
 
 // ============================================
 // App Bridge helper — v3 & v4 dono support
