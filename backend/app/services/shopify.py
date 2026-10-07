@@ -211,7 +211,19 @@ async def shopify_graphql(
     try:
         async with httpx.AsyncClient(timeout=60.0) as client:
             response = await client.post(url, headers=headers, json=payload)
-            response.raise_for_status()
+            if response.status_code >= 400:
+                body = response.text[:1000]
+                logger.error(
+                    f"GraphQL HTTP {response.status_code} for {shop}: {body}"
+                )
+                return {
+                    "errors": [
+                        {
+                            "message": f"HTTP {response.status_code}: {body}",
+                            "status": response.status_code,
+                        }
+                    ]
+                }
             return response.json()
     except Exception as e:
         logger.error(f"GraphQL call fail: {e}")
