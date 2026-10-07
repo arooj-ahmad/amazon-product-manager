@@ -4,7 +4,7 @@
 # ============================================
 
 import logging
-from datetime import datetime, timedelta  # ✅ NAYA
+from datetime import datetime, timedelta
 
 from fastapi import APIRouter, Depends, Header, HTTPException
 from sqlalchemy.orm import Session
@@ -180,10 +180,11 @@ async def subscribe(
     if not store:
         raise HTTPException(status_code=404, detail="Store not connected")
 
-    return_url = (
-        f"https://amazon-product-manager-asev.vercel.app/shopify-app"
-        f"?subscription=success"
-    )
+    # ✅ YAHAN APNA FRONTEND URL DAALO
+    # Option 1 — Vercel:
+    return_url = "https://amazon-product-manager-asev.vercel.app/shopify-app?subscription=success"
+    # Option 2 — Railway (agar Vercel kaam na kare toh yeh use karo):
+    # return_url = "https://amazon-product-manager-production.up.railway.app/shopify-app?subscription=success"
 
     result = await create_subscription(
         shop=shop_domain,
