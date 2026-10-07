@@ -206,13 +206,66 @@ export function useShopifyApp() {
         throw new Error('No confirmation URL received')
       }
 
-      if (window.top) {
+      if (window.shopify?.navigation?.navigate) {
+        window.shopify.navigation.navigate(confirmationUrl)
+      } else if (window.top) {
         window.top.location.href = confirmationUrl
       } else {
         window.location.href = confirmationUrl
       }
     } catch (err) {
       setMessage({ type: 'error', text: `❌ ${err.message}` })
+      setIsSubscribing(false)
+    }
+  }
+
+  // ========================================
+  // Auto-redirect to Shopify Admin after billing success
+  // ========================================
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search)
+    const isSuccess = params.get('subscription') === 'success'
+    const queryShop = params.get('shop') || shopDomain || 'amazon-product-manager.myshopify.com'
+
+    // Agar merchant direct browser window mein return hua (outside iframe)
+    if (isSuccess && typeof window !== 'undefined' && window.top === window.self && queryShop) {
+      const shopSlug = queryShop.replace('.myshopify.com', '')
+      const adminUrl = `https://admin.shopify.com/store/${shopSlug}/apps/stock-sync-partner`
+      setMessage({
+        type: 'success',
+        text: '✅ Subscription approved! Redirecting you into Shopify Admin...',
+      })
+      setTimeout(() => {
+        window.location.href = adminUrl
+      }, 1200)
+    }
+  }, [shopDomain])
+
+  // ========================================
+  // Dev / Test activation helper
+  // ========================================
+  const handleTestActivate = async () => {
+    setIsSubscribing(true)
+    try {
+      const targetShop = shopDomain || 'amazon-product-manager.myshopify.com'
+      const res = await safeFetch(`${API_URL}/api/billing/activate-test`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ shop_domain: targetShop, plan_name: 'Basic Plan (Test)' }),
+      })
+      if (res.ok) {
+        setSubscription({
+          active: true,
+          shop_domain: targetShop,
+          subscription: { name: 'Basic Plan (Test)', status: 'ACTIVE' },
+        })
+        showToast('Active Test Mode enabled!')
+      } else {
+        throw new Error(res.data.detail || 'Test activation failed')
+      }
+    } catch (err) {
+      setMessage({ type: 'error', text: `❌ ${err.message}` })
+    } finally {
       setIsSubscribing(false)
     }
   }
@@ -303,5 +356,6 @@ export function useShopifyApp() {
     // Handlers
     handleAddProduct,
     handleSubscribe,
+    handleTestActivate,
   }
 }

@@ -59,8 +59,11 @@ async def create_subscription(
     if not plan:
         return {"error": f"Invalid plan: {plan_key}"}
 
-    # ✅ Production mein real charge, development mein test
-    is_test = settings.ENVIRONMENT != "production"
+    # ✅ Draft apps aur development stores (*.myshopify.com) par Shopify sirf
+    # test charges allow karta hai. Real charges par 403 Forbidden aata hai.
+    is_test = True
+    if settings.ENVIRONMENT == "production" and not shop.endswith(".myshopify.com"):
+        is_test = False
 
     mutation = """
     mutation appSubscriptionCreate(

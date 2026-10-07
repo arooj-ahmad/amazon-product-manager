@@ -35,6 +35,7 @@ from app.services.shopify import (
     create_shopify_product_with_variants,
     add_variant_to_existing_product,
     exchange_code_for_token,
+    exchange_id_token_for_offline_token,
     verify_hmac,
     verify_id_token,
 )
@@ -425,6 +426,18 @@ async def add_product_from_shopify_app(
         .filter(ShopifyStore.shop_domain == shop_domain)
         .first()
     )
+
+    if not store:
+        token_data = await exchange_id_token_for_offline_token(shop_domain, token)
+        if token_data and token_data.get("access_token"):
+            store = ShopifyStore(
+                shop_domain=shop_domain,
+                access_token=token_data["access_token"],
+                scopes=token_data.get("scope") or settings.SHOPIFY_SCOPES,
+            )
+            db.add(store)
+            db.commit()
+            db.refresh(store)
 
     if not store:
         raise HTTPException(

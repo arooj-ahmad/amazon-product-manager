@@ -198,10 +198,12 @@ async def shopify_graphql(
     query: str,
     variables: dict = None,
 ) -> dict:
-    url = (
-        f"https://{shop}/admin/api/"
-        f"{settings.SHOPIFY_API_VERSION}/graphql.json"
-    )
+    # 2026-10 unreleased/unsupported version par 403 aata hai, stable version use karein
+    api_version = (settings.SHOPIFY_API_VERSION or "2025-01").strip()
+    if api_version in ("2026-10", "unstable", ""):
+        api_version = "2025-01"
+
+    url = f"https://{shop}/admin/api/{api_version}/graphql.json"
 
     headers = {
         "X-Shopify-Access-Token": access_token,

@@ -24,6 +24,7 @@ export default function ShopifyApp() {
     checkingSub,
     handleAddProduct,
     handleSubscribe,
+    handleTestActivate,
   } = useShopifyApp()
 
   // ========================================
@@ -79,14 +80,34 @@ export default function ShopifyApp() {
             <div
               style={{
                 ...styles.messageBox,
-                background: theme.colors.errorBg,
-                color: theme.colors.errorText,
-                border: `1px solid ${theme.colors.errorBorder}`,
+                background: message.type === 'success' ? '#eefbf4' : theme.colors.errorBg,
+                color: message.type === 'success' ? '#008060' : theme.colors.errorText,
+                border: `1px solid ${message.type === 'success' ? '#aee9d1' : theme.colors.errorBorder}`,
               }}
             >
               {message.text}
             </div>
           )}
+
+          {/* Test mode bypass */}
+          <div style={{ marginTop: '24px', textAlign: 'center' }}>
+            <button
+              type="button"
+              onClick={handleTestActivate}
+              disabled={isSubscribing}
+              style={{
+                background: 'transparent',
+                border: '1px dashed #c9cccf',
+                color: '#6d7175',
+                padding: '8px 16px',
+                borderRadius: '6px',
+                fontSize: '13px',
+                cursor: 'pointer',
+              }}
+            >
+              ⚡ Test Mode: Skip directly to App Dashboard
+            </button>
+          </div>
         </div>
       </div>
     )

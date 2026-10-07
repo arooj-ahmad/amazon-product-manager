@@ -4,9 +4,10 @@
 # ============================================
 
 import logging
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta  # ✅ NAYA
 
-from fastapi import APIRouter, Depends, Header, HTTPException
+from fastapi import APIRouter, Body, Depends, Header, HTTPException, Query, Request
+from fastapi.responses import HTMLResponse
 from sqlalchemy.orm import Session
 
 from app.database import get_db
@@ -140,15 +141,41 @@ async def subscription_status(
     if not store:
         raise HTTPException(status_code=404, detail="Store not connected")
 
+    # 1. Shopify Admin API se check karein
     sub_status = await get_active_subscription(
         shop=shop_domain,
         access_token=store.access_token,
     )
 
+    is_active = sub_status.get("active", False)
+    subscription_info = sub_status.get("subscription")
+
+    # 2. Supabase DB record check karein
+    db_sub = (
+        db.query(ShopifySubscription)
+        .filter(ShopifySubscription.shop_domain == shop_domain)
+        .first()
+    )
+
+    if not is_active and db_sub and db_sub.subscription_status == "active":
+        is_active = True
+        subscription_info = {
+            "id": db_sub.subscription_id,
+            "name": db_sub.plan_name or "Basic Plan",
+            "status": "ACTIVE",
+            "trial_days": 7,
+        }
+    elif is_active and db_sub:
+        if db_sub.subscription_status != "active":
+            db_sub.subscription_status = "active"
+            if subscription_info and subscription_info.get("name"):
+                db_sub.plan_name = subscription_info.get("name")
+            db.commit()
+
     return {
         "shop_domain": shop_domain,
-        "active": sub_status.get("active", False),
-        "subscription": sub_status.get("subscription"),
+        "active": is_active,
+        "subscription": subscription_info,
     }
 
 
@@ -180,11 +207,13 @@ async def subscribe(
     if not store:
         raise HTTPException(status_code=404, detail="Store not connected")
 
-    # ✅ YAHAN APNA FRONTEND URL DAALO
-    # Option 1 — Vercel:
-    return_url = "https://amazon-product-manager-asev.vercel.app/shopify-app?subscription=success"
-    # Option 2 — Railway (agar Vercel kaam na kare toh yeh use karo):
-    # return_url = "https://amazon-product-manager-production.up.railway.app/shopify-app?subscription=success"
+    # ✅ Return URL: Post-billing callback endpoint
+    # Shopify charge approve hone ke baad yahan redirect karega,
+    # jahan se user seedha Shopify Admin ke andar app page par redirect hoga!
+    return_url = (
+        f"https://amazon-product-manager-production.up.railway.app/api/billing/callback"
+        f"?shop={shop_domain}&plan={plan_key}"
+    )
 
     result = await create_subscription(
         shop=shop_domain,
@@ -247,3 +276,144 @@ async def subscribe(
         "confirmation_url": result.get("confirmation_url"),
         "subscription": result.get("subscription"),
     }
+
+
+# ============================================
+# BILLING CALLBACK (Shopify Approval Ke Baad Redirect)
+# ============================================
+@router.get("/callback")
+async def billing_callback(
+    shop: str = Query(...),
+    plan: str = Query("basic"),
+    charge_id: str = Query(None),
+    db: Session = Depends(get_db),
+):
+    """
+    Shopify subscription approve hone ke baad merchant ko yahan redirect karta hai.
+    1. DB mein subscription 'active' mark karta hai
+    2. Merchant ko seedha Shopify Admin ke andar app page par redirect kar deta hai
+    """
+    logger.info(
+        f"✅ Billing callback received: shop={shop}, plan={plan}, charge_id={charge_id}"
+    )
+
+    try:
+        existing = (
+            db.query(ShopifySubscription)
+            .filter(ShopifySubscription.shop_domain == shop)
+            .first()
+        )
+        if existing:
+            existing.subscription_status = "active"
+            if charge_id:
+                existing.subscription_id = charge_id
+            existing.plan_name = plan
+        else:
+            new_sub = ShopifySubscription(
+                shop_domain=shop,
+                subscription_id=charge_id,
+                subscription_status="active",
+                plan_name=plan,
+            )
+            db.add(new_sub)
+        db.commit()
+        logger.info(f"✅ Subscription set to ACTIVE in DB for {shop}")
+    except Exception as e:
+        logger.error(f"❌ Failed to update subscription in callback: {e}")
+        db.rollback()
+
+    # Shopify Admin embedded app URL:
+    # Format: https://admin.shopify.com/store/{shop_slug}/apps/stock-sync-partner
+    shop_slug = shop.replace(".myshopify.com", "")
+    admin_url = f"https://admin.shopify.com/store/{shop_slug}/apps/stock-sync-partner"
+
+    html_content = f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Redirecting to Shopify Admin...</title>
+    <meta http-equiv="refresh" content="1; url={admin_url}">
+    <style>
+        body {{
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            min-height: 100vh;
+            margin: 0;
+            background: #f6f6f7;
+        }}
+        .card {{
+            background: white;
+            padding: 40px;
+            border-radius: 12px;
+            box-shadow: 0 4px 16px rgba(0,0,0,0.08);
+            text-align: center;
+            max-width: 440px;
+            width: 90%;
+        }}
+        h2 {{ color: #008060; margin-top: 0; font-size: 22px; }}
+        p {{ color: #6d7175; font-size: 15px; margin-bottom: 24px; line-height: 1.5; }}
+        .btn {{
+            display: inline-block;
+            background: #008060;
+            color: white;
+            padding: 12px 28px;
+            border-radius: 6px;
+            text-decoration: none;
+            font-weight: 600;
+            transition: background 0.2s;
+        }}
+        .btn:hover {{ background: #006e52; }}
+    </style>
+</head>
+<body>
+    <div class="card">
+        <h2>✅ Subscription Activated!</h2>
+        <p>Aapki subscription active ho chuki hai.<br>Shopify Admin ke andar redirect kiya ja raha hai...</p>
+        <a class="btn" href="{admin_url}">Shopify Admin Kholein</a>
+    </div>
+    <script>
+        setTimeout(function() {{
+            window.location.href = "{admin_url}";
+        }}, 800);
+    </script>
+</body>
+</html>"""
+    return HTMLResponse(content=html_content)
+
+
+# ============================================
+# INSTANT TEST ACTIVATION (Testing ke liye bypass)
+# ============================================
+@router.post("/activate-test")
+def activate_test_subscription(
+    shop_domain: str = Body(..., embed=True),
+    plan_name: str = Body("Basic Plan", embed=True),
+    db: Session = Depends(get_db),
+):
+    """
+    Testing / dev ke liye store ko direct active subscription assign karta hai
+    taaki merchant dashboard (Amazon product import) foran open ho sake.
+    """
+    existing = (
+        db.query(ShopifySubscription)
+        .filter(ShopifySubscription.shop_domain == shop_domain)
+        .first()
+    )
+    if existing:
+        existing.subscription_status = "active"
+        existing.plan_name = plan_name
+    else:
+        new_sub = ShopifySubscription(
+            shop_domain=shop_domain,
+            subscription_id="test_sub_active",
+            subscription_status="active",
+            plan_name=plan_name,
+        )
+        db.add(new_sub)
+
+    db.commit()
+    logger.info(f"✅ Dev active subscription set for {shop_domain}")
+    return {"success": True, "message": f"Active subscription enabled for {shop_domain}"}
