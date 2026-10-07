@@ -72,6 +72,7 @@ def verify_id_token(token: str) -> dict:
             secret,
             algorithms=["HS256"],
             audience=api_key,
+            leeway=10,
         )
 
         now = int(time.time())
