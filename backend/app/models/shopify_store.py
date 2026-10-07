@@ -31,5 +31,10 @@ class ShopifyStore(Base):
         onupdate=func.now(),
     )
 
+    # ✅ NAYE COLUMNS — Expiring offline tokens ke liye
+    refresh_token = Column(Text, nullable=True)
+    expires_at = Column(DateTime(timezone=True), nullable=True)
+    refresh_token_expires_at = Column(DateTime(timezone=True), nullable=True)
+
     def __repr__(self):
         return f"<ShopifyStore {self.shop_domain}>"

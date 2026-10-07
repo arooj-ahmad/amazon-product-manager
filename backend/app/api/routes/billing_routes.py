@@ -4,13 +4,14 @@
 # ============================================
 
 import logging
+from datetime import datetime, timedelta  # ✅ NAYA
 
 from fastapi import APIRouter, Depends, Header, HTTPException
 from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app.models import ShopifyStore
-from app.models.shopify_subscription import ShopifySubscription   # ✅ NAYA
+from app.models.shopify_subscription import ShopifySubscription
 from app.services.billing import (
     BILLING_PLANS,
     create_subscription,
@@ -24,9 +25,7 @@ from app.config import settings
 
 logger = logging.getLogger(__name__)
 
-# ⚠️⚠️⚠️ YE LINE ZAROORI HAI — ISKE BINA ROUTER KAAM NAHI KAREGA
 router = APIRouter(prefix="/api/billing", tags=["Billing"])
-# ⚠️⚠️⚠️
 
 
 # ============================================
@@ -39,7 +38,7 @@ async def get_or_install_store(
     force_refresh: bool = False,
 ):
     """DB mein store ho to return, warna (ya force_refresh par) token
-    exchange karke naya offline token Supabase mein save karta hai."""
+    exchange karke naya expiring offline token Supabase mein save karta hai."""
     store = (
         db.query(ShopifyStore)
         .filter(ShopifyStore.shop_domain == shop_domain)
@@ -51,19 +50,38 @@ async def get_or_install_store(
 
     token_data = await exchange_id_token_for_offline_token(shop_domain, id_token)
     if not token_data or not token_data.get("access_token"):
-        return store  # exchange fail — jo hai wahi (ya None)
+        return store
 
     scopes = token_data.get("scope") or settings.SHOPIFY_SCOPES
+
+    # ✅ Expiry calculate karo
+    expires_at = None
+    if token_data.get("expires_in"):
+        expires_at = datetime.utcnow() + timedelta(
+            seconds=int(token_data["expires_in"])
+        )
+
+    refresh_token_expires_at = None
+    if token_data.get("refresh_token_expires_in"):
+        refresh_token_expires_at = datetime.utcnow() + timedelta(
+            seconds=int(token_data["refresh_token_expires_in"])
+        )
 
     if store:
         store.access_token = token_data["access_token"]
         store.scopes = scopes
+        store.refresh_token = token_data.get("refresh_token")
+        store.expires_at = expires_at
+        store.refresh_token_expires_at = refresh_token_expires_at
         logger.info(f"🔄 Token refreshed via token exchange: {shop_domain}")
     else:
         store = ShopifyStore(
             shop_domain=shop_domain,
             access_token=token_data["access_token"],
             scopes=scopes,
+            refresh_token=token_data.get("refresh_token"),
+            expires_at=expires_at,
+            refresh_token_expires_at=refresh_token_expires_at,
         )
         db.add(store)
         logger.info(f"🆕 Store saved via token exchange: {shop_domain}")
@@ -174,7 +192,7 @@ async def subscribe(
         return_url=return_url,
     )
 
-    # ✅ Purana "Shop-owned" token ho to naya token lekar ek baar retry
+    # ✅ Agar "owned by a Shop" error aaye to naya token lekar retry karo
     if "owned by a Shop" in str(result.get("errors", "")):
         logger.warning(f"Stale shop-owned token for {shop_domain}, refreshing...")
         store = await get_or_install_store(
@@ -222,7 +240,6 @@ async def subscribe(
         except Exception as e:
             logger.error(f"❌ Failed to save subscription to DB: {e}")
             db.rollback()
-            # Don't fail the request — Shopify subscription already created
 
     return {
         "success": True,

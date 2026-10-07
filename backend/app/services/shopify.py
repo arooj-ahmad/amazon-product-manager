@@ -159,6 +159,7 @@ async def exchange_id_token_for_offline_token(
         "requested_token_type": (
             "urn:shopify:params:oauth:token-type:offline-access-token"
         ),
+        "expiring": "1",  # ✅ YEH ADD KARO — expiring offline token ke liye
     }
 
     try:
@@ -179,6 +180,9 @@ async def exchange_id_token_for_offline_token(
             return {
                 "access_token": data.get("access_token"),
                 "scope": data.get("scope"),
+                "expires_in": data.get("expires_in"),           # ✅ NAYA
+                "refresh_token": data.get("refresh_token"),     # ✅ NAYA
+                "refresh_token_expires_in": data.get("refresh_token_expires_in"),  # ✅ NAYA
             }
     except Exception as e:
         logger.error(f"Token exchange (id_token) error for {shop}: {e}")
