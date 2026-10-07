@@ -420,24 +420,41 @@ async def add_product_from_shopify_app(
 
     logger.info(f"✅ Verified Shopify request from: {shop_domain}")
 
-    # ── Step 4: Store dhundo ──
+    # ── Step 4: Store dhundo, agar token invalid ho to fresh exchange karo ──
     store = (
         db.query(ShopifyStore)
         .filter(ShopifyStore.shop_domain == shop_domain)
         .first()
     )
 
-    if not store:
+    # Helper: token ko exchange karke DB mein update karo
+    async def refresh_store_token() -> bool:
+        nonlocal store
         token_data = await exchange_id_token_for_offline_token(shop_domain, token)
-        if token_data and token_data.get("access_token"):
+        if not token_data or not token_data.get("access_token"):
+            return False
+        if store:
+            store.access_token = token_data["access_token"]
+            store.scopes = token_data.get("scope") or settings.SHOPIFY_SCOPES
+        else:
             store = ShopifyStore(
                 shop_domain=shop_domain,
                 access_token=token_data["access_token"],
                 scopes=token_data.get("scope") or settings.SHOPIFY_SCOPES,
             )
             db.add(store)
-            db.commit()
-            db.refresh(store)
+        db.commit()
+        db.refresh(store)
+        logger.info(f"🔄 Token refreshed for {shop_domain}")
+        return True
+
+    if not store:
+        ok = await refresh_store_token()
+        if not ok:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Store {shop_domain} not connected. Please reinstall the app.",
+            )
 
     if not store:
         raise HTTPException(
@@ -536,100 +553,128 @@ async def add_product_from_shopify_app(
     variant_added = False
 
     try:
-        # Case 1: Parent exists → variant add karo
-        if existing_parent and existing_parent.shopify_product_id:
-            logger.info(
-                f"➕ Adding variant to existing product: "
-                f"{existing_parent.shopify_product_id}"
-            )
+        # Helper: kisi bhi result mein 401 check karo
+        def is_401(result: dict) -> bool:
+            for err in result.get("errors", []):
+                if isinstance(err, dict) and err.get("status") == 401:
+                    return True
+            return False
 
-            # ✅ Smart variation detection
-            option_name, variant_title = extract_variation_info(data)
-            logger.info(f"   Variant: {option_name} = {variant_title}")
+        # ── Shopify push helper (callable twice: first attempt + retry) ──
+        async def do_push() -> tuple:
+            """Returns (shopify_pushed, shopify_product_id, variant_added, result)"""
+            _pushed = False
+            _pid = None
+            _vadd = False
+            _result = {}
 
-            variant_result = await add_variant_to_existing_product(
-                shop=shop_domain,
-                access_token=store.access_token,
-                product_id=existing_parent.shopify_product_id,
-                variant_data={
-                    "title": variant_title,
-                    "option_name": option_name,
-                    "price": final_price,
-                    "sku": asin,
-                    "stock": new_product.stock_quantity or 0,
-                },
-            )
+            # Case 1: Parent exists → variant add karo
+            if existing_parent and existing_parent.shopify_product_id:
+                logger.info(
+                    f"➕ Adding variant to existing product: "
+                    f"{existing_parent.shopify_product_id}"
+                )
+                option_name, variant_title = extract_variation_info(data)
+                logger.info(f"   Variant: {option_name} = {variant_title}")
 
-            if "errors" not in variant_result:
-                variant_added = True
-                shopify_pushed = True
-
-                new_product.shopify_product_id = existing_parent.shopify_product_id
-                new_product.shopify_handle = existing_parent.shopify_handle
-                db.commit()
-
-                shopify_product_id = existing_parent.shopify_product_id
-                logger.info(f"✅ Variant added to parent: {variant_title}")
-
-        # Case 2: Naya product create karo
-        else:
-            logger.info("🆕 Creating new product")
-
-            # ✅ Smart variation detection
-            option_name, variant_title = extract_variation_info(data)
-            logger.info(f"   Main variant: {option_name} = {variant_title}")
-
-            shopify_result = await create_shopify_product(
-                shop=shop_domain,
-                access_token=store.access_token,
-                product_data={
-                    "title": new_product.title,
-                    "description": new_product.description or "",
-                    "brand": new_product.brand or "",
-                    "images": new_product.images or (
-                        [new_product.image_url] if new_product.image_url else []
-                    ),
-                    "price": str(new_product.price),
-                    "stock_quantity": new_product.stock_quantity or 0,
-                    "is_available": (
-                        new_product.is_available
-                        if new_product.is_available is not None
-                        else True
-                    ),
-                    "availability": new_product.availability or "In Stock",
-                    "rating": new_product.rating,
-                    "reviews_count": new_product.reviews_count,
-                    "amazon_price": new_product.amazon_price,
-                    "asin": new_product.asin,
-                    "parent_asin": new_product.parent_asin,
-                    "variant_attributes": new_product.variant_attributes or [],  # ✅ NAYA
-                },
-            )
-
-            if "errors" not in shopify_result:
-                shopify_pushed = True
-
-                shopify_product_id = (
-                    shopify_result.get("data", {})
-                    .get("productCreate", {})
-                    .get("product", {})
-                    .get("id")
+                _result = await add_variant_to_existing_product(
+                    shop=shop_domain,
+                    access_token=store.access_token,
+                    product_id=existing_parent.shopify_product_id,
+                    variant_data={
+                        "title": variant_title,
+                        "option_name": option_name,
+                        "price": final_price,
+                        "sku": asin,
+                        "stock": new_product.stock_quantity or 0,
+                    },
                 )
 
-                if shopify_product_id:
-                    new_product.shopify_product_id = shopify_product_id
-                    new_product.shopify_handle = (
-                        shopify_result.get("data", {})
+                if "errors" not in _result:
+                    _vadd = True
+                    _pushed = True
+                    new_product.shopify_product_id = existing_parent.shopify_product_id
+                    new_product.shopify_handle = existing_parent.shopify_handle
+                    db.commit()
+                    _pid = existing_parent.shopify_product_id
+                    logger.info(f"✅ Variant added to parent: {variant_title}")
+
+            # Case 2: Naya product create karo
+            else:
+                logger.info("🆕 Creating new product")
+                option_name, variant_title = extract_variation_info(data)
+                logger.info(f"   Main variant: {option_name} = {variant_title}")
+
+                _result = await create_shopify_product(
+                    shop=shop_domain,
+                    access_token=store.access_token,
+                    product_data={
+                        "title": new_product.title,
+                        "description": new_product.description or "",
+                        "brand": new_product.brand or "",
+                        "images": new_product.images or (
+                            [new_product.image_url] if new_product.image_url else []
+                        ),
+                        "price": str(new_product.price),
+                        "stock_quantity": new_product.stock_quantity or 0,
+                        "is_available": (
+                            new_product.is_available
+                            if new_product.is_available is not None
+                            else True
+                        ),
+                        "availability": new_product.availability or "In Stock",
+                        "rating": new_product.rating,
+                        "reviews_count": new_product.reviews_count,
+                        "amazon_price": new_product.amazon_price,
+                        "asin": new_product.asin,
+                        "parent_asin": new_product.parent_asin,
+                        "variant_attributes": new_product.variant_attributes or [],
+                    },
+                )
+
+                if "errors" not in _result:
+                    _pushed = True
+                    _pid = (
+                        _result.get("data", {})
                         .get("productCreate", {})
                         .get("product", {})
-                        .get("handle")
+                        .get("id")
                     )
-                    db.commit()
+                    if _pid:
+                        new_product.shopify_product_id = _pid
+                        new_product.shopify_handle = (
+                            _result.get("data", {})
+                            .get("productCreate", {})
+                            .get("product", {})
+                            .get("handle")
+                        )
+                        db.commit()
+                    logger.info(f"✅ Product pushed to Shopify: {asin}")
+                else:
+                    logger.warning(
+                        f"⚠️ Shopify push warnings: {_result.get('errors')}"
+                    )
 
-                logger.info(f"✅ Product pushed to Shopify: {asin}")
+            return _pushed, _pid, _vadd, _result
+
+        # ── First attempt ──
+        shopify_pushed, shopify_product_id, variant_added, first_result = (
+            await do_push()
+        )
+
+        # ── 401 check: token expired? Refresh karo aur retry karo ──
+        if not shopify_pushed and is_401(first_result):
+            logger.warning(
+                f"🔄 401 detected — refreshing token for {shop_domain} and retrying..."
+            )
+            refreshed = await refresh_store_token()
+            if refreshed:
+                shopify_pushed, shopify_product_id, variant_added, _ = (
+                    await do_push()
+                )
             else:
-                logger.warning(
-                    f"⚠️ Shopify push warnings: {shopify_result.get('errors')}"
+                logger.error(
+                    f"❌ Token refresh failed for {shop_domain}, cannot retry push"
                 )
 
     except Exception as e:
