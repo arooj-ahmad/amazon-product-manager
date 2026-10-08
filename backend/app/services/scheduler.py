@@ -7,6 +7,7 @@
 # + ✅ NAYA: Shopify price update (sirf increase pe)
 # + ✅ NAYA: Sirf Active products (Draft skip)
 # + ✅ NAYA: price hamesha amazon_price + markup update
+# + ✅ NAYA: Shopify metafields update (amazon_price, availability, rating, etc.)
 # ============================================
 
 import logging
@@ -30,6 +31,7 @@ from app.services.shopify import (
     get_primary_location,
     shopify_graphql,
     sync_update_shopify_price,
+    set_product_metafields,  # ✅ NAYA IMPORT
 )
 
 logger = logging.getLogger(__name__)
@@ -149,11 +151,11 @@ async def sync_shopify_product(
 
 
 # ============================================
-# ✅ HELPER: SHOPIFY PRICE UPDATE
+# ✅ HELPER: SHOPIFY PRICE + METAFIELDS UPDATE
 # ============================================
 async def sync_shopify_price(product: Product, new_price: float, db: Session):
     """
-    Shopify pe product ka price update karta hai.
+    Shopify pe product ka price + metafields update karta hai.
     """
     store = db.query(ShopifyStore).first()
 
@@ -180,6 +182,7 @@ async def sync_shopify_price(product: Product, new_price: float, db: Session):
         return False
 
     try:
+        # ✅ 1. Variant price update
         success = sync_update_shopify_price(
             shop_domain=shop,
             access_token=access_token,
@@ -191,6 +194,62 @@ async def sync_shopify_price(product: Product, new_price: float, db: Session):
                 f"✅ Shopify price updated: ASIN={product.asin}, "
                 f"new_price=${new_price}"
             )
+
+        # ✅ 2. Metafields update (amazon_price, availability, rating, etc.)
+        metafields_input = []
+
+        if product.amazon_price is not None:
+            metafields_input.append({
+                "namespace": "custom",
+                "key": "amazon_price",
+                "value": str(product.amazon_price),
+                "type": "single_line_text_field",
+            })
+
+        if product.availability:
+            metafields_input.append({
+                "namespace": "custom",
+                "key": "availability",
+                "value": str(product.availability),
+                "type": "single_line_text_field",
+            })
+
+        if getattr(product, "rating", None) is not None:
+            metafields_input.append({
+                "namespace": "custom",
+                "key": "rating",
+                "value": str(product.rating),
+                "type": "single_line_text_field",
+            })
+
+        if getattr(product, "reviews_count", None) is not None:
+            metafields_input.append({
+                "namespace": "custom",
+                "key": "reviews_count",
+                "value": str(product.reviews_count),
+                "type": "single_line_text_field",
+            })
+
+        if product.asin:
+            metafields_input.append({
+                "namespace": "custom",
+                "key": "asin",
+                "value": str(product.asin),
+                "type": "single_line_text_field",
+            })
+
+        if metafields_input:
+            await set_product_metafields(
+                shop=shop,
+                access_token=access_token,
+                product_id=shopify_id,
+                metafields=metafields_input,
+            )
+            logger.info(
+                f"✅ Shopify metafields updated: ASIN={product.asin}, "
+                f"amazon_price=${product.amazon_price}"
+            )
+
         return success
     except Exception as e:
         logger.error(f"❌ Shopify price update error: ASIN={product.asin}: {e}")
@@ -247,6 +306,12 @@ async def update_all_prices():
                 product.is_available = new_availability
                 product.stock_quantity = data.get("stock_quantity", 0)
                 product.last_synced_at = datetime.now(timezone.utc)
+
+                # ✅ Rating + reviews_count bhi update karo
+                if data.get("rating") is not None:
+                    product.rating = data["rating"]
+                if data.get("reviews_count") is not None:
+                    product.reviews_count = data["reviews_count"]
 
                 availability_changed = (old_availability != new_availability)
 
@@ -318,7 +383,7 @@ async def update_all_prices():
                 price_recalculated_count += 1
 
                 # ========================================
-                # ✅ STEP 4: Shopify pe price update karo
+                # ✅ STEP 4: Shopify pe price + metafields update karo
                 # ✅ SIRF INCREASE PE (Shopify update)
                 # ========================================
                 if new_amazon_price > old_amazon:

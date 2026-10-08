@@ -23,7 +23,7 @@ async def sync_ids():
     shop = store.shop_domain
     access_token = store.access_token
     
-    # Saare products jinke paas shopify_product_id nahi hai
+    # ✅ Saare products jinke paas shopify_product_id nahi hai
     products = db.query(Product).filter(
         Product.shopify_product_id.is_(None),
         Product.asin.isnot(None),
@@ -33,6 +33,7 @@ async def sync_ids():
     
     synced = 0
     not_found = 0
+    errors = 0
     
     for p in products:
         try:
@@ -48,18 +49,22 @@ async def sync_ids():
                 print(f"✅ {p.asin} → {shopify_id}")
                 synced += 1
             else:
-                print(f"⚠️ {p.asin} not found in Shopify")
+                print(f"⚠️ {p.asin} not found in Shopify (SKU check karo)")
                 not_found += 1
             
-            # Rate limit
+            # ✅ Rate limit — Shopify API limit
             await asyncio.sleep(0.5)
         
         except Exception as e:
             print(f"❌ {p.asin}: {e}")
+            errors += 1
     
     db.close()
-    print(f"\n✅ Synced: {synced}")
+    print(f"\n{'='*50}")
+    print(f"✅ Synced: {synced}")
     print(f"⚠️ Not found: {not_found}")
+    print(f"❌ Errors: {errors}")
+    print(f"{'='*50}")
     print("Done!")
 
 
