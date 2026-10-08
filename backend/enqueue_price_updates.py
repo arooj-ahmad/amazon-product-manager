@@ -17,12 +17,17 @@ logger = logging.getLogger(__name__)
 
 
 async def enqueue_all():
-    """Saare Active products ko Redis queue mein enqueue karo."""
+    """
+    Saare products ko Redis queue mein enqueue karo.
+    - Active + Draft dono
+    - Manual override skip
+    """
     db = SessionLocal()
 
+    # ✅ Saare products uthao (Active + Draft)
     products = db.query(Product).filter(
-        Product.is_available == True,  # noqa: E712
         Product.is_manual_override == False,  # noqa: E712
+        Product.asin.isnot(None),
     ).all()
 
     db.close()
@@ -39,17 +44,24 @@ async def enqueue_all():
     )
 
     enqueued = 0
+    errors = 0
 
     for p in products:
-        await redis.enqueue_job("process_price_update", p.asin)
-        enqueued += 1
+        try:
+            await redis.enqueue_job("process_price_update", p.asin)
+            enqueued += 1
 
-        if enqueued % 100 == 0:
-            logger.info(f"Enqueued: {enqueued}/{total}")
+            if enqueued % 100 == 0:
+                logger.info(f"Enqueued: {enqueued}/{total}")
 
-    await redis.close()
+        except Exception as e:
+            logger.error(f"Failed to enqueue {p.asin}: {e}")
+            errors += 1
+
+    await redis.aclose()  # ✅ aclose() use karo (deprecated close() nahi)
 
     logger.info(f"✅ Enqueued: {enqueued} jobs")
+    logger.info(f"❌ Errors: {errors}")
 
 
 if __name__ == "__main__":
