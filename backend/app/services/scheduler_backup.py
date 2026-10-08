@@ -6,7 +6,6 @@
 # + Inventory quantity sync
 # + ✅ NAYA: Shopify price update (sirf increase pe)
 # + ✅ NAYA: Sirf Active products (Draft skip)
-# + ✅ NAYA: price hamesha amazon_price + markup update
 # ============================================
 
 import logging
@@ -29,7 +28,7 @@ from app.services.shopify import (
     set_inventory_quantity,
     get_primary_location,
     shopify_graphql,
-    sync_update_shopify_price,
+    sync_update_shopify_price,  # ✅ NAYA IMPORT
 )
 
 logger = logging.getLogger(__name__)
@@ -52,6 +51,9 @@ async def sync_shopify_product(
 ):
     """
     Product ka Shopify status + inventory update karta hai.
+    - is_available = True  → status = ACTIVE
+    - is_available = False → status = DRAFT
+    - stock_quantity → inventory set
     """
     store = db.query(ShopifyStore).first()
 
@@ -149,7 +151,7 @@ async def sync_shopify_product(
 
 
 # ============================================
-# ✅ HELPER: SHOPIFY PRICE UPDATE
+# ✅ NAYA HELPER: SHOPIFY PRICE UPDATE
 # ============================================
 async def sync_shopify_price(product: Product, new_price: float, db: Session):
     """
@@ -180,8 +182,8 @@ async def sync_shopify_price(product: Product, new_price: float, db: Session):
         return False
 
     try:
-        success = sync_update_shopify_price(
-            shop_domain=shop,
+        success = await sync_update_shopify_price(
+            shop=shop,
             access_token=access_token,
             shopify_product_id=shopify_id,
             new_price=new_price,
@@ -209,7 +211,7 @@ async def update_all_prices():
     db: Session = SessionLocal()
 
     try:
-        # ✅ Sirf Active products uthao (Draft skip)
+        # ✅ NAYA: Sirf Active products uthao (Draft skip)
         products = db.query(Product).filter(
             Product.is_available == True  # noqa: E712
         ).all()
@@ -223,7 +225,6 @@ async def update_all_prices():
         shopify_synced_count = 0
         price_increased_count = 0
         price_decreased_count = 0
-        price_recalculated_count = 0
 
         for product in products:
             if product.is_manual_override:
@@ -271,7 +272,7 @@ async def update_all_prices():
                     shopify_synced_count += 1
 
                 # ========================================
-                # ✅ STEP 3: Price check
+                # ✅ STEP 3: Price check (SIRF INCREASE PE UPDATE)
                 # ========================================
                 if new_amazon_price is None:
                     logger.warning(f"[WARN] ASIN={product.asin} — price nahi mila")
@@ -281,47 +282,41 @@ async def update_all_prices():
                     continue
 
                 old_amazon = product.amazon_price or 0
-                old_price = product.price
 
-                # ✅ HAMESHA price recalculate karo (chahe badha ya ghata)
-                new_final_price = calculate_final_price(
-                    amazon_price=new_amazon_price,
-                    markup=product.markup or 2.0,
-                    markup_type=getattr(product, "markup_type", "fixed") or "fixed",
-                )
-
-                # ✅ HAMESHA amazon_price aur price update karo
-                product.amazon_price = new_amazon_price
-                product.price = new_final_price
-
-                # ✅ Optional fields update
-                if data.get("title") and data["title"] != product.title:
-                    product.title = data["title"]
-                if data.get("image_url") and data["image_url"] != product.image_url:
-                    product.image_url = data["image_url"]
-                if data.get("images") and data["images"] != product.images:
-                    product.images = data["images"]
-                if (
-                    data.get("specifications")
-                    and data["specifications"] != product.specifications
-                ):
-                    product.specifications = data["specifications"]
-                if (
-                    data.get("variant_attributes")
-                    and data["variant_attributes"] != product.variant_attributes
-                ):
-                    product.variant_attributes = data["variant_attributes"]
-
-                db.commit()
-                db.refresh(product)
-
-                price_recalculated_count += 1
-
-                # ========================================
-                # ✅ STEP 4: Shopify pe price update karo
-                # ✅ SIRF INCREASE PE (Shopify update)
-                # ========================================
+                # ✅ Sirf INCREASE pe update karo
                 if new_amazon_price > old_amazon:
+                    old_price = product.price
+
+                    new_final_price = calculate_final_price(
+                        amazon_price=new_amazon_price,
+                        markup=product.markup or 2.0,
+                        markup_type=getattr(product, "markup_type", "fixed") or "fixed",
+                    )
+
+                    product.amazon_price = new_amazon_price
+                    product.price = new_final_price
+
+                    if data.get("title") and data["title"] != product.title:
+                        product.title = data["title"]
+                    if data.get("image_url") and data["image_url"] != product.image_url:
+                        product.image_url = data["image_url"]
+                    if data.get("images") and data["images"] != product.images:
+                        product.images = data["images"]
+                    if (
+                        data.get("specifications")
+                        and data["specifications"] != product.specifications
+                    ):
+                        product.specifications = data["specifications"]
+                    if (
+                        data.get("variant_attributes")
+                        and data["variant_attributes"] != product.variant_attributes
+                    ):
+                        product.variant_attributes = data["variant_attributes"]
+
+                    db.commit()
+                    db.refresh(product)
+
+                    # ✅ Shopify pe price update karo
                     await sync_shopify_price(
                         product=product,
                         new_price=new_final_price,
@@ -337,23 +332,26 @@ async def update_all_prices():
                     updated_count += 1
 
                 elif new_amazon_price < old_amazon:
-                    # ❌ Price decreased — Shopify update nahi, lekin DB update ho gaya
+                    # ❌ Price decreased — kuch nahi karo
                     logger.info(
-                        f"[PRICE DECREASED - DB UPDATED, SHOPIFY SKIPPED] "
-                        f"ASIN={product.asin} "
-                        f"amazon: ${old_amazon} → ${new_amazon_price}, "
-                        f"final: ${old_price} → ${new_final_price}"
+                        f"[PRICE DECREASED - NO UPDATE] ASIN={product.asin} "
+                        f"amazon: ${old_amazon} → ${new_amazon_price}"
                     )
                     price_decreased_count += 1
-                    updated_count += 1
+                    db.commit()
+                    db.refresh(product)
+                    continue
 
                 else:
-                    # ⚪ Price same — DB update ho gaya (same value)
+                    # ⚪ Price same — kuch nahi karo
                     logger.info(
                         f"[NO CHANGE] ASIN={product.asin} "
                         f"(price: ${new_amazon_price}, "
                         f"available: {new_availability})"
                     )
+                    db.commit()
+                    db.refresh(product)
+                    continue
 
             except BrightDataError as e:
                 logger.error(f"[ERROR] ASIN={product.asin}: {e}")
@@ -374,8 +372,7 @@ async def update_all_prices():
             f"Back in Stock: {back_in_stock_count}, "
             f"Shopify Synced: {shopify_synced_count}, "
             f"Price Increased: {price_increased_count}, "
-            f"Price Decreased (DB only): {price_decreased_count}, "
-            f"Price Recalculated: {price_recalculated_count}"
+            f"Price Decreased (skipped): {price_decreased_count}"
         )
         logger.info("=" * 60)
 
