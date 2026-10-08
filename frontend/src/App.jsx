@@ -78,6 +78,9 @@ function App() {
             }
           />
 
+          <Route path="/shopify-app/privacy" element={<PrivacyPolicy />} />
+<Route path="/shopify-app/terms" element={<TermsOfService />} />
+
           <Route
             path="/admin/edit/:id"
             element={
