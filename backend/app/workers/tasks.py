@@ -1,6 +1,7 @@
 # app/workers/tasks.py
 from typing import Any, Dict
 import logging
+from datetime import datetime, timezone
 
 from app.services.brightdata import fetch_product_from_brightdata
 from app.database import SessionLocal
@@ -8,6 +9,9 @@ from app.database import SessionLocal
 logger = logging.getLogger(__name__)
 
 
+# ============================================
+# ✅ WORKER FUNCTION 1: BATCH URLS IMPORT
+# ============================================
 async def process_batch_urls(ctx: Dict[str, Any], job_id: str, urls: list[str]):
     """
     Har URL ko process karega: Bright Data call -> extract -> DB save
@@ -66,3 +70,169 @@ async def process_batch_urls(ctx: Dict[str, Any], job_id: str, urls: list[str]):
         f"{results['failed']} failed"
     )
     return results
+
+
+# ============================================
+# ✅ WORKER FUNCTION 2: PRICE UPDATE (NAYA)
+# ============================================
+async def process_price_update(ctx: Dict[str, Any], asin: str):
+    """
+    Ek product ka price update karo (worker ke through).
+    - Bright Data se fresh price fetch
+    - Database update (amazon_price, price)
+    - Shopify update (sirf increase pe)
+    """
+    from app.models import Product, ShopifyStore
+    from app.services.brightdata import (
+        calculate_final_price,
+        BrightDataError,
+    )
+    from app.services.shopify import (
+        sync_update_shopify_price,
+        get_shopify_product_by_sku,
+        set_product_metafields,
+        update_shopify_product_status,
+    )
+
+    db = SessionLocal()
+
+    try:
+        # 1. Product dhundo
+        product = db.query(Product).filter(Product.asin == asin).first()
+
+        if not product:
+            logger.warning(f"[PRICE] Product not found: {asin}")
+            return {"asin": asin, "status": "not_found"}
+
+        if product.is_manual_override:
+            logger.info(f"[PRICE] Skipped (manual override): {asin}")
+            return {"asin": asin, "status": "skipped_manual_override"}
+
+        # 2. Bright Data se fetch
+        amazon_url = f"https://www.amazon.com/dp/{asin}"
+        data = await fetch_product_from_brightdata(amazon_url)
+
+        new_amazon_price = data["amazon_price"]
+        old_amazon = product.amazon_price or 0
+        old_price = product.price
+
+        # 3. Availability update
+        old_availability = product.is_available
+        new_availability = data.get("is_available", True)
+
+        product.availability = data.get("availability", "In Stock")
+        product.is_available = new_availability
+        product.stock_quantity = data.get("stock_quantity", 0)
+        product.last_synced_at = datetime.now(timezone.utc)
+
+        if data.get("rating") is not None:
+            product.rating = data["rating"]
+        if data.get("reviews_count") is not None:
+            product.reviews_count = data["reviews_count"]
+
+        # 4. Price recalculate
+        new_final_price = calculate_final_price(
+            amazon_price=new_amazon_price,
+            markup=product.markup or 2.0,
+            markup_type=getattr(product, "markup_type", "fixed") or "fixed",
+        )
+
+        product.amazon_price = new_amazon_price
+        product.price = new_final_price
+
+        db.commit()
+        db.refresh(product)
+
+        # 5. Shopify update (sirf increase pe)
+        shopify_updated = False
+
+        if new_amazon_price > old_amazon:
+            store = db.query(ShopifyStore).first()
+
+            if store and store.access_token:
+                shopify_id = product.shopify_product_id
+
+                if not shopify_id:
+                    shopify_id = await get_shopify_product_by_sku(
+                        shop=store.shop_domain,
+                        access_token=store.access_token,
+                        sku=product.asin,
+                    )
+                    if shopify_id:
+                        product.shopify_product_id = shopify_id
+                        db.commit()
+
+                if shopify_id:
+                    # Variant price update
+                    sync_update_shopify_price(
+                        shop_domain=store.shop_domain,
+                        access_token=store.access_token,
+                        shopify_product_id=shopify_id,
+                        new_price=new_final_price,
+                    )
+
+                    # Metafields update
+                    metafields_input = []
+
+                    if product.amazon_price is not None:
+                        metafields_input.append({
+                            "namespace": "custom",
+                            "key": "amazon_price",
+                            "value": str(product.amazon_price),
+                            "type": "single_line_text_field",
+                        })
+
+                    if product.availability:
+                        metafields_input.append({
+                            "namespace": "custom",
+                            "key": "availability",
+                            "value": str(product.availability),
+                            "type": "single_line_text_field",
+                        })
+
+                    if metafields_input:
+                        await set_product_metafields(
+                            shop=store.shop_domain,
+                            access_token=store.access_token,
+                            product_id=shopify_id,
+                            metafields=metafields_input,
+                        )
+
+                    shopify_updated = True
+
+        # 6. Availability change pe Shopify status update
+        if old_availability != new_availability:
+            store = db.query(ShopifyStore).first()
+            if store and store.access_token and product.shopify_product_id:
+                await update_shopify_product_status(
+                    shop=store.shop_domain,
+                    access_token=store.access_token,
+                    shopify_product_id=product.shopify_product_id,
+                    is_available=new_availability,
+                )
+
+        logger.info(
+            f"[PRICE] ✅ {asin} "
+            f"amazon: ${old_amazon} → ${new_amazon_price}, "
+            f"final: ${old_price} → ${new_final_price}, "
+            f"shopify_updated: {shopify_updated}"
+        )
+
+        return {
+            "asin": asin,
+            "status": "success",
+            "old_amazon": old_amazon,
+            "new_amazon": new_amazon_price,
+            "old_price": old_price,
+            "new_price": new_final_price,
+            "shopify_updated": shopify_updated,
+        }
+
+    except BrightDataError as e:
+        logger.error(f"[PRICE] BrightDataError for {asin}: {e}")
+        return {"asin": asin, "status": "brightdata_error", "error": str(e)}
+    except Exception as e:
+        logger.error(f"[PRICE] Error for {asin}: {e}")
+        return {"asin": asin, "status": "error", "error": str(e)}
+    finally:
+        db.close()
