@@ -20,6 +20,9 @@ import ProductEdit from './pages/admin/ProductEdit'
 import ShopifyApp from './pages/ShopifyApp'
 import MarkupSettings from './pages/MarkupSettings'
 
+import PrivacyPolicy from './pages/PrivacyPolicy'
+import TermsOfService from './pages/TermsOfService'
+
 // ✅ NAYA — Layout wrapper jo decide kare Navbar/Footer dikhaye ya nahi
 function Layout({ children }) {
   const location = useLocation()
@@ -83,6 +86,9 @@ function App() {
               </ProtectedRoute>
             }
           />
+
+          <Route path="/privacy" element={<PrivacyPolicy />} />
+          <Route path="/terms" element={<TermsOfService />} />
 
           {/* 404 */}
           <Route
