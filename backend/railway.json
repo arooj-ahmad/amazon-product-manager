@@ -4,7 +4,7 @@
     "builder": "NIXPACKS"
   },
   "deploy": {
-    "startCommand": "python run_price_update.py",
+    "startCommand": "python enqueue_price_updates.py",
     "cronSchedule": "0 21 * * *",
     "restartPolicyType": "NEVER"
   }
