@@ -5,6 +5,7 @@
 # + Out of Stock tracking
 # + Real-time availability check (Storefront API)
 # + Shopify se products sync karo
+# + ✅ NAYA: Shopify price ko amazon_price mein save karo
 # + ✅ NAYA: SKU na hone par bhi product add karo
 # ============================================
 
@@ -388,12 +389,9 @@ def list_products_for_markup(
     """
     Markup Settings page ke liye SIRF woh products
     jo Shopify par Active hain.
-    
-    Amazon price optional hai — agar hai toh dikhega,
-    agar nahi hai toh bhi product dikhega.
     """
     query = db.query(Product).filter(
-        Product.shopify_status == "active",     # ✅ Shopify par Active
+        Product.shopify_status == "active",
     )
 
     if store_id:
@@ -468,6 +466,7 @@ def bulk_update_markup(
 
 # ============================================
 # SHOPIFY SE PRODUCTS SYNC KARO
+# ✅ NAYA: Shopify price ko amazon_price mein save karo
 # ✅ NAYA: SKU na hone par bhi product add karo
 # ============================================
 
@@ -479,6 +478,7 @@ async def sync_products_from_shopify(
     """
     Shopify se saare Active products fetch karo aur database mein sync karo.
     Jo products database mein nahi hain, woh add ho jayenge.
+    Shopify price ko amazon_price mein save karo (taake markup us par lage).
     SKU na hone par bhi product add hoga (Shopify ID use hoga).
     """
     # Store uthao
@@ -567,7 +567,7 @@ async def sync_products_from_shopify(
 
     logger.info(f"Shopify se {len(all_products)} active products mile")
 
-    # ✅ NAYA: Pehle saare products ka status 'draft' kar do
+    # Pehle saare products ka status 'draft' kar do
     existing_products = db.query(Product).filter(
         Product.shopify_store_id == store.id
     ).all()
@@ -586,10 +586,10 @@ async def sync_products_from_shopify(
         sku = sp.get("sku")
         shopify_id = sp.get("shopify_id")
         title = sp.get("title")
+        shopify_price = float(sp["price"]) if sp.get("price") else None
 
-        # ✅ NAYA: SKU na ho toh Shopify ID use karo
+        # SKU na ho toh Shopify ID use karo
         if not sku:
-            # Shopify ID se unique ASIN banao
             sku = shopify_id.replace("gid://shopify/Product/", "SHOPIFY_")
             logger.info(f"SKU khali hai, Shopify ID use kar rahe hain: {sku}")
 
@@ -604,9 +604,22 @@ async def sync_products_from_shopify(
             product.shopify_store_id = store.id
             if not product.title:
                 product.title = title
+            # ✅ NAYA: Shopify price ko amazon_price mein update karo
+            if shopify_price:
+                product.amazon_price = shopify_price
+                product.price = calculate_final_price(
+                    amazon_price=shopify_price,
+                    markup=product.markup or 2.0,
+                    markup_type=product.markup_type or "fixed",
+                )
             updated += 1
         else:
             # Naya product add karo (Shopify se)
+            final_price = calculate_final_price(
+                amazon_price=shopify_price,
+                markup=2.0,
+                markup_type="fixed",
+            )
             new_product = Product(
                 asin=sku,
                 title=title,
@@ -614,8 +627,9 @@ async def sync_products_from_shopify(
                 shopify_handle=sp.get("handle"),
                 shopify_status=sp.get("status", "active"),
                 shopify_store_id=store.id,
-                price=float(sp["price"]) if sp.get("price") else None,
-                amazon_price=None,
+                # ✅ NAYA: Shopify price ko amazon_price mein save karo
+                amazon_price=shopify_price,
+                price=final_price,
                 is_available=True,
                 stock_quantity=sp.get("inventory", 0),
             )
