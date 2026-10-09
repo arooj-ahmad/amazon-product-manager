@@ -617,19 +617,14 @@ async def sync_products_from_shopify(
         title = sp.get("title")
         shopify_price = float(sp["price"]) if sp.get("price") else None
 
-        # ✅ NAYA: SKU na ho toh chhota ASIN banao (max 20 chars)
         if not sku:
             numeric_id = shopify_id.replace("gid://shopify/Product/", "")
-            sku = f"SH{numeric_id[-15:]}"  # Max 17 chars
-            logger.info(f"SKU khali hai, chhota ASIN banaya: {sku}")
-        elif len(sku) > 20:
-            # ✅ SKU lamba hai toh truncate karo
-            original_sku = sku
-            sku = sku[:20]
-            logger.warning(
-                f"SKU lamba tha ({len(original_sku)} chars), "
-                f"truncate kiya: {sku}"
-            )
+            sku = f"SHOPIFY_{numeric_id}"
+        else:
+            sku = str(sku).strip()[:255]
+
+        if title:
+            title = title[:500]
 
         product = db.query(Product).filter(Product.asin == sku).first()
 

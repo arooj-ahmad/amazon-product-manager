@@ -2,6 +2,7 @@
 // frontend/src/pages/MarkupSettings.jsx
 // Markup Settings Page — Country + Tax support
 // + ✅ NAYA: Store ID support (multi-store)
+// + ✅ NAYA: Default store fallback (agar shop param na mile)
 // + ✅ NAYA: Bulk update par store_id bhejo
 // ============================================
 
@@ -12,14 +13,24 @@ const API_URL =
   (import.meta.env.VITE_API_URL || '').trim() ||
   'https://amazon-product-manager-production.up.railway.app'
 
+// ✅ NAYA: Default store ID (agar shop param na mile)
+const DEFAULT_STORE_ID = 15
+
 // ============================================
 // Store ID nikaalo (Shopify iframe se)
+// + Fallback: agar shop param nahi, toh DEFAULT_STORE_ID
 // ============================================
 function getStoreIdFromUrl() {
   const params = new URLSearchParams(window.location.search)
   const shop = params.get('shop')
 
-  if (!shop) return null
+  // ✅ NAYA: Agar shop param nahi hai, toh default store use karo
+  if (!shop) {
+    console.warn(
+      `No "shop" parameter found in URL. Using default store ID: ${DEFAULT_STORE_ID}`
+    )
+    return DEFAULT_STORE_ID
+  }
 
   const storeMap = {
     'amazon-product-manager.myshopify.com': 13,
@@ -27,7 +38,15 @@ function getStoreIdFromUrl() {
     'test-store-ispfraip.myshopify.com': 15,
   }
 
-  return storeMap[shop] || null
+  const storeId = storeMap[shop]
+  if (!storeId) {
+    console.warn(
+      `Unknown shop "${shop}". Using default store ID: ${DEFAULT_STORE_ID}`
+    )
+    return DEFAULT_STORE_ID
+  }
+
+  return storeId
 }
 
 // ============================================
@@ -67,7 +86,7 @@ export default function MarkupSettings() {
   const [loading, setLoading] = useState(true)
   const [savingId, setSavingId] = useState(null)
   const [message, setMessage] = useState(null)
-  const [storeId, setStoreId] = useState(null)  // ✅ NAYA
+  const [storeId, setStoreId] = useState(null)
 
   const [bulkData, setBulkData] = useState({
     country_id: '',
@@ -125,7 +144,7 @@ export default function MarkupSettings() {
     setMessage(null)
     try {
       const res = await bulkUpdatePricing({
-        store_id: storeId,           // ✅ NAYA
+        store_id: storeId,
         markup_type: bulkData.markup_type,
         markup_value: parseFloat(bulkData.markup_value),
         tax_rate: parseFloat(bulkData.tax_rate),
@@ -259,7 +278,7 @@ export default function MarkupSettings() {
                     key={p.id}
                     product={p}
                     countries={countries}
-                    storeId={storeId}            // ✅ NAYA
+                    storeId={storeId}
                     saving={savingId === p.id}
                     onSaveStart={() => setSavingId(p.id)}
                     onSaveEnd={() => setSavingId(null)}
@@ -324,7 +343,7 @@ function ProductRow({ product, countries, storeId, saving, onSaveStart, onSaveEn
     try {
       await updatePricing({
         product_id: product.id,
-        store_id: storeId,           // ✅ NAYA
+        store_id: storeId,
         markup_type: type,
         markup_value: parseFloat(markup),
         tax_rate: parseFloat(taxRate),
