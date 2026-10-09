@@ -99,9 +99,9 @@ export default function Header({ shopifyReady, shopDomain, subscription }) {
           </span>
         )}
 
+        {/* ✅ FIX: target="_top" hata diya */}
         <a
           href="/markup-settings"
-          target="_top"
           style={{
             ...badgeBase,
             background: theme.colors.badgeInfoBg,
