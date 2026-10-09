@@ -4,7 +4,8 @@
 # + Markup Settings endpoints
 # + Out of Stock tracking
 # + Real-time availability check (Storefront API)
-# + ✅ NAYA: Shopify se products sync karo
+# + Shopify se products sync karo
+# + ✅ NAYA: Markup Settings par saare Active products (Amazon price optional)
 # ============================================
 
 import logging
@@ -377,6 +378,7 @@ def admin_delete_product(
 
 # ============================================
 # MARKUP SETTINGS ROUTES
+# ✅ NAYA: Saare Active products (Amazon price optional)
 # ============================================
 
 @router.get("/markup/products", response_model=list[ProductResponse])
@@ -386,13 +388,14 @@ def list_products_for_markup(
 ):
     """
     Markup Settings page ke liye SIRF woh products
-    jo Shopify par Active hain aur Amazon par available hain.
+    jo Shopify par Active hain.
+    
+    Amazon price optional hai — agar hai toh dikhega,
+    agar nahi hai toh bhi product dikhega.
     """
     query = db.query(Product).filter(
-        Product.shopify_status == "active",
-        Product.is_available == True,  # noqa: E712
-        Product.amazon_price != None,  # noqa: E711
-        Product.amazon_price > 0,
+        Product.shopify_status == "active",     # ✅ Shopify par Active
+        Product.is_available == True,           # ✅ Available
     )
 
     if store_id:
@@ -442,8 +445,6 @@ def bulk_update_markup(
     query = db.query(Product).filter(
         Product.shopify_status == "active",
         Product.is_available == True,  # noqa: E712
-        Product.amazon_price != None,  # noqa: E711
-        Product.amazon_price > 0,
     )
 
     if store_id:
@@ -469,7 +470,7 @@ def bulk_update_markup(
 
 
 # ============================================
-# ✅ NAYA: SHOPIFY SE PRODUCTS SYNC KARO
+# ✅ SHOPIFY SE PRODUCTS SYNC KARO
 # ============================================
 
 @router.post("/markup/sync-from-shopify")
