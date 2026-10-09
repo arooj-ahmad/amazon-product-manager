@@ -32,8 +32,8 @@ class Product(Base):
     # ----------------------------------------
     # Amazon Identifiers
     # ----------------------------------------
-    asin = Column(String(20), unique=True, nullable=False, index=True)
-    parent_asin = Column(String(20), nullable=True)
+    asin = Column(String(255), unique=True, nullable=False, index=True)
+    parent_asin = Column(String(255), nullable=True)
     is_variation = Column(Boolean, default=False, nullable=False)
 
     # ----------------------------------------

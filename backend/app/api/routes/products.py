@@ -6,8 +6,8 @@
 # + Real-time availability check (Storefront API)
 # + Shopify se products sync karo
 # + Shopify price ko amazon_price mein save karo
-# + SKU na hone par bhi product add karo
-# + ✅ NAYA: Markup apply karne par Shopify par bhi update karo
+# + SKU na hone par bhi product add karo (chhota SKU)
+# + Markup apply karne par Shopify par bhi update karo
 # ============================================
 
 import logging
@@ -38,7 +38,7 @@ from app.services.brightdata import (
 from app.services.shopify import (
     check_product_availability,
     shopify_graphql,
-    sync_update_shopify_price,   # ✅ NAYA IMPORT
+    sync_update_shopify_price,
 )
 
 
@@ -401,7 +401,7 @@ def list_products_for_markup(
 
 
 @router.patch("/markup/{product_id}", response_model=ProductResponse)
-async def update_product_markup(   # ✅ async banao
+async def update_product_markup(
     product_id: int,
     payload: MarkupUpdate,
     db: Session = Depends(get_db),
@@ -428,7 +428,7 @@ async def update_product_markup(   # ✅ async banao
     db.commit()
     db.refresh(product)
 
-    # ✅ NAYA: Shopify par price update karo
+    # Shopify par price update karo
     store = db.query(ShopifyStore).first()
     if store and store.access_token and product.shopify_product_id:
         try:
@@ -446,7 +446,7 @@ async def update_product_markup(   # ✅ async banao
 
 
 @router.post("/markup/bulk-update")
-async def bulk_update_markup(   # ✅ async banao
+async def bulk_update_markup(
     payload: MarkupUpdate,
     store_id: int = None,
     db: Session = Depends(get_db),
@@ -462,7 +462,6 @@ async def bulk_update_markup(   # ✅ async banao
     updated = 0
     shopify_updated = 0
 
-    # Store uthao
     if store_id:
         store = db.query(ShopifyStore).filter(ShopifyStore.id == store_id).first()
     else:
@@ -480,7 +479,6 @@ async def bulk_update_markup(   # ✅ async banao
         product.is_manual_override = True
         updated += 1
 
-        # ✅ NAYA: Shopify par bhi update karo
         if store and store.access_token and product.shopify_product_id:
             try:
                 await sync_update_shopify_price(
@@ -504,6 +502,7 @@ async def bulk_update_markup(   # ✅ async banao
 
 # ============================================
 # SHOPIFY SE PRODUCTS SYNC KARO
+# ✅ NAYA: SKU chhota banao (max 20 chars)
 # ============================================
 
 @router.post("/markup/sync-from-shopify")
@@ -513,6 +512,7 @@ async def sync_products_from_shopify(
 ):
     """
     Shopify se saare Active products fetch karo aur database mein sync karo.
+    SKU na hone par chhota ASIN banaya jata hai (max 20 chars).
     """
     if store_id:
         store = db.query(ShopifyStore).filter(ShopifyStore.id == store_id).first()
@@ -617,8 +617,19 @@ async def sync_products_from_shopify(
         title = sp.get("title")
         shopify_price = float(sp["price"]) if sp.get("price") else None
 
+        # ✅ NAYA: SKU na ho toh chhota ASIN banao (max 20 chars)
         if not sku:
-            sku = shopify_id.replace("gid://shopify/Product/", "SHOPIFY_")
+            numeric_id = shopify_id.replace("gid://shopify/Product/", "")
+            sku = f"SH{numeric_id[-15:]}"  # Max 17 chars
+            logger.info(f"SKU khali hai, chhota ASIN banaya: {sku}")
+        elif len(sku) > 20:
+            # ✅ SKU lamba hai toh truncate karo
+            original_sku = sku
+            sku = sku[:20]
+            logger.warning(
+                f"SKU lamba tha ({len(original_sku)} chars), "
+                f"truncate kiya: {sku}"
+            )
 
         product = db.query(Product).filter(Product.asin == sku).first()
 
