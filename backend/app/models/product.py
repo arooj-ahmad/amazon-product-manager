@@ -1,8 +1,9 @@
 # ============================================
 # app/models/product.py
 # Product model — Amazon product data
-# + Out of Stock tracking (NEW)
+# + Out of Stock tracking
 # + Variant attributes (Shopify options ke liye)
+# + ✅ NAYA: Shopify status tracking (active/draft)
 # ============================================
 
 from sqlalchemy import (
@@ -46,7 +47,7 @@ class Product(Base):
     reviews_count = Column(BigInteger, nullable=True)
 
     # ----------------------------------------
-    # ⚠️ NAYA — Stock Tracking
+    # Stock Tracking
     # ----------------------------------------
     availability = Column(String(100), default="In Stock")
     is_available = Column(Boolean, default=True)
@@ -54,17 +55,21 @@ class Product(Base):
     last_synced_at = Column(DateTime(timezone=True), nullable=True)
 
     # ----------------------------------------
-    # ✅ NAYA — Variant Attributes
+    # Variant Attributes
     # Shopify options ke liye
     # Format: [{"name": "Size", "value": "Large"}, ...]
     # ----------------------------------------
     variant_attributes = Column(JSON, default=list)
 
     # ----------------------------------------
-    # ⚠️ NAYA — Shopify Product ID (for updates)
+    # Shopify Product ID (for updates)
     # ----------------------------------------
     shopify_product_id = Column(String(255), nullable=True)
     shopify_handle = Column(String(255), nullable=True)
+
+    # ✅ NAYA: Shopify status track karne ke liye
+    # Values: "active" ya "draft"
+    shopify_status = Column(String(20), default="draft", nullable=True)
 
     # ----------------------------------------
     # Pricing

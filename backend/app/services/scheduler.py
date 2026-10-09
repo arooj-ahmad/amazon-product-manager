@@ -4,10 +4,12 @@
 # + Out of Stock tracking
 # + Shopify Status Sync (DB token use karta hai)
 # + Inventory quantity sync
-# + ✅ NAYA: Shopify price update (sirf increase pe)
-# + ✅ NAYA: Sirf Active products (Draft skip)
-# + ✅ NAYA: price hamesha amazon_price + markup update
-# + ✅ NAYA: Shopify metafields update (amazon_price, availability, rating, etc.)
+# + Shopify price update (sirf increase pe)
+# + Sirf Active products (Draft skip)
+# + price hamesha amazon_price + markup update
+# + Shopify metafields update
+# + ✅ NAYA: shopify_status field DB mein save
+# + ✅ NAYA: SKU na mile toh title se Shopify product dhoondo
 # ============================================
 
 import logging
@@ -31,7 +33,7 @@ from app.services.shopify import (
     get_primary_location,
     shopify_graphql,
     sync_update_shopify_price,
-    set_product_metafields,  # ✅ NAYA IMPORT
+    set_product_metafields,
 )
 
 logger = logging.getLogger(__name__)
@@ -41,6 +43,66 @@ logger = logging.getLogger(__name__)
 # GLOBAL SCHEDULER INSTANCE
 # ============================================
 scheduler = AsyncIOScheduler()
+
+
+# ============================================
+# ✅ NAYA HELPER: TITLE SE SHOPIFY PRODUCT DHOONDO
+# ============================================
+async def find_shopify_product_by_title(
+    shop: str,
+    access_token: str,
+    title: str,
+) -> str | None:
+    """
+    Shopify pe product ko title se dhoondta hai.
+    SKU match na hone par yeh fallback hai.
+    """
+    if not title or len(title.strip()) < 3:
+        return None
+
+    # Title ke pehle 40 characters se search karo (zyada specific)
+    search_term = title.strip()[:40]
+
+    query = """
+    query searchProduct($query: String!) {
+      products(first: 5, query: $query) {
+        edges {
+          node {
+            id
+            title
+          }
+        }
+      }
+    }
+    """
+
+    try:
+        result = await shopify_graphql(
+            shop, access_token, query, {"query": search_term}
+        )
+
+        edges = (
+            result.get("data", {})
+            .get("products", {})
+            .get("edges", [])
+        )
+
+        if edges:
+            # Pehla result return karo
+            shopify_id = edges[0]["node"]["id"]
+            found_title = edges[0]["node"]["title"]
+            logger.info(
+                f"✅ Shopify product found by title: "
+                f"'{found_title[:50]}...' → {shopify_id}"
+            )
+            return shopify_id
+
+        logger.warning(f"⚠️ Shopify product not found by title: {search_term}")
+        return None
+
+    except Exception as e:
+        logger.error(f"❌ Title search error: {e}")
+        return None
 
 
 # ============================================
@@ -54,11 +116,15 @@ async def sync_shopify_product(
 ):
     """
     Product ka Shopify status + inventory update karta hai.
+    ✅ NAYA: product.shopify_status bhi DB mein save karta hai.
+    ✅ NAYA: SKU na mile toh title se dhoondta hai.
     """
     store = db.query(ShopifyStore).first()
 
     if not store or not store.access_token:
         logger.warning("⚠️ No Shopify store in DB — skip sync")
+        product.shopify_status = "draft"
+        db.commit()
         return
 
     shop = store.shop_domain
@@ -67,6 +133,11 @@ async def sync_shopify_product(
     try:
         shopify_id = product.shopify_product_id
 
+        # ── Method 1: DB mein saved ID ──
+        if shopify_id:
+            logger.info(f"✅ Using saved shopify_product_id: {shopify_id}")
+
+        # ── Method 2: SKU se dhoondo ──
         if not shopify_id:
             shopify_id = await get_shopify_product_by_sku(
                 shop=shop,
@@ -75,12 +146,27 @@ async def sync_shopify_product(
             )
             if shopify_id:
                 product.shopify_product_id = shopify_id
-                logger.info(f"Shopify product linked: {shopify_id}")
+                logger.info(f"✅ Shopify product linked by SKU: {shopify_id}")
 
+        # ── Method 3: Title se dhoondo (NEW) ──
+        if not shopify_id and product.title:
+            shopify_id = await find_shopify_product_by_title(
+                shop=shop,
+                access_token=access_token,
+                title=product.title,
+            )
+            if shopify_id:
+                product.shopify_product_id = shopify_id
+                logger.info(f"✅ Shopify product linked by TITLE: {shopify_id}")
+
+        # ── Agar phir bhi nahi mila ──
         if not shopify_id:
             logger.warning(
-                f"Shopify product not found for ASIN={product.asin}"
+                f"❌ Shopify product not found for ASIN={product.asin} "
+                f"(tried: DB ID, SKU, Title)"
             )
+            product.shopify_status = "draft"
+            db.commit()
             return
 
         # ── Step 1: Status update ──
@@ -96,6 +182,15 @@ async def sync_shopify_product(
                 f"✅ Shopify status synced: ASIN={product.asin}, "
                 f"available={is_available}"
             )
+
+        # ✅ DB mein shopify_status save karo
+        product.shopify_status = "active" if is_available else "draft"
+        product.shopify_product_id = shopify_id
+        db.commit()
+        logger.info(
+            f"✅ shopify_status saved in DB: "
+            f"ASIN={product.asin}, status={product.shopify_status}"
+        )
 
         # ── Step 2: Inventory quantity update ──
         query = """
@@ -168,6 +263,7 @@ async def sync_shopify_price(product: Product, new_price: float, db: Session):
 
     shopify_id = product.shopify_product_id
 
+    # SKU se try karo agar DB mein nahi hai
     if not shopify_id:
         shopify_id = await get_shopify_product_by_sku(
             shop=shop,
@@ -177,12 +273,22 @@ async def sync_shopify_price(product: Product, new_price: float, db: Session):
         if shopify_id:
             product.shopify_product_id = shopify_id
 
+    # Title se try karo agar SKU se bhi nahi mila
+    if not shopify_id and product.title:
+        shopify_id = await find_shopify_product_by_title(
+            shop=shop,
+            access_token=access_token,
+            title=product.title,
+        )
+        if shopify_id:
+            product.shopify_product_id = shopify_id
+
     if not shopify_id:
         logger.warning(f"⚠️ Shopify product not found for ASIN={product.asin}")
         return False
 
     try:
-        # ✅ 1. Variant price update
+        # 1. Variant price update
         success = sync_update_shopify_price(
             shop_domain=shop,
             access_token=access_token,
@@ -195,7 +301,7 @@ async def sync_shopify_price(product: Product, new_price: float, db: Session):
                 f"new_price=${new_price}"
             )
 
-        # ✅ 2. Metafields update (amazon_price, availability, rating, etc.)
+        # 2. Metafields update
         metafields_input = []
 
         if product.amazon_price is not None:
@@ -268,7 +374,6 @@ async def update_all_prices():
     db: Session = SessionLocal()
 
     try:
-        # ✅ Sirf Active products uthao (Draft skip)
         products = db.query(Product).filter(
             Product.is_available == True  # noqa: E712
         ).all()
@@ -297,7 +402,7 @@ async def update_all_prices():
                 new_amazon_price = data["amazon_price"]
 
                 # ========================================
-                # ✅ STEP 1: Availability update karo
+                # STEP 1: Availability update karo
                 # ========================================
                 old_availability = product.is_available
                 new_availability = data.get("is_available", True)
@@ -307,7 +412,6 @@ async def update_all_prices():
                 product.stock_quantity = data.get("stock_quantity", 0)
                 product.last_synced_at = datetime.now(timezone.utc)
 
-                # ✅ Rating + reviews_count bhi update karo
                 if data.get("rating") is not None:
                     product.rating = data["rating"]
                 if data.get("reviews_count") is not None:
@@ -324,19 +428,18 @@ async def update_all_prices():
                         out_of_stock_count += 1
 
                 # ========================================
-                # ✅ STEP 2: Shopify sync (status + inventory)
+                # STEP 2: Shopify sync (HAR BAAR — taake status update rahe)
                 # ========================================
-                if availability_changed:
-                    await sync_shopify_product(
-                        product=product,
-                        is_available=new_availability,
-                        stock_quantity=product.stock_quantity,
-                        db=db,
-                    )
-                    shopify_synced_count += 1
+                await sync_shopify_product(
+                    product=product,
+                    is_available=new_availability,
+                    stock_quantity=product.stock_quantity,
+                    db=db,
+                )
+                shopify_synced_count += 1
 
                 # ========================================
-                # ✅ STEP 3: Price check
+                # STEP 3: Price check
                 # ========================================
                 if new_amazon_price is None:
                     logger.warning(f"[WARN] ASIN={product.asin} — price nahi mila")
@@ -348,18 +451,15 @@ async def update_all_prices():
                 old_amazon = product.amazon_price or 0
                 old_price = product.price
 
-                # ✅ HAMESHA price recalculate karo (chahe badha ya ghata)
                 new_final_price = calculate_final_price(
                     amazon_price=new_amazon_price,
                     markup=product.markup or 2.0,
                     markup_type=getattr(product, "markup_type", "fixed") or "fixed",
                 )
 
-                # ✅ HAMESHA amazon_price aur price update karo
                 product.amazon_price = new_amazon_price
                 product.price = new_final_price
 
-                # ✅ Optional fields update
                 if data.get("title") and data["title"] != product.title:
                     product.title = data["title"]
                 if data.get("image_url") and data["image_url"] != product.image_url:
@@ -383,8 +483,7 @@ async def update_all_prices():
                 price_recalculated_count += 1
 
                 # ========================================
-                # ✅ STEP 4: Shopify pe price + metafields update karo
-                # ✅ SIRF INCREASE PE (Shopify update)
+                # STEP 4: Shopify pe price + metafields update
                 # ========================================
                 if new_amazon_price > old_amazon:
                     await sync_shopify_price(
@@ -402,7 +501,6 @@ async def update_all_prices():
                     updated_count += 1
 
                 elif new_amazon_price < old_amazon:
-                    # ❌ Price decreased — Shopify update nahi, lekin DB update ho gaya
                     logger.info(
                         f"[PRICE DECREASED - DB UPDATED, SHOPIFY SKIPPED] "
                         f"ASIN={product.asin} "
@@ -413,7 +511,6 @@ async def update_all_prices():
                     updated_count += 1
 
                 else:
-                    # ⚪ Price same — DB update ho gaya (same value)
                     logger.info(
                         f"[NO CHANGE] ASIN={product.asin} "
                         f"(price: ${new_amazon_price}, "
