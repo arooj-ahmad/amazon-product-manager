@@ -1,6 +1,7 @@
 // ============================================
 // frontend/src/pages/MarkupSettings.jsx
 // Markup Settings Page — Country + Tax support
+// + ✅ NAYA: Store ID support (multi-store)
 // ============================================
 
 import { useState, useEffect } from 'react'
@@ -9,6 +10,27 @@ import { getCountries, updatePricing, bulkUpdatePricing } from '../api/pricing'
 const API_URL =
   (import.meta.env.VITE_API_URL || '').trim() ||
   'https://amazon-product-manager-production.up.railway.app'
+
+// ============================================
+// ✅ NAYA: Store ID nikaalo (Shopify iframe se)
+// ============================================
+function getStoreIdFromUrl() {
+  // Shopify iframe se "shop" parameter nikaalo
+  const params = new URLSearchParams(window.location.search)
+  const shop = params.get('shop') // "test-store-ispfraip.myshopify.com"
+  
+  if (!shop) return null
+  
+  // Store domain se store ID ka mapping (aap isay API se bhi le sakti hain)
+  // Filhal hardcoded mapping — behtar hai API se lein
+  const storeMap = {
+    'amazon-product-manager.myshopify.com': 13,
+    'stock-sync-test-store-hvmaovlm.myshopify.com': 14,
+    'test-store-ispfraip.myshopify.com': 15,
+  }
+  
+  return storeMap[shop] || null
+}
 
 // ============================================
 // Helpers
@@ -26,7 +48,6 @@ async function safeFetch(url, options = {}) {
   return { ok: res.ok, status: res.status, data }
 }
 
-// Currency formatter based on country
 function formatCurrency(amount, country) {
   if (!country) return `$${parseFloat(amount || 0).toFixed(2)}`
   try {
@@ -48,6 +69,7 @@ export default function MarkupSettings() {
   const [loading, setLoading] = useState(true)
   const [savingId, setSavingId] = useState(null)
   const [message, setMessage] = useState(null)
+  const [storeId, setStoreId] = useState(null)  // ✅ NAYA
 
   const [bulkData, setBulkData] = useState({
     country_id: '',
@@ -58,18 +80,25 @@ export default function MarkupSettings() {
   const [bulkLoading, setBulkLoading] = useState(false)
 
   useEffect(() => {
-    loadAll()
+    // ✅ Store ID nikaalo
+    const sid = getStoreIdFromUrl()
+    setStoreId(sid)
+    loadAll(sid)
   }, [])
 
-  const loadAll = async () => {
+  const loadAll = async (sid) => {
     setLoading(true)
     try {
-      // Countries load
       const countriesData = await getCountries()
       setCountries(countriesData || [])
 
-      // Products load
-      const productsRes = await safeFetch(`${API_URL}/api/markup/products`)
+      // ✅ NAYA: store_id ke saath products fetch karo
+      let url = `${API_URL}/api/markup/products`
+      if (sid) {
+        url += `?store_id=${sid}`
+      }
+      
+      const productsRes = await safeFetch(url)
       if (!productsRes.ok) throw new Error(productsRes.data.detail || 'Failed to load products')
       setProducts(productsRes.data || [])
     } catch (err) {
@@ -79,7 +108,6 @@ export default function MarkupSettings() {
     }
   }
 
-  // Bulk: country change → auto-fill tax
   const handleBulkCountryChange = (countryId) => {
     const country = countries.find((c) => c.id === parseInt(countryId))
     setBulkData({
@@ -89,7 +117,6 @@ export default function MarkupSettings() {
     })
   }
 
-  // Bulk update
   const handleBulkUpdate = async () => {
     if (!bulkData.country_id) {
       setMessage({ type: 'error', text: '❌ Please select a country' })
@@ -194,7 +221,6 @@ export default function MarkupSettings() {
           </button>
         </div>
 
-        {/* Message */}
         {message && (
           <div
             style={{
@@ -208,7 +234,6 @@ export default function MarkupSettings() {
           </div>
         )}
 
-        {/* Table */}
         {products.length === 0 ? (
           <p style={{ textAlign: 'center', padding: 40, color: '#666' }}>
             Koi product nahi mila.
@@ -251,7 +276,7 @@ export default function MarkupSettings() {
 }
 
 // ============================================
-// Product Row
+// Product Row (Same as before)
 // ============================================
 function ProductRow({ product, countries, saving, onSaveStart, onSaveEnd, onMessage }) {
   const [countryId, setCountryId] = useState('')
@@ -261,7 +286,6 @@ function ProductRow({ product, countries, saving, onSaveStart, onSaveEnd, onMess
 
   const selectedCountry = countries.find((c) => c.id === parseInt(countryId))
 
-  // Live calculate
   const calc = (() => {
     const amazon = parseFloat(product.amazon_price) || 0
     const m = parseFloat(markup) || 0
@@ -283,14 +307,12 @@ function ProductRow({ product, countries, saving, onSaveStart, onSaveEnd, onMess
     }
   })()
 
-  // Country change → auto-fill tax rate
   const handleCountryChange = (val) => {
     setCountryId(val)
     const country = countries.find((c) => c.id === parseInt(val))
     if (country) setTaxRate(String(country.default_tax_rate))
   }
 
-  // Save
   const handleSave = async () => {
     if (!countryId) {
       onMessage({ type: 'error', text: '❌ Country select karein' })
