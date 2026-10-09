@@ -5,8 +5,9 @@
 # + Out of Stock tracking
 # + Real-time availability check (Storefront API)
 # + Shopify se products sync karo
-# + ✅ NAYA: Shopify price ko amazon_price mein save karo
-# + ✅ NAYA: SKU na hone par bhi product add karo
+# + Shopify price ko amazon_price mein save karo
+# + SKU na hone par bhi product add karo
+# + ✅ NAYA: Markup apply karne par Shopify par bhi update karo
 # ============================================
 
 import logging
@@ -37,6 +38,7 @@ from app.services.brightdata import (
 from app.services.shopify import (
     check_product_availability,
     shopify_graphql,
+    sync_update_shopify_price,   # ✅ NAYA IMPORT
 )
 
 
@@ -386,10 +388,7 @@ def list_products_for_markup(
     store_id: int = None,
     db: Session = Depends(get_db),
 ):
-    """
-    Markup Settings page ke liye SIRF woh products
-    jo Shopify par Active hain.
-    """
+    """Markup Settings page ke liye SIRF woh products jo Shopify par Active hain."""
     query = db.query(Product).filter(
         Product.shopify_status == "active",
     )
@@ -402,7 +401,7 @@ def list_products_for_markup(
 
 
 @router.patch("/markup/{product_id}", response_model=ProductResponse)
-def update_product_markup(
+async def update_product_markup(   # ✅ async banao
     product_id: int,
     payload: MarkupUpdate,
     db: Session = Depends(get_db),
@@ -429,11 +428,25 @@ def update_product_markup(
     db.commit()
     db.refresh(product)
 
+    # ✅ NAYA: Shopify par price update karo
+    store = db.query(ShopifyStore).first()
+    if store and store.access_token and product.shopify_product_id:
+        try:
+            await sync_update_shopify_price(
+                shop=store.shop_domain,
+                access_token=store.access_token,
+                shopify_product_id=product.shopify_product_id,
+                new_price=new_price,
+            )
+            logger.info(f"✅ Shopify price updated: {product.asin} → ${new_price}")
+        except Exception as e:
+            logger.error(f"❌ Shopify update failed: {e}")
+
     return product
 
 
 @router.post("/markup/bulk-update")
-def bulk_update_markup(
+async def bulk_update_markup(   # ✅ async banao
     payload: MarkupUpdate,
     store_id: int = None,
     db: Session = Depends(get_db),
@@ -447,27 +460,50 @@ def bulk_update_markup(
 
     products = query.all()
     updated = 0
+    shopify_updated = 0
+
+    # Store uthao
+    if store_id:
+        store = db.query(ShopifyStore).filter(ShopifyStore.id == store_id).first()
+    else:
+        store = db.query(ShopifyStore).first()
 
     for product in products:
-        product.markup = payload.markup
-        product.markup_type = payload.markup_type
-        product.price = calculate_final_price(
+        new_price = calculate_final_price(
             amazon_price=product.amazon_price,
             markup=payload.markup,
             markup_type=payload.markup_type,
         )
+        product.markup = payload.markup
+        product.markup_type = payload.markup_type
+        product.price = new_price
         product.is_manual_override = True
         updated += 1
 
+        # ✅ NAYA: Shopify par bhi update karo
+        if store and store.access_token and product.shopify_product_id:
+            try:
+                await sync_update_shopify_price(
+                    shop=store.shop_domain,
+                    access_token=store.access_token,
+                    shopify_product_id=product.shopify_product_id,
+                    new_price=new_price,
+                )
+                shopify_updated += 1
+            except Exception as e:
+                logger.error(f"❌ Shopify update failed for {product.asin}: {e}")
+
     db.commit()
 
-    return {"success": True, "updated": updated}
+    return {
+        "success": True,
+        "updated": updated,
+        "shopify_updated": shopify_updated,
+    }
 
 
 # ============================================
 # SHOPIFY SE PRODUCTS SYNC KARO
-# ✅ NAYA: Shopify price ko amazon_price mein save karo
-# ✅ NAYA: SKU na hone par bhi product add karo
 # ============================================
 
 @router.post("/markup/sync-from-shopify")
@@ -477,11 +513,7 @@ async def sync_products_from_shopify(
 ):
     """
     Shopify se saare Active products fetch karo aur database mein sync karo.
-    Jo products database mein nahi hain, woh add ho jayenge.
-    Shopify price ko amazon_price mein save karo (taake markup us par lage).
-    SKU na hone par bhi product add hoga (Shopify ID use hoga).
     """
-    # Store uthao
     if store_id:
         store = db.query(ShopifyStore).filter(ShopifyStore.id == store_id).first()
     else:
@@ -496,7 +528,6 @@ async def sync_products_from_shopify(
     shop = store.shop_domain
     access_token = store.access_token
 
-    # Shopify se saare products fetch karo
     query = """
     query getProducts($cursor: String) {
       products(first: 50, after: $cursor, query: "status:active") {
@@ -567,17 +598,15 @@ async def sync_products_from_shopify(
 
     logger.info(f"Shopify se {len(all_products)} active products mile")
 
-    # Pehle saare products ka status 'draft' kar do
     existing_products = db.query(Product).filter(
         Product.shopify_store_id == store.id
     ).all()
-    
+
     for p in existing_products:
         p.shopify_status = "draft"
-    
+
     db.commit()
 
-    # Ab sync karo
     added = 0
     updated = 0
     skipped = 0
@@ -588,23 +617,18 @@ async def sync_products_from_shopify(
         title = sp.get("title")
         shopify_price = float(sp["price"]) if sp.get("price") else None
 
-        # SKU na ho toh Shopify ID use karo
         if not sku:
             sku = shopify_id.replace("gid://shopify/Product/", "SHOPIFY_")
-            logger.info(f"SKU khali hai, Shopify ID use kar rahe hain: {sku}")
 
-        # SKU/Shopify ID se database mein dhoondo
         product = db.query(Product).filter(Product.asin == sku).first()
 
         if product:
-            # Update karo
             product.shopify_product_id = shopify_id
             product.shopify_handle = sp.get("handle")
             product.shopify_status = sp.get("status", "active")
             product.shopify_store_id = store.id
             if not product.title:
                 product.title = title
-            # ✅ NAYA: Shopify price ko amazon_price mein update karo
             if shopify_price:
                 product.amazon_price = shopify_price
                 product.price = calculate_final_price(
@@ -614,7 +638,6 @@ async def sync_products_from_shopify(
                 )
             updated += 1
         else:
-            # Naya product add karo (Shopify se)
             final_price = calculate_final_price(
                 amazon_price=shopify_price,
                 markup=2.0,
@@ -627,7 +650,6 @@ async def sync_products_from_shopify(
                 shopify_handle=sp.get("handle"),
                 shopify_status=sp.get("status", "active"),
                 shopify_store_id=store.id,
-                # ✅ NAYA: Shopify price ko amazon_price mein save karo
                 amazon_price=shopify_price,
                 price=final_price,
                 is_available=True,
