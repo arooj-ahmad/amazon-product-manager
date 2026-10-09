@@ -2,8 +2,9 @@
 # app/api/routes/products.py
 # Product CRUD + Variation grouping + Slug
 # + Markup Settings endpoints
-# + Out of Stock tracking (NEW)
+# + Out of Stock tracking
 # + Real-time availability check (Storefront API)
+# + ✅ NAYA: Markup Settings par sirf Active products
 # ============================================
 
 import logging
@@ -32,7 +33,7 @@ from app.services.brightdata import (
     fetch_product_from_brightdata,
 )
 
-# ✅ NAYA — Storefront availability check import
+# ✅ Storefront availability check import
 from app.services.shopify import check_product_availability
 
 
@@ -99,7 +100,7 @@ def get_all_products(db: Session = Depends(get_db)):
 
 
 # ============================================
-# ✅ NAYA — AVAILABILITY CHECK (Storefront API)
+# AVAILABILITY CHECK (Storefront API)
 # ⚠️ IMPORTANT: Ye {product_id} route se PEHLE hona chahiye
 # ============================================
 @router.get("/products/{product_id}/availability")
@@ -321,7 +322,6 @@ async def admin_fetch_product(
         markup=user_markup,
         markup_type=user_markup_type,
         is_manual_override=False,
-        # NAYA — Out of Stock tracking
         availability=data.get("availability", "In Stock"),
         is_available=data.get("is_available", True),
         stock_quantity=data.get("stock_quantity", 0),
@@ -394,7 +394,8 @@ def admin_delete_product(
 
 
 # ============================================
-# 🆕 MARKUP SETTINGS ROUTES (Settings Page ke liye)
+# MARKUP SETTINGS ROUTES (Settings Page ke liye)
+# ✅ NAYA: Sirf Active + Available products
 # ============================================
 
 @router.get("/markup/products", response_model=list[ProductResponse])
@@ -402,10 +403,20 @@ def list_products_for_markup(
     db: Session = Depends(get_db),
 ):
     """
-    Markup Settings page ke liye saare products.
-    Public rakha hai taake Shopify iframe se easily access ho.
+    Markup Settings page ke liye SIRF woh products
+    jo Shopify par Active hain aur Amazon par available hain.
     """
-    products = db.query(Product).order_by(Product.created_at.desc()).all()
+    products = (
+        db.query(Product)
+        .filter(
+            Product.shopify_status == "active",     # ✅ Shopify par Active
+            Product.is_available == True,           # ✅ Amazon par available
+            Product.amazon_price != None,           # ✅ Price maujood
+            Product.amazon_price > 0,               # ✅ Price 0 nahi
+        )
+        .order_by(Product.created_at.desc())
+        .all()
+    )
     return products
 
 
@@ -427,7 +438,6 @@ def update_product_markup(
             detail="Product not found",
         )
 
-    # Naya price calculate karo
     new_price = calculate_final_price(
         amazon_price=product.amazon_price,
         markup=payload.markup,
@@ -450,8 +460,21 @@ def bulk_update_markup(
     payload: MarkupUpdate,
     db: Session = Depends(get_db),
 ):
-    """Saare products ka markup ek saath update karo."""
-    products = db.query(Product).all()
+    """
+    Saare ACTIVE products ka markup ek saath update karo.
+    ✅ NAYA: Sirf Active + Available products.
+    """
+    products = (
+        db.query(Product)
+        .filter(
+            Product.shopify_status == "active",
+            Product.is_available == True,  # noqa: E712
+            Product.amazon_price != None,  # noqa: E711
+            Product.amazon_price > 0,
+        )
+        .all()
+    )
+
     updated = 0
 
     for product in products:
