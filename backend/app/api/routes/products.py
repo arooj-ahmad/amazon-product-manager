@@ -4,7 +4,7 @@
 # + Markup Settings endpoints
 # + Out of Stock tracking
 # + Real-time availability check (Storefront API)
-# + ✅ NAYA: Markup Settings par sirf Active products
+# + ✅ NAYA: Shopify se products sync karo
 # ============================================
 
 import logging
@@ -16,7 +16,7 @@ from sqlalchemy.orm import Session
 
 from app.api.routes.auth import get_current_admin
 from app.database import get_db
-from app.models import Admin, Product
+from app.models import Admin, Product, ShopifyStore
 from app.schemas import (
     MarkupUpdate,
     ProductCreate,
@@ -32,9 +32,10 @@ from app.services.brightdata import (
     calculate_final_price,
     fetch_product_from_brightdata,
 )
-
-# ✅ Storefront availability check import
-from app.services.shopify import check_product_availability
+from app.services.shopify import (
+    check_product_availability,
+    shopify_graphql,
+)
 
 
 logger = logging.getLogger(__name__)
@@ -101,23 +102,16 @@ def get_all_products(db: Session = Depends(get_db)):
 
 # ============================================
 # AVAILABILITY CHECK (Storefront API)
-# ⚠️ IMPORTANT: Ye {product_id} route se PEHLE hona chahiye
 # ============================================
 @router.get("/products/{product_id}/availability")
 async def get_product_availability(
     product_id: int,
     db: Session = Depends(get_db),
 ):
-    """
-    Product ki real-time availability check karta hai.
-    Pehle Shopify Storefront API try karta hai,
-    fail hone par Supabase (local DB) fallback.
-    """
     product = db.query(Product).filter(Product.id == product_id).first()
     if not product:
         raise HTTPException(status_code=404, detail="Product not found")
 
-    # Agar Shopify ID nahi hai → Supabase fallback
     if not product.shopify_product_id:
         return {
             "available": product.is_available,
@@ -125,17 +119,11 @@ async def get_product_availability(
             "source": "supabase",
         }
 
-    # Storefront API se check
     availability = await check_product_availability(
         shopify_product_id=product.shopify_product_id,
     )
 
-    # Agar API fail ho jaye → Supabase fallback
     if availability.get("source") == "none":
-        logger.warning(
-            f"Storefront API failed for product {product_id}, "
-            f"using Supabase fallback"
-        )
         return {
             "available": product.is_available,
             "quantity": product.stock_quantity or 0,
@@ -151,7 +139,6 @@ async def get_product_availability(
 def get_product_by_slug(slug: str, db: Session = Depends(get_db)):
     import re
 
-    # METHOD 1: Full phrase
     search_phrase = slug.replace('-', ' ').lower()
     product = (
         db.query(Product)
@@ -162,7 +149,6 @@ def get_product_by_slug(slug: str, db: Session = Depends(get_db)):
     if product:
         return product
 
-    # METHOD 2: Word-by-word
     parts = [p.strip() for p in slug.lower().split('-') if p.strip()]
     parts = [re.escape(p) for p in parts if len(p) >= 2]
 
@@ -177,7 +163,6 @@ def get_product_by_slug(slug: str, db: Session = Depends(get_db)):
         if product:
             return product
 
-    # METHOD 3: First 6 words
     if len(parts) > 6:
         short_pattern = '%' + '%'.join(parts[:6]) + '%'
         product = (
@@ -189,7 +174,6 @@ def get_product_by_slug(slug: str, db: Session = Depends(get_db)):
         if product:
             return product
 
-    # METHOD 4: First 3 words
     if len(parts) > 3:
         loose_pattern = '%' + '%'.join(parts[:3]) + '%'
         product = (
@@ -275,7 +259,6 @@ async def admin_fetch_product(
     db: Session = Depends(get_db),
     current_admin: Admin = Depends(get_current_admin),
 ):
-    """Admin Amazon URL submit karta hai + apna markup bhej sakta hai."""
     amazon_url = payload.amazon_url
 
     try:
@@ -295,7 +278,6 @@ async def admin_fetch_product(
             detail=f"Product already exists (ASIN: {asin})",
         )
 
-    # Admin ka markup use karo
     user_markup = payload.markup if payload.markup is not None else 2.0
     user_markup_type = payload.markup_type or "fixed"
 
@@ -394,29 +376,29 @@ def admin_delete_product(
 
 
 # ============================================
-# MARKUP SETTINGS ROUTES (Settings Page ke liye)
-# ✅ NAYA: Sirf Active + Available products
+# MARKUP SETTINGS ROUTES
 # ============================================
 
 @router.get("/markup/products", response_model=list[ProductResponse])
 def list_products_for_markup(
+    store_id: int = None,
     db: Session = Depends(get_db),
 ):
     """
     Markup Settings page ke liye SIRF woh products
     jo Shopify par Active hain aur Amazon par available hain.
     """
-    products = (
-        db.query(Product)
-        .filter(
-            Product.shopify_status == "active",     # ✅ Shopify par Active
-            Product.is_available == True,           # ✅ Amazon par available
-            Product.amazon_price != None,           # ✅ Price maujood
-            Product.amazon_price > 0,               # ✅ Price 0 nahi
-        )
-        .order_by(Product.created_at.desc())
-        .all()
+    query = db.query(Product).filter(
+        Product.shopify_status == "active",
+        Product.is_available == True,  # noqa: E712
+        Product.amazon_price != None,  # noqa: E711
+        Product.amazon_price > 0,
     )
+
+    if store_id:
+        query = query.filter(Product.shopify_store_id == store_id)
+
+    products = query.order_by(Product.created_at.desc()).all()
     return products
 
 
@@ -426,10 +408,6 @@ def update_product_markup(
     payload: MarkupUpdate,
     db: Session = Depends(get_db),
 ):
-    """
-    Ek product ka markup update karo.
-    Price automatically recalculate hoti hai.
-    """
     product = db.query(Product).filter(Product.id == product_id).first()
 
     if not product:
@@ -458,23 +436,20 @@ def update_product_markup(
 @router.post("/markup/bulk-update")
 def bulk_update_markup(
     payload: MarkupUpdate,
+    store_id: int = None,
     db: Session = Depends(get_db),
 ):
-    """
-    Saare ACTIVE products ka markup ek saath update karo.
-    ✅ NAYA: Sirf Active + Available products.
-    """
-    products = (
-        db.query(Product)
-        .filter(
-            Product.shopify_status == "active",
-            Product.is_available == True,  # noqa: E712
-            Product.amazon_price != None,  # noqa: E711
-            Product.amazon_price > 0,
-        )
-        .all()
+    query = db.query(Product).filter(
+        Product.shopify_status == "active",
+        Product.is_available == True,  # noqa: E712
+        Product.amazon_price != None,  # noqa: E711
+        Product.amazon_price > 0,
     )
 
+    if store_id:
+        query = query.filter(Product.shopify_store_id == store_id)
+
+    products = query.all()
     updated = 0
 
     for product in products:
@@ -491,3 +466,153 @@ def bulk_update_markup(
     db.commit()
 
     return {"success": True, "updated": updated}
+
+
+# ============================================
+# ✅ NAYA: SHOPIFY SE PRODUCTS SYNC KARO
+# ============================================
+
+@router.post("/markup/sync-from-shopify")
+async def sync_products_from_shopify(
+    store_id: int = None,
+    db: Session = Depends(get_db),
+):
+    """
+    Shopify se saare Active products fetch karo aur database mein sync karo.
+    Jo products database mein nahi hain, woh add ho jayenge.
+    """
+    # Store uthao
+    if store_id:
+        store = db.query(ShopifyStore).filter(ShopifyStore.id == store_id).first()
+    else:
+        store = db.query(ShopifyStore).first()
+
+    if not store or not store.access_token:
+        raise HTTPException(
+            status_code=400,
+            detail="Shopify store not configured",
+        )
+
+    shop = store.shop_domain
+    access_token = store.access_token
+
+    # Shopify se saare products fetch karo
+    query = """
+    query getProducts($cursor: String) {
+      products(first: 50, after: $cursor, query: "status:active") {
+        pageInfo {
+          hasNextPage
+          endCursor
+        }
+        edges {
+          node {
+            id
+            title
+            handle
+            status
+            variants(first: 1) {
+              edges {
+                node {
+                  sku
+                  price
+                  inventoryQuantity
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+    """
+
+    all_products = []
+    cursor = None
+    has_next = True
+
+    while has_next:
+        result = await shopify_graphql(
+            shop, access_token, query, {"cursor": cursor}
+        )
+
+        products_data = result.get("data", {}).get("products", {})
+        edges = products_data.get("edges", [])
+        page_info = products_data.get("pageInfo", {})
+
+        for edge in edges:
+            node = edge["node"]
+            variants = node.get("variants", {}).get("edges", [])
+
+            sku = None
+            price = None
+            inventory = 0
+
+            if variants:
+                variant = variants[0]["node"]
+                sku = variant.get("sku")
+                price = variant.get("price")
+                inventory = variant.get("inventoryQuantity", 0)
+
+            all_products.append({
+                "shopify_id": node["id"],
+                "title": node["title"],
+                "handle": node.get("handle"),
+                "status": node.get("status", "").lower(),
+                "sku": sku,
+                "price": price,
+                "inventory": inventory,
+            })
+
+        has_next = page_info.get("hasNextPage", False)
+        cursor = page_info.get("endCursor")
+
+    logger.info(f"Shopify se {len(all_products)} active products mile")
+
+    # Database mein sync karo
+    added = 0
+    updated = 0
+    skipped = 0
+
+    for sp in all_products:
+        sku = sp.get("sku")
+        shopify_id = sp.get("shopify_id")
+
+        if not sku:
+            skipped += 1
+            continue
+
+        # SKU se database mein dhoondo
+        product = db.query(Product).filter(Product.asin == sku).first()
+
+        if product:
+            # Update karo
+            product.shopify_product_id = shopify_id
+            product.shopify_handle = sp.get("handle")
+            product.shopify_status = sp.get("status", "active")
+            product.shopify_store_id = store.id
+            updated += 1
+        else:
+            # Naya product add karo (Shopify se)
+            new_product = Product(
+                asin=sku,
+                title=sp.get("title"),
+                shopify_product_id=shopify_id,
+                shopify_handle=sp.get("handle"),
+                shopify_status=sp.get("status", "active"),
+                shopify_store_id=store.id,
+                price=float(sp["price"]) if sp.get("price") else None,
+                amazon_price=None,
+                is_available=True,
+                stock_quantity=sp.get("inventory", 0),
+            )
+            db.add(new_product)
+            added += 1
+
+    db.commit()
+
+    return {
+        "success": True,
+        "total_shopify_products": len(all_products),
+        "added": added,
+        "updated": updated,
+        "skipped": skipped,
+    }
