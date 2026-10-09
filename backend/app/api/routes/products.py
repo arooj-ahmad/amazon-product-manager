@@ -5,7 +5,7 @@
 # + Out of Stock tracking
 # + Real-time availability check (Storefront API)
 # + Shopify se products sync karo
-# + ✅ NAYA: Markup Settings par saare Active products (Amazon price optional)
+# + ✅ NAYA: SKU na hone par bhi product add karo
 # ============================================
 
 import logging
@@ -378,7 +378,6 @@ def admin_delete_product(
 
 # ============================================
 # MARKUP SETTINGS ROUTES
-# ✅ NAYA: Saare Active products (Amazon price optional)
 # ============================================
 
 @router.get("/markup/products", response_model=list[ProductResponse])
@@ -395,7 +394,6 @@ def list_products_for_markup(
     """
     query = db.query(Product).filter(
         Product.shopify_status == "active",     # ✅ Shopify par Active
-        Product.is_available == True,           # ✅ Available
     )
 
     if store_id:
@@ -444,7 +442,6 @@ def bulk_update_markup(
 ):
     query = db.query(Product).filter(
         Product.shopify_status == "active",
-        Product.is_available == True,  # noqa: E712
     )
 
     if store_id:
@@ -470,7 +467,8 @@ def bulk_update_markup(
 
 
 # ============================================
-# ✅ SHOPIFY SE PRODUCTS SYNC KARO
+# SHOPIFY SE PRODUCTS SYNC KARO
+# ✅ NAYA: SKU na hone par bhi product add karo
 # ============================================
 
 @router.post("/markup/sync-from-shopify")
@@ -481,6 +479,7 @@ async def sync_products_from_shopify(
     """
     Shopify se saare Active products fetch karo aur database mein sync karo.
     Jo products database mein nahi hain, woh add ho jayenge.
+    SKU na hone par bhi product add hoga (Shopify ID use hoga).
     """
     # Store uthao
     if store_id:
@@ -568,7 +567,17 @@ async def sync_products_from_shopify(
 
     logger.info(f"Shopify se {len(all_products)} active products mile")
 
-    # Database mein sync karo
+    # ✅ NAYA: Pehle saare products ka status 'draft' kar do
+    existing_products = db.query(Product).filter(
+        Product.shopify_store_id == store.id
+    ).all()
+    
+    for p in existing_products:
+        p.shopify_status = "draft"
+    
+    db.commit()
+
+    # Ab sync karo
     added = 0
     updated = 0
     skipped = 0
@@ -576,12 +585,15 @@ async def sync_products_from_shopify(
     for sp in all_products:
         sku = sp.get("sku")
         shopify_id = sp.get("shopify_id")
+        title = sp.get("title")
 
+        # ✅ NAYA: SKU na ho toh Shopify ID use karo
         if not sku:
-            skipped += 1
-            continue
+            # Shopify ID se unique ASIN banao
+            sku = shopify_id.replace("gid://shopify/Product/", "SHOPIFY_")
+            logger.info(f"SKU khali hai, Shopify ID use kar rahe hain: {sku}")
 
-        # SKU se database mein dhoondo
+        # SKU/Shopify ID se database mein dhoondo
         product = db.query(Product).filter(Product.asin == sku).first()
 
         if product:
@@ -590,12 +602,14 @@ async def sync_products_from_shopify(
             product.shopify_handle = sp.get("handle")
             product.shopify_status = sp.get("status", "active")
             product.shopify_store_id = store.id
+            if not product.title:
+                product.title = title
             updated += 1
         else:
             # Naya product add karo (Shopify se)
             new_product = Product(
                 asin=sku,
-                title=sp.get("title"),
+                title=title,
                 shopify_product_id=shopify_id,
                 shopify_handle=sp.get("handle"),
                 shopify_status=sp.get("status", "active"),
