@@ -3,7 +3,8 @@
 # Product model — Amazon product data
 # + Out of Stock tracking
 # + Variant attributes (Shopify options ke liye)
-# + ✅ NAYA: Shopify status tracking (active/draft)
+# + Shopify status tracking (active/draft)
+# + ✅ NAYA: shopify_store_id (multi-store support)
 # ============================================
 
 from sqlalchemy import (
@@ -13,6 +14,7 @@ from sqlalchemy import (
     Column,
     DateTime,
     Float,
+    ForeignKey,
     Integer,
     String,
     Text,
@@ -62,12 +64,23 @@ class Product(Base):
     variant_attributes = Column(JSON, default=list)
 
     # ----------------------------------------
+    # ✅ NAYA: Shopify Store Link (multi-store support)
+    # Kis store ki product hai
+    # ----------------------------------------
+    shopify_store_id = Column(
+        BigInteger,
+        ForeignKey("shopify_stores.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+
+    # ----------------------------------------
     # Shopify Product ID (for updates)
     # ----------------------------------------
     shopify_product_id = Column(String(255), nullable=True)
     shopify_handle = Column(String(255), nullable=True)
 
-    # ✅ NAYA: Shopify status track karne ke liye
+    # ✅ Shopify status track karne ke liye
     # Values: "active" ya "draft"
     shopify_status = Column(String(20), default="draft", nullable=True)
 
