@@ -2,6 +2,7 @@
 // frontend/src/pages/MarkupSettings.jsx
 // Markup Settings Page — Country + Tax support
 // + ✅ NAYA: Store ID support (multi-store)
+// + ✅ NAYA: Bulk update par store_id bhejo
 // ============================================
 
 import { useState, useEffect } from 'react'
@@ -12,23 +13,20 @@ const API_URL =
   'https://amazon-product-manager-production.up.railway.app'
 
 // ============================================
-// ✅ NAYA: Store ID nikaalo (Shopify iframe se)
+// Store ID nikaalo (Shopify iframe se)
 // ============================================
 function getStoreIdFromUrl() {
-  // Shopify iframe se "shop" parameter nikaalo
   const params = new URLSearchParams(window.location.search)
-  const shop = params.get('shop') // "test-store-ispfraip.myshopify.com"
-  
+  const shop = params.get('shop')
+
   if (!shop) return null
-  
-  // Store domain se store ID ka mapping (aap isay API se bhi le sakti hain)
-  // Filhal hardcoded mapping — behtar hai API se lein
+
   const storeMap = {
     'amazon-product-manager.myshopify.com': 13,
     'stock-sync-test-store-hvmaovlm.myshopify.com': 14,
     'test-store-ispfraip.myshopify.com': 15,
   }
-  
+
   return storeMap[shop] || null
 }
 
@@ -80,7 +78,6 @@ export default function MarkupSettings() {
   const [bulkLoading, setBulkLoading] = useState(false)
 
   useEffect(() => {
-    // ✅ Store ID nikaalo
     const sid = getStoreIdFromUrl()
     setStoreId(sid)
     loadAll(sid)
@@ -92,12 +89,11 @@ export default function MarkupSettings() {
       const countriesData = await getCountries()
       setCountries(countriesData || [])
 
-      // ✅ NAYA: store_id ke saath products fetch karo
       let url = `${API_URL}/api/markup/products`
       if (sid) {
         url += `?store_id=${sid}`
       }
-      
+
       const productsRes = await safeFetch(url)
       if (!productsRes.ok) throw new Error(productsRes.data.detail || 'Failed to load products')
       setProducts(productsRes.data || [])
@@ -129,12 +125,15 @@ export default function MarkupSettings() {
     setMessage(null)
     try {
       const res = await bulkUpdatePricing({
-        country_id: parseInt(bulkData.country_id),
+        store_id: storeId,           // ✅ NAYA
         markup_type: bulkData.markup_type,
         markup_value: parseFloat(bulkData.markup_value),
         tax_rate: parseFloat(bulkData.tax_rate),
       })
-      setMessage({ type: 'success', text: `✅ ${res.updated} products update ho gaye!` })
+      setMessage({
+        type: 'success',
+        text: `✅ ${res.updated} products update ho gaye! (Shopify: ${res.shopify_updated || 0})`,
+      })
     } catch (err) {
       setMessage({ type: 'error', text: `❌ ${err.message}` })
     } finally {
@@ -260,6 +259,7 @@ export default function MarkupSettings() {
                     key={p.id}
                     product={p}
                     countries={countries}
+                    storeId={storeId}            // ✅ NAYA
                     saving={savingId === p.id}
                     onSaveStart={() => setSavingId(p.id)}
                     onSaveEnd={() => setSavingId(null)}
@@ -276,9 +276,9 @@ export default function MarkupSettings() {
 }
 
 // ============================================
-// Product Row (Same as before)
+// Product Row
 // ============================================
-function ProductRow({ product, countries, saving, onSaveStart, onSaveEnd, onMessage }) {
+function ProductRow({ product, countries, storeId, saving, onSaveStart, onSaveEnd, onMessage }) {
   const [countryId, setCountryId] = useState('')
   const [markup, setMarkup] = useState(String(product.markup ?? 2))
   const [type, setType] = useState(product.markup_type || 'fixed')
@@ -324,12 +324,12 @@ function ProductRow({ product, countries, saving, onSaveStart, onSaveEnd, onMess
     try {
       await updatePricing({
         product_id: product.id,
-        country_id: parseInt(countryId),
+        store_id: storeId,           // ✅ NAYA
         markup_type: type,
         markup_value: parseFloat(markup),
         tax_rate: parseFloat(taxRate),
       })
-      onMessage({ type: 'success', text: '✅ Pricing save ho gayi!' })
+      onMessage({ type: 'success', text: '✅ Pricing save ho gayi! (Shopify bhi update)' })
     } catch (err) {
       onMessage({ type: 'error', text: `❌ ${err.message}` })
     } finally {
