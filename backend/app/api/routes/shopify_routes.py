@@ -4,7 +4,8 @@
 # + Availability + Inventory tracking
 # + ASIN + Parent ASIN + Rating + Reviews + Amazon Price + Availability
 # + Variations support (parent detection + smart variant attributes)
-# + ✅ NAYA: /store-id endpoint (shop domain se store ID)
+# + /store-id endpoint (shop domain se store ID)
+# + ✅ NAYA: shopify_store_id aur shopify_status set karo
 # ============================================
 
 import logging
@@ -50,10 +51,6 @@ router = APIRouter(prefix="/api/shopify", tags=["Shopify"])
 # ✅ HELPER: VARIATION TITLE NIKALO
 # ============================================
 def extract_variation_info(data: dict) -> tuple:
-    """
-    Bright Data ke response se variation title aur option name nikaalo.
-    Returns: (option_name, variant_title)
-    """
     attrs = data.get("variant_attributes") or []
     if attrs:
         for attr in attrs:
@@ -203,18 +200,13 @@ def list_installed_stores(db: Session = Depends(get_db)):
 
 
 # ============================================
-# ✅ NAYA: SHOP DOMAIN SE STORE ID NIKALO
+# ✅ SHOP DOMAIN SE STORE ID NIKALO
 # ============================================
 @router.get("/store-id")
 def get_store_id_by_domain(
     shop: str = Query(..., description="Shopify store domain"),
     db: Session = Depends(get_db),
 ):
-    """
-    Shop domain se store ID nikaalo.
-    Example: /api/shopify/store-id?shop=test-store-ispfraip.myshopify.com
-    Returns: {"store_id": 15}
-    """
     if not shop:
         raise HTTPException(status_code=400, detail="shop parameter required")
 
@@ -260,6 +252,10 @@ async def push_product_to_shopify(
             detail=f"Store {shop_domain} not connected",
         )
 
+    # ✅ NAYA: Store ID aur status set karo
+    product.shopify_store_id = store.id
+    product.shopify_status = "active"
+
     existing_parent = None
     if product.parent_asin:
         existing_parent = (
@@ -282,8 +278,6 @@ async def push_product_to_shopify(
             "variant_attributes": product.variant_attributes or [],
             "specifications": product.specifications or {},
         })
-
-        logger.info(f"   Variant: {option_name} = {variant_title}")
 
         result = await add_variant_to_existing_product(
             shop=store.shop_domain,
@@ -385,6 +379,7 @@ async def push_product_to_shopify(
 
 # ============================================
 # ADD PRODUCT FROM SHOPIFY APP (Iframe Se)
+# ✅ NAYA: shopify_store_id aur shopify_status set karo
 # ============================================
 @router.post("/app/add-product")
 async def add_product_from_shopify_app(
@@ -504,6 +499,7 @@ async def add_product_from_shopify_app(
         markup_type=user_markup_type,
     )
 
+    # ✅ NAYA: Store ID aur status set karo
     new_product = Product(
         asin=asin,
         parent_asin=parent_asin,
@@ -525,13 +521,16 @@ async def add_product_from_shopify_app(
         markup_type=user_markup_type,
         is_manual_override=False,
         variant_attributes=data.get("variant_attributes", []),
+        # ✅ NAYA: Store ID aur status set karo
+        shopify_store_id=store.id,
+        shopify_status="active",
     )
 
     db.add(new_product)
     db.commit()
     db.refresh(new_product)
 
-    logger.info(f"✅ Product saved to Supabase: {asin}")
+    logger.info(f"✅ Product saved to Supabase: {asin} (store_id={store.id})")
 
     shopify_pushed = False
     shopify_product_id = None
@@ -556,7 +555,6 @@ async def add_product_from_shopify_app(
                     f"{existing_parent.shopify_product_id}"
                 )
                 option_name, variant_title = extract_variation_info(data)
-                logger.info(f"   Variant: {option_name} = {variant_title}")
 
                 _result = await add_variant_to_existing_product(
                     shop=shop_domain,
@@ -578,12 +576,10 @@ async def add_product_from_shopify_app(
                     new_product.shopify_handle = existing_parent.shopify_handle
                     db.commit()
                     _pid = existing_parent.shopify_product_id
-                    logger.info(f"✅ Variant added to parent: {variant_title}")
 
             else:
                 logger.info("🆕 Creating new product")
                 option_name, variant_title = extract_variation_info(data)
-                logger.info(f"   Main variant: {option_name} = {variant_title}")
 
                 _result = await create_shopify_product(
                     shop=shop_domain,
@@ -629,11 +625,6 @@ async def add_product_from_shopify_app(
                             .get("handle")
                         )
                         db.commit()
-                    logger.info(f"✅ Product pushed to Shopify: {asin}")
-                else:
-                    logger.warning(
-                        f"⚠️ Shopify push warnings: {_result.get('errors')}"
-                    )
 
             return _pushed, _pid, _vadd, _result
 
@@ -649,10 +640,6 @@ async def add_product_from_shopify_app(
             if refreshed:
                 shopify_pushed, shopify_product_id, variant_added, _ = (
                     await do_push()
-                )
-            else:
-                logger.error(
-                    f"❌ Token refresh failed for {shop_domain}, cannot retry push"
                 )
 
     except Exception as e:
@@ -680,6 +667,7 @@ async def add_product_from_shopify_app(
         "shopify_product_id": shopify_product_id,
         "variant_added": variant_added,
         "shop_domain": shop_domain,
+        "store_id": store.id,   # ✅ NAYA
     }
 
 

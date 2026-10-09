@@ -1,52 +1,47 @@
 // ============================================
 // frontend/src/pages/MarkupSettings.jsx
 // Markup Settings Page — Country + Tax support
-// + ✅ NAYA: Store ID support (multi-store)
-// + ✅ NAYA: Default store fallback (agar shop param na mile)
+// + ✅ NAYA: Store ID database se aati hai (koi hardcode nahi)
 // + ✅ NAYA: Bulk update par store_id bhejo
 // ============================================
 
 import { useState, useEffect } from 'react'
-import { getCountries, updatePricing, bulkUpdatePricing } from '../api/pricing'
+import {
+  getCountries,
+  updatePricing,
+  bulkUpdatePricing,
+  getStoreIdByDomain,   // ✅ NAYA
+} from '../api/pricing'
 
 const API_URL =
   (import.meta.env.VITE_API_URL || '').trim() ||
   'https://amazon-product-manager-production.up.railway.app'
 
-// ✅ NAYA: Default store ID (agar shop param na mile)
-const DEFAULT_STORE_ID = 15
-
 // ============================================
-// Store ID nikaalo (Shopify iframe se)
-// + Fallback: agar shop param nahi, toh DEFAULT_STORE_ID
+// ✅ NAYA: Shop domain nikaalo (iframe ya Admin URL se)
 // ============================================
-function getStoreIdFromUrl() {
+function getShopDomain() {
+  // ── Method 1: Shopify iframe se "shop" query parameter ──
   const params = new URLSearchParams(window.location.search)
   const shop = params.get('shop')
-
-  // ✅ NAYA: Agar shop param nahi hai, toh default store use karo
-  if (!shop) {
-    console.warn(
-      `No "shop" parameter found in URL. Using default store ID: ${DEFAULT_STORE_ID}`
-    )
-    return DEFAULT_STORE_ID
+  if (shop) {
+    console.log(`✅ Shop domain from ?shop=: ${shop}`)
+    return shop
   }
 
-  const storeMap = {
-    'amazon-product-manager.myshopify.com': 13,
-    'stock-sync-test-store-hvmaovlm.myshopify.com': 14,
-    'test-store-ispfraip.myshopify.com': 15,
+  // ── Method 2: Shopify Admin URL se store name ──
+  // URL: admin.shopify.com/store/test-store-ispfraip/apps/...
+  const pathMatch = window.location.pathname.match(/\/store\/([^/]+)/)
+  if (pathMatch) {
+    const storeName = pathMatch[1]  // "test-store-ispfraip"
+    const shopDomain = `${storeName}.myshopify.com`
+    console.log(`✅ Shop domain from admin URL: ${shopDomain}`)
+    return shopDomain
   }
 
-  const storeId = storeMap[shop]
-  if (!storeId) {
-    console.warn(
-      `Unknown shop "${shop}". Using default store ID: ${DEFAULT_STORE_ID}`
-    )
-    return DEFAULT_STORE_ID
-  }
-
-  return storeId
+  // ── Nahi mila ──
+  console.warn('⚠️ Shop domain detect nahi ho saka')
+  return null
 }
 
 // ============================================
@@ -97,24 +92,34 @@ export default function MarkupSettings() {
   const [bulkLoading, setBulkLoading] = useState(false)
 
   useEffect(() => {
-    const sid = getStoreIdFromUrl()
-    setStoreId(sid)
-    loadAll(sid)
+    init()
   }, [])
 
-  const loadAll = async (sid) => {
+  const init = async () => {
     setLoading(true)
     try {
+      // ✅ Store ID database se nikaalo
+      const shopDomain = getShopDomain()
+      if (!shopDomain) {
+        throw new Error(
+          'Shop domain detect nahi ho saka. URL mein ?shop= ya /store/... hona chahiye.'
+        )
+      }
+
+      const sid = await getStoreIdByDomain(shopDomain)
+      console.log(`✅ Store ID from database: ${sid}`)
+      setStoreId(sid)
+
+      // Countries load karo
       const countriesData = await getCountries()
       setCountries(countriesData || [])
 
-      let url = `${API_URL}/api/markup/products`
-      if (sid) {
-        url += `?store_id=${sid}`
-      }
-
+      // Products load karo
+      let url = `${API_URL}/api/markup/products?store_id=${sid}`
       const productsRes = await safeFetch(url)
-      if (!productsRes.ok) throw new Error(productsRes.data.detail || 'Failed to load products')
+      if (!productsRes.ok) {
+        throw new Error(productsRes.data.detail || 'Failed to load products')
+      }
       setProducts(productsRes.data || [])
     } catch (err) {
       setMessage({ type: 'error', text: `❌ ${err.message}` })
@@ -135,6 +140,10 @@ export default function MarkupSettings() {
   const handleBulkUpdate = async () => {
     if (!bulkData.country_id) {
       setMessage({ type: 'error', text: '❌ Please select a country' })
+      return
+    }
+    if (!storeId) {
+      setMessage({ type: 'error', text: '❌ Store ID detect nahi ho saka' })
       return
     }
 
@@ -176,7 +185,19 @@ export default function MarkupSettings() {
           Har product ka markup, country aur tax set karein. Default $2 hai.
         </p>
 
-        {/* Bulk Update Box */}
+        {!storeId && (
+          <div
+            style={{
+              ...styles.messageBox,
+              background: '#fef3e7',
+              color: '#b54708',
+              border: '1px solid #fedf89',
+            }}
+          >
+            ⚠️ Store ID detect nahi ho saka. URL mein <code>?shop=</code> ya <code>/store/...</code> hona chahiye.
+          </div>
+        )}
+
         <div style={styles.bulkBox}>
           <strong>🔄 Bulk Update All:</strong>
 
@@ -228,11 +249,11 @@ export default function MarkupSettings() {
 
           <button
             onClick={handleBulkUpdate}
-            disabled={bulkLoading}
+            disabled={bulkLoading || !storeId}
             style={{
               ...styles.primaryBtn,
-              background: bulkLoading ? '#babfc3' : '#008060',
-              cursor: bulkLoading ? 'not-allowed' : 'pointer',
+              background: bulkLoading || !storeId ? '#babfc3' : '#008060',
+              cursor: bulkLoading || !storeId ? 'not-allowed' : 'pointer',
             }}
           >
             {bulkLoading ? '⏳ Applying...' : 'Apply to All'}
@@ -337,6 +358,10 @@ function ProductRow({ product, countries, storeId, saving, onSaveStart, onSaveEn
       onMessage({ type: 'error', text: '❌ Country select karein' })
       return
     }
+    if (!storeId) {
+      onMessage({ type: 'error', text: '❌ Store ID detect nahi ho saka' })
+      return
+    }
 
     onSaveStart()
     onMessage(null)
@@ -435,14 +460,14 @@ function ProductRow({ product, countries, storeId, saving, onSaveStart, onSaveEn
       <td style={styles.td}>
         <button
           onClick={handleSave}
-          disabled={!countryId || saving}
+          disabled={!countryId || saving || !storeId}
           style={{
             padding: '6px 16px',
-            background: countryId && !saving ? '#008060' : '#babfc3',
+            background: countryId && !saving && storeId ? '#008060' : '#babfc3',
             color: 'white',
             border: 'none',
             borderRadius: 4,
-            cursor: countryId && !saving ? 'pointer' : 'not-allowed',
+            cursor: countryId && !saving && storeId ? 'pointer' : 'not-allowed',
             fontSize: 13,
           }}
         >
@@ -535,6 +560,6 @@ const styles = {
     padding: '10px 20px',
     borderRadius: 6,
     fontSize: 14,
-    fontWeight: 600,
+    fontWeight: '600',
   },
 }

@@ -1,7 +1,7 @@
 // ============================================
 // frontend/src/api/pricing.js
 // Pricing (Markup + Country + Tax) API calls
-// + ✅ NAYA: Markup endpoints use karo (Shopify update ke saath)
+// + ✅ NAYA: Store ID database se nikaalo
 // ============================================
 import axios from 'axios';
 
@@ -30,16 +30,22 @@ export const getCountries = async () => {
 };
 
 // ============================================
-// Get pricing for a product
+// ✅ NAYA: Shop domain se store ID nikaalo
 // ============================================
-export const getProductPricing = async (productId) => {
-  const res = await pricingApi.get(`/product/${productId}`);
-  return res.data;
+export const getStoreIdByDomain = async (shop) => {
+  const res = await fetch(
+    `${API_URL}/api/shopify/store-id?shop=${encodeURIComponent(shop)}`
+  );
+  if (!res.ok) {
+    const error = await res.json().catch(() => ({}));
+    throw new Error(error.detail || 'Store not found');
+  }
+  const data = await res.json();
+  return data.store_id;
 };
 
 // ============================================
-// ✅ NAYA: Update single product pricing
-// Ab /api/markup/{id} use karo — Shopify bhi update hoga
+// Update single product pricing
 // ============================================
 export const updatePricing = async (data) => {
   const res = await markupApi.patch(`/${data.product_id}`, {
@@ -50,8 +56,7 @@ export const updatePricing = async (data) => {
 };
 
 // ============================================
-// ✅ NAYA: Bulk update all products
-// Ab /api/markup/bulk-update use karo — Shopify bhi update hoga
+// Bulk update all products
 // ============================================
 export const bulkUpdatePricing = async (data) => {
   let url = '/bulk-update';
