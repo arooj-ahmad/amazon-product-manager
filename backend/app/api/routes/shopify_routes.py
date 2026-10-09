@@ -4,6 +4,7 @@
 # + Availability + Inventory tracking
 # + ASIN + Parent ASIN + Rating + Reviews + Amazon Price + Availability
 # + Variations support (parent detection + smart variant attributes)
+# + ✅ NAYA: /store-id endpoint (shop domain se store ID)
 # ============================================
 
 import logging
@@ -51,50 +52,40 @@ router = APIRouter(prefix="/api/shopify", tags=["Shopify"])
 def extract_variation_info(data: dict) -> tuple:
     """
     Bright Data ke response se variation title aur option name nikaalo.
-
     Returns: (option_name, variant_title)
-    Example: ("Size", "Large")
     """
-    # Priority 1: variant_attributes (sabse reliable)
     attrs = data.get("variant_attributes") or []
     if attrs:
-        # Pehle Size dhundo
         for attr in attrs:
             name = (attr.get("name") or "").strip().lower()
             if name == "size":
                 return ("Size", attr.get("value", "Default"))
 
-        # Phir Color dhundo
         for attr in attrs:
             name = (attr.get("name") or "").strip().lower()
             if name == "color":
                 return ("Color", attr.get("value", "Default"))
 
-        # Phir Style / Capacity / Number of Items
         for attr in attrs:
             name = (attr.get("name") or "").strip().lower()
             if name in ("style", "capacity"):
                 return (attr["name"], attr.get("value", "Default"))
 
-        # Last resort: pehla attribute use karo
         first_attr = attrs[0]
         if first_attr.get("name") and first_attr.get("value"):
             return (first_attr["name"], first_attr["value"])
 
-    # Priority 2: variations (agar available ho)
     variations = data.get("variations") or []
     if variations:
         v = variations[0]
         if v.get("name") and v.get("value"):
             return (v["name"], v["value"])
 
-    # Priority 3: specifications se dhundo
     specs = data.get("specifications") or {}
     for key in ["Size", "Color", "Style", "Capacity"]:
         if key in specs and specs[key]:
             return (key, str(specs[key]))
 
-    # Fallback
     return ("Style", "Default")
 
 
@@ -105,7 +96,6 @@ def extract_variation_info(data: dict) -> tuple:
 def shopify_install(
     shop: str = Query(..., description="Shopify store domain"),
 ):
-    """Merchant ko OAuth authorize page par bhejo."""
     if not shop:
         raise HTTPException(status_code=400, detail="Shop parameter required")
 
@@ -126,7 +116,6 @@ async def shopify_callback(
     hmac: str = Query(None),
     db: Session = Depends(get_db),
 ):
-    """OAuth callback — access token exchange + save."""
     query_params = dict(request.query_params)
 
     if not hmac or not verify_hmac(query_params):
@@ -199,7 +188,6 @@ async def shopify_callback(
 # ============================================
 @router.get("/stores")
 def list_installed_stores(db: Session = Depends(get_db)):
-    """Installed stores list."""
     stores = db.query(ShopifyStore).all()
     return {
         "total": len(stores),
@@ -215,6 +203,35 @@ def list_installed_stores(db: Session = Depends(get_db)):
 
 
 # ============================================
+# ✅ NAYA: SHOP DOMAIN SE STORE ID NIKALO
+# ============================================
+@router.get("/store-id")
+def get_store_id_by_domain(
+    shop: str = Query(..., description="Shopify store domain"),
+    db: Session = Depends(get_db),
+):
+    """
+    Shop domain se store ID nikaalo.
+    Example: /api/shopify/store-id?shop=test-store-ispfraip.myshopify.com
+    Returns: {"store_id": 15}
+    """
+    if not shop:
+        raise HTTPException(status_code=400, detail="shop parameter required")
+
+    store = db.query(ShopifyStore).filter(
+        ShopifyStore.shop_domain == shop
+    ).first()
+
+    if not store:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Store not found for shop: {shop}",
+        )
+
+    return {"store_id": store.id, "shop_domain": store.shop_domain}
+
+
+# ============================================
 # PUSH PRODUCT TO SHOPIFY (Admin Panel Se)
 # ============================================
 @router.post("/push-product/{product_id}")
@@ -224,7 +241,6 @@ async def push_product_to_shopify(
     db: Session = Depends(get_db),
     current_admin: Admin = Depends(get_current_admin),
 ):
-    """Ek product ko Supabase se Shopify mein push karta hai."""
     product = db.query(Product).filter(Product.id == product_id).first()
 
     if not product:
@@ -244,7 +260,6 @@ async def push_product_to_shopify(
             detail=f"Store {shop_domain} not connected",
         )
 
-    # ✅ Parent ASIN check
     existing_parent = None
     if product.parent_asin:
         existing_parent = (
@@ -257,14 +272,12 @@ async def push_product_to_shopify(
             .first()
         )
 
-    # ── Case 1: Parent already hai → variant add karo ──
     if existing_parent and existing_parent.shopify_product_id:
         logger.info(
             f"➕ Adding variant to existing product: "
             f"{existing_parent.shopify_product_id}"
         )
 
-        # Smart variation detection (from variant_attributes column)
         option_name, variant_title = extract_variation_info({
             "variant_attributes": product.variant_attributes or [],
             "specifications": product.specifications or {},
@@ -303,7 +316,6 @@ async def push_product_to_shopify(
                 "variant_added": True,
             }
 
-    # ── Case 2: Naya product create karo ──
     product_data = {
         "title": product.title,
         "description": product.description or "",
@@ -324,7 +336,7 @@ async def push_product_to_shopify(
         "amazon_price": product.amazon_price,
         "asin": product.asin,
         "parent_asin": product.parent_asin,
-        "variant_attributes": product.variant_attributes or [],  # ✅ NAYA
+        "variant_attributes": product.variant_attributes or [],
     }
 
     result = await create_shopify_product(
@@ -373,7 +385,6 @@ async def push_product_to_shopify(
 
 # ============================================
 # ADD PRODUCT FROM SHOPIFY APP (Iframe Se)
-# ✅ Smart variations with auto-grouping
 # ============================================
 @router.post("/app/add-product")
 async def add_product_from_shopify_app(
@@ -383,12 +394,6 @@ async def add_product_from_shopify_app(
     authorization: str = Header(...),
     db: Session = Depends(get_db),
 ):
-    """
-    Shopify App ke iframe se product add karta hai.
-    Variations ke liye parent ASIN se auto-group karta hai.
-    """
-
-    # ── Step 1: Auth header ──
     if not authorization or not authorization.startswith("Bearer "):
         raise HTTPException(
             status_code=401,
@@ -399,7 +404,6 @@ async def add_product_from_shopify_app(
     if not token:
         raise HTTPException(status_code=401, detail="Empty ID token")
 
-    # ── Step 2: Verify ID token ──
     try:
         payload = verify_id_token(token)
         logger.info("✅ ID token verified successfully")
@@ -409,7 +413,6 @@ async def add_product_from_shopify_app(
             status_code=401, detail=f"Invalid ID token: {str(e)}"
         )
 
-    # ── Step 3: Shop domain ──
     dest = payload.get("dest", "")
     shop_domain = dest.replace("https://", "").split("/")[0]
 
@@ -420,14 +423,12 @@ async def add_product_from_shopify_app(
 
     logger.info(f"✅ Verified Shopify request from: {shop_domain}")
 
-    # ── Step 4: Store dhundo, agar token invalid ho to fresh exchange karo ──
     store = (
         db.query(ShopifyStore)
         .filter(ShopifyStore.shop_domain == shop_domain)
         .first()
     )
 
-    # Helper: token ko exchange karke DB mein update karo
     async def refresh_store_token() -> bool:
         nonlocal store
         token_data = await exchange_id_token_for_offline_token(shop_domain, token)
@@ -462,7 +463,6 @@ async def add_product_from_shopify_app(
             detail=f"Store {shop_domain} not connected. Please reinstall the app.",
         )
 
-    # ── Step 5: Bright Data fetch ──
     try:
         data = await fetch_product_from_brightdata(amazon_url)
     except BrightDataError as e:
@@ -474,7 +474,6 @@ async def add_product_from_shopify_app(
     asin = data["asin"]
     parent_asin = data.get("parent_asin")
 
-    # Duplicate check
     existing = db.query(Product).filter(Product.asin == asin).first()
     if existing:
         raise HTTPException(
@@ -482,7 +481,6 @@ async def add_product_from_shopify_app(
             detail=f"Product already exists (ASIN: {asin})",
         )
 
-    # ── Step 6b: Parent ASIN check ──
     existing_parent = None
     if parent_asin:
         existing_parent = (
@@ -494,13 +492,7 @@ async def add_product_from_shopify_app(
             )
             .first()
         )
-        if existing_parent:
-            logger.info(
-                f"✅ Parent product found in DB: "
-                f"{existing_parent.asin} (shopify_id={existing_parent.shopify_product_id})"
-            )
 
-    # ── Step 7: User ka markup ──
     user_markup = float(markup) if markup is not None else 2.0
     user_markup_type = (
         markup_type if markup_type in ("fixed", "percent") else "fixed"
@@ -512,12 +504,6 @@ async def add_product_from_shopify_app(
         markup_type=user_markup_type,
     )
 
-    logger.info(
-        f"💰 Markup: {user_markup} ({user_markup_type}) | "
-        f"Amazon: {data['amazon_price']} → Final: {final_price}"
-    )
-
-    # ── Step 8: Save to DB ──
     new_product = Product(
         asin=asin,
         parent_asin=parent_asin,
@@ -538,7 +524,7 @@ async def add_product_from_shopify_app(
         markup=user_markup,
         markup_type=user_markup_type,
         is_manual_override=False,
-        variant_attributes=data.get("variant_attributes", []),  # ✅ NAYA
+        variant_attributes=data.get("variant_attributes", []),
     )
 
     db.add(new_product)
@@ -547,28 +533,23 @@ async def add_product_from_shopify_app(
 
     logger.info(f"✅ Product saved to Supabase: {asin}")
 
-    # ── Step 9: Push to Shopify ──
     shopify_pushed = False
     shopify_product_id = None
     variant_added = False
 
     try:
-        # Helper: kisi bhi result mein 401 check karo
         def is_401(result: dict) -> bool:
             for err in result.get("errors", []):
                 if isinstance(err, dict) and err.get("status") == 401:
                     return True
             return False
 
-        # ── Shopify push helper (callable twice: first attempt + retry) ──
         async def do_push() -> tuple:
-            """Returns (shopify_pushed, shopify_product_id, variant_added, result)"""
             _pushed = False
             _pid = None
             _vadd = False
             _result = {}
 
-            # Case 1: Parent exists → variant add karo
             if existing_parent and existing_parent.shopify_product_id:
                 logger.info(
                     f"➕ Adding variant to existing product: "
@@ -599,7 +580,6 @@ async def add_product_from_shopify_app(
                     _pid = existing_parent.shopify_product_id
                     logger.info(f"✅ Variant added to parent: {variant_title}")
 
-            # Case 2: Naya product create karo
             else:
                 logger.info("🆕 Creating new product")
                 option_name, variant_title = extract_variation_info(data)
@@ -657,12 +637,10 @@ async def add_product_from_shopify_app(
 
             return _pushed, _pid, _vadd, _result
 
-        # ── First attempt ──
         shopify_pushed, shopify_product_id, variant_added, first_result = (
             await do_push()
         )
 
-        # ── 401 check: token expired? Refresh karo aur retry karo ──
         if not shopify_pushed and is_401(first_result):
             logger.warning(
                 f"🔄 401 detected — refreshing token for {shop_domain} and retrying..."
@@ -710,5 +688,4 @@ async def add_product_from_shopify_app(
 # ============================================
 @router.get("/health")
 def shopify_health():
-    """Simple health check."""
     return {"status": "ok", "service": "shopify-integration"}
