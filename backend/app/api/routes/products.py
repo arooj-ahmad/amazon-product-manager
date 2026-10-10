@@ -6,6 +6,7 @@
 # + ✅ NAYA: Refresh ke baad DB mein naya token save karo
 # + ✅ NAYA: Proactive token refresh (_ensure_valid_store_token)
 # + ✅ NAYA: categories + tags save (fetch pe) + push (markup update pe)
+# + ✅ NAYA: DELETE — pehle Shopify se delete, phir DB se
 # ============================================
 
 import logging
@@ -38,6 +39,7 @@ from app.services.shopify import (
     shopify_graphql,
     sync_update_shopify_price,
     refresh_shopify_token,
+    delete_shopify_product,  # ✅ NAYA
 )
 
 
@@ -415,7 +417,6 @@ async def admin_fetch_product(
         stock_quantity=data.get("stock_quantity", 0),
         last_synced_at=datetime.now(timezone.utc),
         variant_attributes=data.get("variant_attributes", []),
-        # ✅ NAYA: categories + tags save karo
         categories=data.get("categories", []),
         tags=data.get("tags", []),
         shopify_store_id=default_store.id if default_store else None,
@@ -463,15 +464,23 @@ def admin_update_product(
     return product
 
 
+# ============================================
+# ✅ UPDATED: DELETE — Pehle Shopify, Phir DB
+# ============================================
 @router.delete(
     "/admin/products/{product_id}",
     status_code=status.HTTP_204_NO_CONTENT,
 )
-def admin_delete_product(
+async def admin_delete_product(
     product_id: int,
     db: Session = Depends(get_db),
     current_admin: Admin = Depends(get_current_admin),
 ):
+    """
+    Product delete karo:
+    1. Pehle Shopify se delete (agar shopify_product_id hai)
+    2. Phir DB se delete
+    """
     product = db.query(Product).filter(Product.id == product_id).first()
 
     if not product:
@@ -480,8 +489,56 @@ def admin_delete_product(
             detail="Product not found",
         )
 
+    asin = product.asin
+    shopify_id = product.shopify_product_id
+
+    # ✅ Step 1: Pehle Shopify se delete karo
+    if shopify_id:
+        store = _get_store_for_product(db, product)
+
+        if store and store.access_token:
+            try:
+                # Token ensure karo
+                token_ok = await _ensure_valid_store_token(db, store)
+
+                if token_ok:
+                    logger.info(
+                        f"🗑️ Deleting from Shopify: {asin} "
+                        f"({shopify_id})"
+                    )
+                    success = await delete_shopify_product(
+                        shop_domain=store.shop_domain,
+                        access_token=store.access_token,
+                        shopify_product_id=shopify_id,
+                        refresh_token=store.refresh_token,
+                    )
+
+                    if success:
+                        logger.info(f"✅ Shopify product deleted: {asin}")
+                    else:
+                        logger.warning(
+                            f"⚠️ Shopify delete failed for {asin}, "
+                            f"but DB will still be deleted"
+                        )
+                else:
+                    logger.warning(
+                        f"⚠️ Token invalid for {store.shop_domain}, "
+                        f"Shopify delete skipped"
+                    )
+            except Exception as e:
+                logger.error(f"❌ Shopify delete exception: {e}")
+        else:
+            logger.warning(
+                f"⚠️ No store/token for {asin}, Shopify delete skipped"
+            )
+    else:
+        logger.info(f"ℹ️ No Shopify ID for {asin}, only DB delete")
+
+    # ✅ Step 2: DB se delete karo
     db.delete(product)
     db.commit()
+
+    logger.info(f"✅ Product deleted from DB: {asin}")
 
     return None
 
@@ -535,11 +592,9 @@ async def update_product_markup(
     db.commit()
     db.refresh(product)
 
-    # ✅ Product ke store se
     store = _get_store_for_product(db, product)
 
     if store and store.access_token and product.shopify_product_id:
-        # ✅ NAYA: Token ko pehle ensure karo (proactive refresh)
         token_ok = await _ensure_valid_store_token(db, store)
 
         if not token_ok:
@@ -556,7 +611,6 @@ async def update_product_markup(
             f"product={product.shopify_product_id}, price=${new_price}"
         )
 
-        # ✅ NAYA: tags + product_type bhi pass karo
         product_tags = product.tags or []
         product_categories = product.categories or []
         product_type = product_categories[0] if product_categories else ""
@@ -568,7 +622,6 @@ async def update_product_markup(
                 shopify_product_id=product.shopify_product_id,
                 new_price=new_price,
                 refresh_token=store.refresh_token,
-                # ✅ NAYA
                 tags=product_tags,
                 product_type=product_type,
             )
@@ -618,7 +671,6 @@ async def bulk_update_markup(
         product.is_manual_override = True
         updated += 1
 
-        # ✅ Per-product store
         product_store = _get_store_for_product(
             db, product, fallback_store_id=store_id
         )
@@ -628,7 +680,6 @@ async def bulk_update_markup(
             and product_store.access_token
             and product.shopify_product_id
         ):
-            # ✅ NAYA: Ek store ka token ek baar hi refresh karo
             if product_store.shop_domain not in token_refreshed_stores:
                 token_ok = await _ensure_valid_store_token(db, product_store)
                 if not token_ok:
@@ -640,7 +691,6 @@ async def bulk_update_markup(
                     continue
                 token_refreshed_stores.add(product_store.shop_domain)
 
-            # ✅ NAYA: tags + product_type pass karo
             product_tags = product.tags or []
             product_categories = product.categories or []
             product_type = product_categories[0] if product_categories else ""
@@ -652,7 +702,6 @@ async def bulk_update_markup(
                     shopify_product_id=product.shopify_product_id,
                     new_price=new_price,
                     refresh_token=product_store.refresh_token,
-                    # ✅ NAYA
                     tags=product_tags,
                     product_type=product_type,
                 )
@@ -699,7 +748,6 @@ async def sync_products_from_shopify(
             detail="Shopify store not configured",
         )
 
-    # ✅ NAYA: Sync se pehle token ensure karo
     token_ok = await _ensure_valid_store_token(db, store)
     if not token_ok:
         raise HTTPException(

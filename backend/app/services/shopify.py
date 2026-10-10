@@ -9,6 +9,7 @@
 # + ✅ NAYA: productSet + taxonomy query (category auto-add)
 # + ✅ NAYA: tags + productType push
 # + ✅ NAYA: Existing product ke tags + productType update karo
+# + ✅ NAYA: Shopify product DELETE function
 # ============================================
 
 import hashlib
@@ -78,19 +79,14 @@ def _get_product_type(product_data: dict) -> str:
 
 
 # ============================================
-# ✅ NAYA: TAXONOMY SEARCH — Product Title Se
+# ✅ TAXONOMY SEARCH
 # ============================================
 async def search_shopify_taxonomy(
     shop: str,
     access_token: str,
     search_query: str,
 ) -> Optional[str]:
-    """
-    Shopify taxonomy query se category ID dhundho.
-    Product title ya category name se search.
-    
-    Returns: Category GID (e.g., gid://shopify/TaxonomyCategory/el-2-3)
-    """
+    """Shopify taxonomy query se category ID dhundho."""
     if not search_query or not isinstance(search_query, str):
         return None
 
@@ -136,7 +132,6 @@ async def search_shopify_taxonomy(
     if not edges:
         return None
 
-    # ✅ Level 3+ prefer karo (specific categories)
     best = None
     best_level = 0
 
@@ -144,13 +139,11 @@ async def search_shopify_taxonomy(
         node = edge["node"]
         level = node.get("level", 0)
 
-        # Galat matches skip karo
         full_name = (node.get("fullName") or "").lower()
         bad_keywords = ["minibus", "bus", "vehicle", "transportation"]
         if any(bad in full_name for bad in bad_keywords):
             continue
 
-        # Level 3+ best
         if level >= 3:
             logger.info(
                 f"   ✅ Taxonomy match (L{level}): "
@@ -158,7 +151,6 @@ async def search_shopify_taxonomy(
             )
             return node.get("id")
 
-        # Level 2 track karo
         if level == 2 and level > best_level:
             best_level = level
             best = node
@@ -170,7 +162,6 @@ async def search_shopify_taxonomy(
         )
         return best.get("id")
 
-    # Fallback: first result
     first = edges[0]["node"]
     logger.info(
         f"   ✅ Taxonomy fallback: "
@@ -180,7 +171,7 @@ async def search_shopify_taxonomy(
 
 
 # ============================================
-# ✅ NAYA: BEST CATEGORY — Product Title + Categories Se
+# ✅ BEST CATEGORY — Product Title + Categories
 # ============================================
 async def find_best_category(
     shop: str,
@@ -188,32 +179,24 @@ async def find_best_category(
     product_title: str,
     categories: list,
 ) -> Optional[str]:
-    """
-    Best category dhundho — product title + categories se.
-    Multiple queries try karo.
-    """
+    """Best category dhundho — multiple queries try karo."""
     queries_to_try = []
 
-    # 1. Product title ke pehle 6 words (best context)
     if product_title and isinstance(product_title, str):
         title_words = product_title.split()[:6]
         title_query = " ".join(title_words)
         if len(title_query) >= 5:
             queries_to_try.append(title_query)
 
-    # 2. Parent + Child combined
     if categories and len(categories) >= 2:
         queries_to_try.append(f"{categories[-2]} {categories[-1]}")
 
-    # 3. Only deepest
     if categories:
         queries_to_try.append(categories[-1])
 
-    # 4. Only parent (fallback)
     if categories and len(categories) >= 2:
         queries_to_try.append(categories[-2])
 
-    # Deduplicate
     queries_to_try = list(dict.fromkeys([
         q.strip() for q in queries_to_try if q and len(q.strip()) >= 3
     ]))
@@ -486,6 +469,114 @@ async def shopify_graphql(
     except Exception as e:
         logger.error(f"GraphQL call fail: {e}")
         return {"errors": [{"message": str(e)}]}
+
+
+# ============================================
+# ✅ NAYA: DELETE SHOPIFY PRODUCT
+# ============================================
+async def delete_shopify_product(
+    shop_domain: str,
+    access_token: str,
+    shopify_product_id: str,
+    refresh_token: Optional[str] = None,
+) -> bool:
+    """
+    Shopify product delete karo.
+    401/403 pe refresh_token se auto-retry.
+    """
+    if not all([shop_domain, access_token, shopify_product_id]):
+        logger.warning("Shopify delete skipped: missing config")
+        return False
+
+    # GID format
+    if not str(shopify_product_id).startswith("gid://"):
+        product_gid = f"gid://shopify/Product/{shopify_product_id}"
+    else:
+        product_gid = shopify_product_id
+
+    api_version = _safe_api_version()
+    api_url = f"https://{shop_domain}/admin/api/{api_version}/graphql.json"
+
+    headers = {
+        "X-Shopify-Access-Token": access_token,
+        "Content-Type": "application/json",
+    }
+
+    mutation = """
+    mutation productDelete($input: ProductDeleteInput!) {
+      productDelete(input: $input) {
+        deletedProductId
+        userErrors {
+          field
+          message
+        }
+      }
+    }
+    """
+
+    try:
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            res = await client.post(
+                api_url,
+                headers=headers,
+                json={
+                    "query": mutation,
+                    "variables": {"input": {"id": product_gid}},
+                },
+            )
+
+            # ✅ 401/403 pe auto-refresh
+            if res.status_code in (401, 403):
+                if refresh_token:
+                    logger.warning(
+                        f"🔄 {res.status_code} — refreshing token for "
+                        f"{shop_domain} and retrying..."
+                    )
+                    new_data = await refresh_shopify_token(
+                        shop_domain, refresh_token
+                    )
+                    if new_data and new_data.get("access_token"):
+                        return await delete_shopify_product(
+                            shop_domain=shop_domain,
+                            access_token=new_data["access_token"],
+                            shopify_product_id=shopify_product_id,
+                            refresh_token=new_data.get("refresh_token"),
+                        )
+                logger.error(
+                    f"❌ {res.status_code} Unauthorized for {shop_domain}"
+                )
+                return False
+
+            res.raise_for_status()
+            data = res.json()
+
+        if "errors" in data:
+            logger.error(f"❌ Shopify delete errors: {data['errors']}")
+            return False
+
+        delete_data = data.get("data", {}).get("productDelete", {})
+        user_errors = delete_data.get("userErrors", [])
+
+        if user_errors:
+            logger.error(f"❌ Shopify delete user errors: {user_errors}")
+            return False
+
+        deleted_id = delete_data.get("deletedProductId")
+        if deleted_id:
+            logger.info(f"✅ Shopify product deleted: {deleted_id}")
+            return True
+
+        return False
+
+    except httpx.HTTPStatusError as e:
+        logger.error(
+            f"❌ Shopify delete HTTP error: {e.response.status_code} — "
+            f"{e.response.text[:200]}"
+        )
+        return False
+    except Exception as e:
+        logger.error(f"❌ Shopify delete failed: {e}")
+        return False
 
 
 # ============================================
@@ -996,11 +1087,9 @@ async def create_shopify_product_with_variants(
     is_available = product_data.get("is_available", True)
     status = "ACTIVE" if is_available else "DRAFT"
 
-    # ✅ Tags + productType build karo
     shopify_tags = _build_shopify_tags(product_data)
     product_type = _get_product_type(product_data)
 
-    # ✅ Category search karo — product title + categories se
     categories = product_data.get("categories") or []
     product_title = product_data.get("title", "")
 
@@ -1013,7 +1102,6 @@ async def create_shopify_product_with_variants(
             categories=categories,
         )
 
-    # ✅ productSet input build karo
     input_data = {
         "title": product_data.get("title") or "Untitled Product",
         "descriptionHtml": product_data.get("description", ""),
@@ -1037,7 +1125,6 @@ async def create_shopify_product_with_variants(
         input_data["productType"] = product_type
         logger.info(f"   Product type: {product_type}")
 
-    # ✅ Category add karo
     if shopify_category_id:
         input_data["category"] = shopify_category_id
         logger.info(f"   Category: {shopify_category_id}")
@@ -1106,7 +1193,6 @@ async def create_shopify_product_with_variants(
     if shopify_product.get("category"):
         logger.info(f"   Category confirmed: {shopify_product.get('category')}")
 
-    # ✅ Variants update karo
     variant_edges = shopify_product.get("variants", {}).get("edges", [])
     variants_to_update = []
 
@@ -1319,7 +1405,6 @@ async def create_shopify_product(
     except (ValueError, TypeError):
         price_float = 0.0
 
-    # ✅ Metafields build karo
     metafields_input = []
 
     asin_value = str(product_data.get("asin", "") or "")
@@ -1371,11 +1456,9 @@ async def create_shopify_product(
             "type": "single_line_text_field",
         })
 
-    # ✅ Tags + productType build karo
     shopify_tags = _build_shopify_tags(product_data)
     product_type = _get_product_type(product_data)
 
-    # ✅ Category search karo — product title + categories se
     categories = product_data.get("categories") or []
     product_title = product_data.get("title", "")
 
@@ -1388,7 +1471,6 @@ async def create_shopify_product(
             categories=categories,
         )
 
-    # ✅ productSet input build karo
     input_data = {
         "title": product_data.get("title") or "Untitled Product",
         "descriptionHtml": product_data.get("description", ""),
