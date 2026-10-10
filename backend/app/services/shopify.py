@@ -6,15 +6,9 @@
 # + Storefront API (real-time availability check)
 # + 5 Metafields: asin, rating, amazon_price, reviews_count, availability
 # + Variations Support (parent + variant creation & auto-grouping)
-# + Option Existence Check (via productSet)
-# + ✅ FIXED: sync_update_shopify_price is async
-# + ✅ FIXED: refresh_shopify_token() helper
-# + ✅ FIXED: sync_update_shopify_price auto-refresh on 401 AND 403
-# + ✅ FIXED: expiring:"1" WAPAS ADD KIYA (Shopify permanent reject karta hai)
-# + ✅ FIXED: exchange_code_for_token ab DICT return karta hai
-# + ✅ NAYA: tags + productType push (Collections ke liye)
+# + ✅ NAYA: productSet + taxonomy query (category auto-add)
+# + ✅ NAYA: tags + productType push
 # + ✅ NAYA: Existing product ke tags + productType update karo
-# + ❌ REMOVED: Category/Taxonomy code (Shopify AI khud suggest karega)
 # ============================================
 
 import hashlib
@@ -47,13 +41,9 @@ def _safe_api_version() -> str:
 # HELPER: Build Shopify tags (string array)
 # ============================================
 def _build_shopify_tags(product_data: dict) -> list[str]:
-    """
-    Product data se Shopify tags ka array banao.
-    Shopify ProductInput.tags ek string array leta hai.
-    """
+    """Product data se Shopify tags ka array banao."""
     tags: list[str] = []
 
-    # 1. Direct tags
     raw_tags = product_data.get("tags") or []
     if isinstance(raw_tags, list):
         for t in raw_tags:
@@ -62,7 +52,6 @@ def _build_shopify_tags(product_data: dict) -> list[str]:
                 if clean and len(clean) < 100:
                     tags.append(clean)
 
-    # 2. Categories ko bhi tag banao (automated collections ke liye)
     raw_cats = product_data.get("categories") or []
     if isinstance(raw_cats, list):
         for c in raw_cats:
@@ -71,10 +60,7 @@ def _build_shopify_tags(product_data: dict) -> list[str]:
                 if clean and len(clean) < 50 and clean not in tags:
                     tags.append(clean)
 
-    # Deduplicate (order preserve)
     tags = list(dict.fromkeys(tags))
-
-    # Shopify limit: 250 tags per product
     return tags[:250]
 
 
@@ -82,16 +68,168 @@ def _build_shopify_tags(product_data: dict) -> list[str]:
 # HELPER: First category → productType
 # ============================================
 def _get_product_type(product_data: dict) -> str:
-    """
-    Shopify mein ek hi productType hota hai.
-    First category ko productType banao.
-    """
+    """Shopify mein ek hi productType hota hai."""
     categories = product_data.get("categories") or []
     if isinstance(categories, list) and categories:
         first = categories[0]
         if isinstance(first, str):
             return first.strip()[:255]
     return ""
+
+
+# ============================================
+# ✅ NAYA: TAXONOMY SEARCH — Product Title Se
+# ============================================
+async def search_shopify_taxonomy(
+    shop: str,
+    access_token: str,
+    search_query: str,
+) -> Optional[str]:
+    """
+    Shopify taxonomy query se category ID dhundho.
+    Product title ya category name se search.
+    
+    Returns: Category GID (e.g., gid://shopify/TaxonomyCategory/el-2-3)
+    """
+    if not search_query or not isinstance(search_query, str):
+        return None
+
+    query_str = search_query.strip()
+    if len(query_str) < 3:
+        return None
+
+    query = """
+    query searchTaxonomy($query: String!) {
+      taxonomy {
+        categories(first: 5, search: $query) {
+          edges {
+            node {
+              id
+              name
+              fullName
+              level
+            }
+          }
+        }
+      }
+    }
+    """
+
+    result = await shopify_graphql(
+        shop=shop,
+        access_token=access_token,
+        query=query,
+        variables={"query": query_str},
+    )
+
+    if "errors" in result:
+        logger.warning(f"   ⚠️ Taxonomy search failed: {result['errors']}")
+        return None
+
+    edges = (
+        result.get("data", {})
+        .get("taxonomy", {})
+        .get("categories", {})
+        .get("edges", [])
+    )
+
+    if not edges:
+        return None
+
+    # ✅ Level 3+ prefer karo (specific categories)
+    best = None
+    best_level = 0
+
+    for edge in edges:
+        node = edge["node"]
+        level = node.get("level", 0)
+
+        # Galat matches skip karo
+        full_name = (node.get("fullName") or "").lower()
+        bad_keywords = ["minibus", "bus", "vehicle", "transportation"]
+        if any(bad in full_name for bad in bad_keywords):
+            continue
+
+        # Level 3+ best
+        if level >= 3:
+            logger.info(
+                f"   ✅ Taxonomy match (L{level}): "
+                f"{node.get('fullName')} → {node.get('id')}"
+            )
+            return node.get("id")
+
+        # Level 2 track karo
+        if level == 2 and level > best_level:
+            best_level = level
+            best = node
+
+    if best:
+        logger.info(
+            f"   ✅ Taxonomy match (L{best_level}): "
+            f"{best.get('fullName')} → {best.get('id')}"
+        )
+        return best.get("id")
+
+    # Fallback: first result
+    first = edges[0]["node"]
+    logger.info(
+        f"   ✅ Taxonomy fallback: "
+        f"{first.get('fullName')} → {first.get('id')}"
+    )
+    return first.get("id")
+
+
+# ============================================
+# ✅ NAYA: BEST CATEGORY — Product Title + Categories Se
+# ============================================
+async def find_best_category(
+    shop: str,
+    access_token: str,
+    product_title: str,
+    categories: list,
+) -> Optional[str]:
+    """
+    Best category dhundho — product title + categories se.
+    Multiple queries try karo.
+    """
+    queries_to_try = []
+
+    # 1. Product title ke pehle 6 words (best context)
+    if product_title and isinstance(product_title, str):
+        title_words = product_title.split()[:6]
+        title_query = " ".join(title_words)
+        if len(title_query) >= 5:
+            queries_to_try.append(title_query)
+
+    # 2. Parent + Child combined
+    if categories and len(categories) >= 2:
+        queries_to_try.append(f"{categories[-2]} {categories[-1]}")
+
+    # 3. Only deepest
+    if categories:
+        queries_to_try.append(categories[-1])
+
+    # 4. Only parent (fallback)
+    if categories and len(categories) >= 2:
+        queries_to_try.append(categories[-2])
+
+    # Deduplicate
+    queries_to_try = list(dict.fromkeys([
+        q.strip() for q in queries_to_try if q and len(q.strip()) >= 3
+    ]))
+
+    for query_str in queries_to_try:
+        logger.info(f"   🔍 Taxonomy search: '{query_str}'")
+        category_id = await search_shopify_taxonomy(
+            shop=shop,
+            access_token=access_token,
+            search_query=query_str,
+        )
+        if category_id:
+            return category_id
+
+    logger.info(f"   ⚠️ No category found for: {product_title[:50]}...")
+    return None
 
 
 # ============================================
@@ -128,7 +266,7 @@ def verify_hmac(query_params: dict) -> bool:
 
 
 # ============================================
-# ID TOKEN VERIFY (Strict Mode)
+# ID TOKEN VERIFY
 # ============================================
 def verify_id_token(token: str) -> dict:
     secret = (settings.SHOPIFY_API_SECRET or "").strip().strip('"').strip("'")
@@ -214,7 +352,7 @@ async def exchange_code_for_token(shop: str, code: str) -> Optional[dict]:
 
 
 # ============================================
-# TOKEN EXCHANGE (Session/ID token → Offline access token)
+# TOKEN EXCHANGE (ID token → Offline access token)
 # ============================================
 async def exchange_id_token_for_offline_token(
     shop: str, id_token: str
@@ -230,7 +368,6 @@ async def exchange_id_token_for_offline_token(
         "requested_token_type": (
             "urn:shopify:params:oauth:token-type:offline-access-token"
         ),
-        # ✅ WAPAS ADD KIYA — Shopify permanent tokens reject karta hai
         "expiring": "1",
     }
 
@@ -262,16 +399,12 @@ async def exchange_id_token_for_offline_token(
 
 
 # ============================================
-# ✅ TOKEN REFRESH
+# TOKEN REFRESH
 # ============================================
 async def refresh_shopify_token(
     shop_domain: str,
     refresh_token: str,
 ) -> Optional[dict]:
-    """
-    Expired access token ko refresh token se renew karo.
-    Shopify expiring offline tokens ke liye.
-    """
     if not refresh_token:
         logger.warning(f"No refresh_token for {shop_domain}")
         return None
@@ -313,7 +446,7 @@ async def refresh_shopify_token(
 
 
 # ============================================
-# GRAPHQL API CALL (Admin API)
+# GRAPHQL API CALL
 # ============================================
 async def shopify_graphql(
     shop: str,
@@ -790,7 +923,7 @@ async def ensure_product_has_option(
 
 
 # ============================================
-# ✅ EXISTING PRODUCT KE TAGS + TYPE UPDATE KARO
+# EXISTING PRODUCT KE TAGS + TYPE UPDATE KARO
 # ============================================
 async def update_shopify_product_tags_and_type(
     shop: str,
@@ -799,9 +932,6 @@ async def update_shopify_product_tags_and_type(
     tags: list[str],
     product_type: str = "",
 ) -> bool:
-    """
-    Existing Shopify product ke tags + productType update karo.
-    """
     if not shopify_product_id.startswith("gid://"):
         product_gid = f"gid://shopify/Product/{shopify_product_id}"
     else:
@@ -855,9 +985,7 @@ async def update_shopify_product_tags_and_type(
 
 
 # ============================================
-# CREATE PRODUCT WITH VARIANTS
-# + ✅ tags + productType
-# + ❌ Category removed (Shopify AI suggest karega)
+# ✅ CREATE PRODUCT WITH VARIANTS — productSet
 # ============================================
 async def create_shopify_product_with_variants(
     shop: str,
@@ -868,15 +996,66 @@ async def create_shopify_product_with_variants(
     is_available = product_data.get("is_available", True)
     status = "ACTIVE" if is_available else "DRAFT"
 
+    # ✅ Tags + productType build karo
+    shopify_tags = _build_shopify_tags(product_data)
+    product_type = _get_product_type(product_data)
+
+    # ✅ Category search karo — product title + categories se
+    categories = product_data.get("categories") or []
+    product_title = product_data.get("title", "")
+
+    shopify_category_id = None
+    if product_title or categories:
+        shopify_category_id = await find_best_category(
+            shop=shop,
+            access_token=access_token,
+            product_title=product_title,
+            categories=categories,
+        )
+
+    # ✅ productSet input build karo
+    input_data = {
+        "title": product_data.get("title") or "Untitled Product",
+        "descriptionHtml": product_data.get("description", ""),
+        "vendor": product_data.get("brand", ""),
+        "status": status,
+        "productOptions": [
+            {
+                "name": "Style",
+                "values": [
+                    {"name": v["title"]} for v in variants if v.get("title")
+                ] or [{"name": "Default"}],
+            }
+        ],
+    }
+
+    if shopify_tags:
+        input_data["tags"] = shopify_tags
+        logger.info(f"   Pushing {len(shopify_tags)} tags")
+
+    if product_type:
+        input_data["productType"] = product_type
+        logger.info(f"   Product type: {product_type}")
+
+    # ✅ Category add karo
+    if shopify_category_id:
+        input_data["category"] = shopify_category_id
+        logger.info(f"   Category: {shopify_category_id}")
+
     mutation_create = """
-    mutation productCreate($input: ProductCreateInput!) {
-      productCreate(product: $input) {
+    mutation productSet($input: ProductSetInput!) {
+      productSet(input: $input) {
         product {
           id
           title
           handle
           tags
           productType
+          category {
+            id
+            name
+            fullName
+          }
           options {
             id
             name
@@ -905,41 +1084,6 @@ async def create_shopify_product_with_variants(
     }
     """
 
-    option_values = [{"name": v["title"]} for v in variants if v.get("title")]
-
-    if not option_values:
-        logger.warning("No option values provided — using default")
-        option_values = [{"name": "Default"}]
-
-    # ✅ Tags + productType build karo
-    shopify_tags = _build_shopify_tags(product_data)
-    product_type = _get_product_type(product_data)
-
-    input_data = {
-        "title": product_data.get("title") or "Untitled Product",
-        "descriptionHtml": product_data.get("description", ""),
-        "vendor": product_data.get("brand", ""),
-        "status": status,
-        "productOptions": [
-            {
-                "name": "Style",
-                "values": option_values,
-            }
-        ],
-    }
-
-    # ✅ Tags add karo (agar hain to)
-    if shopify_tags:
-        input_data["tags"] = shopify_tags
-        logger.info(f"   Pushing {len(shopify_tags)} tags to Shopify")
-
-    # ✅ Product type add karo (agar hai to)
-    if product_type:
-        input_data["productType"] = product_type
-        logger.info(f"   Product type: {product_type}")
-
-    # ❌ Category add NAHI karo — Shopify AI suggest karega
-
     result = await shopify_graphql(
         shop, access_token, mutation_create, {"input": input_data}
     )
@@ -948,7 +1092,7 @@ async def create_shopify_product_with_variants(
         logger.error(f"❌ Product create error: {result['errors']}")
         return result
 
-    product_create = result.get("data", {}).get("productCreate", {})
+    product_create = result.get("data", {}).get("productSet", {})
     user_errors = product_create.get("userErrors", [])
 
     if user_errors:
@@ -959,21 +1103,18 @@ async def create_shopify_product_with_variants(
     product_id = shopify_product.get("id")
 
     logger.info(f"✅ Product created: {shopify_product.get('title')}")
-    if shopify_product.get("tags"):
-        logger.info(f"   Tags confirmed: {shopify_product.get('tags')}")
+    if shopify_product.get("category"):
+        logger.info(f"   Category confirmed: {shopify_product.get('category')}")
 
-    variant_edges = (
-        shopify_product.get("variants", {}).get("edges", [])
-    )
-
+    # ✅ Variants update karo
+    variant_edges = shopify_product.get("variants", {}).get("edges", [])
     variants_to_update = []
+
     for idx, edge in enumerate(variant_edges):
         if idx >= len(variants):
             break
-
         shopify_variant = edge["node"]
         our_variant = variants[idx]
-
         variants_to_update.append({
             "id": shopify_variant["id"],
             "price": str(our_variant.get("price", 0)),
@@ -1012,9 +1153,7 @@ async def create_shopify_product_with_variants(
         """
 
         var_result = await shopify_graphql(
-            shop,
-            access_token,
-            mutation_var,
+            shop, access_token, mutation_var,
             {"productId": product_id, "variants": variants_to_update},
         )
 
@@ -1027,11 +1166,9 @@ async def create_shopify_product_with_variants(
         for idx, var in enumerate(updated_variants):
             if idx >= len(variants):
                 break
-
             our_variant = variants[idx]
             inv_item_id = var.get("inventoryItem", {}).get("id")
             stock = our_variant.get("stock", 0)
-
             if inv_item_id:
                 await set_inventory_quantity(
                     shop=shop,
@@ -1166,9 +1303,7 @@ async def add_variant_to_existing_product(
 
 
 # ============================================
-# PRODUCT CREATE (SIMPLE)
-# + ✅ tags + productType
-# + ❌ Category removed (Shopify AI suggest karega)
+# ✅ PRODUCT CREATE (SIMPLE) — productSet
 # ============================================
 async def create_shopify_product(
     shop: str,
@@ -1184,6 +1319,7 @@ async def create_shopify_product(
     except (ValueError, TypeError):
         price_float = 0.0
 
+    # ✅ Metafields build karo
     metafields_input = []
 
     asin_value = str(product_data.get("asin", "") or "")
@@ -1239,6 +1375,20 @@ async def create_shopify_product(
     shopify_tags = _build_shopify_tags(product_data)
     product_type = _get_product_type(product_data)
 
+    # ✅ Category search karo — product title + categories se
+    categories = product_data.get("categories") or []
+    product_title = product_data.get("title", "")
+
+    shopify_category_id = None
+    if product_title or categories:
+        shopify_category_id = await find_best_category(
+            shop=shop,
+            access_token=access_token,
+            product_title=product_title,
+            categories=categories,
+        )
+
+    # ✅ productSet input build karo
     input_data = {
         "title": product_data.get("title") or "Untitled Product",
         "descriptionHtml": product_data.get("description", ""),
@@ -1246,17 +1396,17 @@ async def create_shopify_product(
         "status": status,
     }
 
-    # ✅ Tags add karo
     if shopify_tags:
         input_data["tags"] = shopify_tags
-        logger.info(f"   Pushing {len(shopify_tags)} tags to Shopify")
+        logger.info(f"   Pushing {len(shopify_tags)} tags")
 
-    # ✅ Product type add karo
     if product_type:
         input_data["productType"] = product_type
         logger.info(f"   Product type: {product_type}")
 
-    # ❌ Category add NAHI karo — Shopify AI suggest karega
+    if shopify_category_id:
+        input_data["category"] = shopify_category_id
+        logger.info(f"   Category: {shopify_category_id}")
 
     variant_attrs = product_data.get("variant_attributes") or []
     product_options = []
@@ -1277,14 +1427,19 @@ async def create_shopify_product(
         input_data["productOptions"] = product_options
 
     mutation_create = """
-    mutation productCreate($input: ProductCreateInput!) {
-      productCreate(product: $input) {
+    mutation productSet($input: ProductSetInput!) {
+      productSet(input: $input) {
         product {
           id
           title
           handle
           tags
           productType
+          category {
+            id
+            name
+            fullName
+          }
           options {
             id
             name
@@ -1320,7 +1475,7 @@ async def create_shopify_product(
         logger.error(f"❌ Product create error: {result['errors']}")
         return result
 
-    product_create = result.get("data", {}).get("productCreate", {})
+    product_create = result.get("data", {}).get("productSet", {})
     user_errors = product_create.get("userErrors", [])
 
     if user_errors:
@@ -1331,10 +1486,8 @@ async def create_shopify_product(
     product_id = shopify_product.get("id")
 
     logger.info(f"✅ Product created: {shopify_product.get('title')}")
-    if shopify_product.get("tags"):
-        logger.info(f"   Tags confirmed: {shopify_product.get('tags')}")
-    if shopify_product.get("productType"):
-        logger.info(f"   Product type confirmed: {shopify_product.get('productType')}")
+    if shopify_product.get("category"):
+        logger.info(f"   Category confirmed: {shopify_product.get('category')}")
 
     if product_id and metafields_input:
         await set_product_metafields(
@@ -1344,9 +1497,7 @@ async def create_shopify_product(
             metafields=metafields_input,
         )
 
-    variants_edges = (
-        shopify_product.get("variants", {}).get("edges", [])
-    )
+    variants_edges = shopify_product.get("variants", {}).get("edges", [])
 
     variant_id = None
     inventory_item_id = None
@@ -1354,9 +1505,7 @@ async def create_shopify_product(
     if variants_edges:
         variant_node = variants_edges[0]["node"]
         variant_id = variant_node.get("id")
-        inventory_item_id = (
-            variant_node.get("inventoryItem", {}).get("id")
-        )
+        inventory_item_id = variant_node.get("inventoryItem", {}).get("id")
 
     if product_id and variant_id and price_float > 0:
         await update_variant_with_tracked(
@@ -1673,9 +1822,7 @@ async def check_product_availability(
 
 
 # ============================================
-# ✅ SYNC SHOPIFY PRICE UPDATE
-# Async + auto-refresh on 401 AND 403
-# + ✅ NAYA: tags + productType bhi update karo
+# SYNC SHOPIFY PRICE UPDATE
 # ============================================
 async def sync_update_shopify_price(
     shop_domain: str,
@@ -1683,27 +1830,18 @@ async def sync_update_shopify_price(
     shopify_product_id: str,
     new_price: float,
     refresh_token: Optional[str] = None,
-    # ✅ NAYA: tags + productType bhi accept karo
     tags: Optional[list] = None,
     product_type: Optional[str] = None,
 ) -> bool:
-    """
-    Shopify product ka price asynchronously update karein.
-    Sab variants ka price set ho jayega.
-    401/403 pe refresh_token se auto-retry.
-    ✅ NAYA: Agar tags diye gaye hain to tags + productType bhi update karo.
-    """
     if not all([shop_domain, access_token, shopify_product_id]):
         logger.warning("Shopify sync skipped: missing config")
         return False
 
-    # GID format
     if not str(shopify_product_id).startswith("gid://"):
         product_gid = f"gid://shopify/Product/{shopify_product_id}"
     else:
         product_gid = shopify_product_id
 
-    # ✅ API version safety check
     api_version = _safe_api_version()
 
     api_url = (
@@ -1716,7 +1854,6 @@ async def sync_update_shopify_price(
         "Content-Type": "application/json",
     }
 
-    # Step 1: Fetch variants
     get_variants_query = """
     query getProductVariants($id: ID!) {
       product(id: $id) {
@@ -1745,7 +1882,6 @@ async def sync_update_shopify_price(
                     "variables": {"id": product_gid},
                 },
             )
-            # ✅ FIXED: 401 AND 403 pe refresh karo
             if res.status_code in (401, 403):
                 if refresh_token:
                     logger.warning(
@@ -1789,7 +1925,6 @@ async def sync_update_shopify_price(
             logger.warning(f"⚠️ No variants found for: {product_gid}")
             return False
 
-        # Step 2: Update all variants' price
         variants_to_update = [
             {
                 "id": edge["node"]["id"],
@@ -1858,7 +1993,6 @@ async def sync_update_shopify_price(
             f"✅ Shopify price updated: {len(updated)} variant(s) → ${new_price}"
         )
 
-        # ✅ NAYA: Price update ke baad tags + productType bhi update karo
         if tags is not None:
             await update_shopify_product_tags_and_type(
                 shop=shop_domain,
