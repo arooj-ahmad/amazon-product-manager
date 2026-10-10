@@ -5,6 +5,7 @@
 # + ✅ FIXED: expires_at = calculate (Shopify ab expiring mandatory)
 # + ✅ FIXED: exchange_code_for_token dict return karta hai
 # + ✅ FIXED: /callback bhi expiring token handle kare
+# + ✅ NAYA: categories + tags Shopify pe push
 # ============================================
 
 import logging
@@ -257,6 +258,7 @@ def get_store_id_by_domain(
 
 # ============================================
 # PUSH PRODUCT TO SHOPIFY (Admin Panel Se)
+# ✅ NAYA: categories + tags bhi push
 # ============================================
 @router.post("/push-product/{product_id}")
 async def push_product_to_shopify(
@@ -341,6 +343,7 @@ async def push_product_to_shopify(
                 "variant_added": True,
             }
 
+    # ✅ NAYA: categories + tags bhi pass karo
     product_data = {
         "title": product.title,
         "description": product.description or "",
@@ -362,6 +365,9 @@ async def push_product_to_shopify(
         "asin": product.asin,
         "parent_asin": product.parent_asin,
         "variant_attributes": product.variant_attributes or [],
+        # ✅ NAYA
+        "categories": product.categories or [],
+        "tags": product.tags or [],
     }
 
     result = await create_shopify_product(
@@ -411,6 +417,7 @@ async def push_product_to_shopify(
 # ============================================
 # ADD PRODUCT FROM SHOPIFY APP (Iframe Se)
 # ✅ FIXED: refresh_store_token HAR BAAR + expiring token
+# ✅ NAYA: categories + tags bhi push
 # ============================================
 @router.post("/app/add-product")
 async def add_product_from_shopify_app(
@@ -558,6 +565,7 @@ async def add_product_from_shopify_app(
         markup_type=user_markup_type,
     )
 
+    # ✅ NAYA: categories + tags bhi save karo
     new_product = Product(
         asin=asin,
         parent_asin=parent_asin,
@@ -579,6 +587,9 @@ async def add_product_from_shopify_app(
         markup_type=user_markup_type,
         is_manual_override=False,
         variant_attributes=data.get("variant_attributes", []),
+        # ✅ NAYA
+        categories=data.get("categories", []),
+        tags=data.get("tags", []),
         shopify_store_id=store.id,
         shopify_status="active",
     )
@@ -638,6 +649,7 @@ async def add_product_from_shopify_app(
                 logger.info("🆕 Creating new product")
                 option_name, variant_title = extract_variation_info(data)
 
+                # ✅ NAYA: categories + tags pass karo
                 _result = await create_shopify_product(
                     shop=shop_domain,
                     access_token=store.access_token,
@@ -662,6 +674,9 @@ async def add_product_from_shopify_app(
                         "asin": new_product.asin,
                         "parent_asin": new_product.parent_asin,
                         "variant_attributes": new_product.variant_attributes or [],
+                        # ✅ NAYA
+                        "categories": new_product.categories or [],
+                        "tags": new_product.tags or [],
                     },
                 )
 
