@@ -4,10 +4,11 @@
 # + ✅ FIXED: Store selection per product
 # + ✅ NAYA: refresh_token pass karo auto-refresh ke liye
 # + ✅ NAYA: Refresh ke baad DB mein naya token save karo
+# + ✅ NAYA: Proactive token refresh (_ensure_valid_store_token)
 # ============================================
 
 import logging
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import or_
@@ -69,6 +70,79 @@ def _get_store_for_product(
     if not store:
         store = db.query(ShopifyStore).first()
     return store
+
+
+# ============================================
+# ✅ NAYA: Proactive Token Refresh
+# ============================================
+async def _ensure_valid_store_token(
+    db: Session,
+    store: ShopifyStore,
+) -> bool:
+    """
+    Token ko proactively refresh karo agar expire hone wala hai (5 min ke andar).
+    Returns: True agar token valid hai, False agar nahi.
+    """
+    if not store or not store.access_token:
+        logger.warning("No store or access_token")
+        return False
+
+    # Agar expires_at NULL hai -> permanent token (valid)
+    if not store.expires_at:
+        logger.debug(f"Permanent token (no expiry) for {store.shop_domain}")
+        return True
+
+    now = datetime.now(timezone.utc)
+    buffer = timedelta(minutes=5)
+
+    # Abhi bhi valid hai
+    if store.expires_at > now + buffer:
+        logger.debug(
+            f"Token valid for {store.shop_domain} "
+            f"(expires_at={store.expires_at}, now={now})"
+        )
+        return True
+
+    # Token expire hone wala hai (ya ho gaya) - refresh karo
+    logger.info(
+        f"🔄 Token expiring/expired for {store.shop_domain} "
+        f"(expires_at={store.expires_at}), refreshing proactively..."
+    )
+
+    if not store.refresh_token:
+        logger.error(f"❌ No refresh_token for {store.shop_domain}")
+        return False
+
+    new_data = await refresh_shopify_token(
+        store.shop_domain, store.refresh_token
+    )
+    if not new_data or not new_data.get("access_token"):
+        logger.error(f"❌ Proactive refresh failed for {store.shop_domain}")
+        return False
+
+    # Naya token save karo
+    store.access_token = new_data["access_token"]
+    if new_data.get("refresh_token"):
+        store.refresh_token = new_data["refresh_token"]
+
+    expires_in = new_data.get("expires_in")
+    if expires_in:
+        store.expires_at = now + timedelta(seconds=int(expires_in))
+
+    refresh_expires_in = new_data.get("refresh_token_expires_in")
+    if refresh_expires_in:
+        store.refresh_token_expires_at = now + timedelta(
+            seconds=int(refresh_expires_in)
+        )
+
+    db.commit()
+    db.refresh(store)
+
+    logger.info(
+        f"✅ Proactive refresh success for {store.shop_domain} "
+        f"(new expires_at={store.expires_at})"
+    )
+    return True
 
 
 # ============================================
@@ -455,10 +529,22 @@ async def update_product_markup(
     db.commit()
     db.refresh(product)
 
-    # ✅ FIXED: Product ke store se
+    # ✅ Product ke store se
     store = _get_store_for_product(db, product)
 
     if store and store.access_token and product.shopify_product_id:
+        # ✅ NAYA: Token ko pehle ensure karo (proactive refresh)
+        token_ok = await _ensure_valid_store_token(db, store)
+
+        if not token_ok:
+            logger.warning(
+                f"⚠️ Token invalid for {store.shop_domain}, "
+                f"price update skipped. Reinstall app: "
+                f"https://amazon-product-manager-production.up.railway.app"
+                f"/api/shopify/install?shop={store.shop_domain}"
+            )
+            return product
+
         logger.info(
             f"🔄 Syncing price: shop={store.shop_domain}, "
             f"product={product.shopify_product_id}, price=${new_price}"
@@ -469,7 +555,7 @@ async def update_product_markup(
                 access_token=store.access_token,
                 shopify_product_id=product.shopify_product_id,
                 new_price=new_price,
-                refresh_token=store.refresh_token,   # ✅ NAYA
+                refresh_token=store.refresh_token,
             )
             if ok:
                 logger.info(
@@ -502,6 +588,7 @@ async def bulk_update_markup(
     updated = 0
     shopify_updated = 0
     shopify_failed = 0
+    token_refreshed_stores = set()
 
     for product in products:
         new_price = calculate_final_price(
@@ -525,13 +612,25 @@ async def bulk_update_markup(
             and product_store.access_token
             and product.shopify_product_id
         ):
+            # ✅ NAYA: Ek store ka token ek baar hi refresh karo
+            if product_store.shop_domain not in token_refreshed_stores:
+                token_ok = await _ensure_valid_store_token(db, product_store)
+                if not token_ok:
+                    logger.warning(
+                        f"⚠️ Token invalid for {product_store.shop_domain}, "
+                        f"skipping products of this store"
+                    )
+                    shopify_failed += 1
+                    continue
+                token_refreshed_stores.add(product_store.shop_domain)
+
             try:
                 ok = await sync_update_shopify_price(
                     shop_domain=product_store.shop_domain,
                     access_token=product_store.access_token,
                     shopify_product_id=product.shopify_product_id,
                     new_price=new_price,
-                    refresh_token=product_store.refresh_token,   # ✅ NAYA
+                    refresh_token=product_store.refresh_token,
                 )
                 if ok:
                     shopify_updated += 1
@@ -574,6 +673,19 @@ async def sync_products_from_shopify(
         raise HTTPException(
             status_code=400,
             detail="Shopify store not configured",
+        )
+
+    # ✅ NAYA: Sync se pehle token ensure karo
+    token_ok = await _ensure_valid_store_token(db, store)
+    if not token_ok:
+        raise HTTPException(
+            status_code=401,
+            detail=(
+                f"Token invalid for {store.shop_domain}. "
+                f"Please reinstall the app: "
+                f"https://amazon-product-manager-production.up.railway.app"
+                f"/api/shopify/install?shop={store.shop_domain}"
+            ),
         )
 
     shop = store.shop_domain
