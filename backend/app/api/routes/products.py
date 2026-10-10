@@ -5,6 +5,7 @@
 # + ✅ NAYA: refresh_token pass karo auto-refresh ke liye
 # + ✅ NAYA: Refresh ke baad DB mein naya token save karo
 # + ✅ NAYA: Proactive token refresh (_ensure_valid_store_token)
+# + ✅ NAYA: categories + tags save (fetch pe) + push (markup update pe)
 # ============================================
 
 import logging
@@ -351,6 +352,7 @@ def get_all_products_admin(
     )
 
 
+# ✅ UPDATED: categories + tags save karo
 @router.post(
     "/admin/fetch",
     response_model=ProductFetchResponse,
@@ -413,6 +415,9 @@ async def admin_fetch_product(
         stock_quantity=data.get("stock_quantity", 0),
         last_synced_at=datetime.now(timezone.utc),
         variant_attributes=data.get("variant_attributes", []),
+        # ✅ NAYA: categories + tags save karo
+        categories=data.get("categories", []),
+        tags=data.get("tags", []),
         shopify_store_id=default_store.id if default_store else None,
         shopify_status="active",
     )
@@ -501,6 +506,7 @@ def list_products_for_markup(
     return products
 
 
+# ✅ UPDATED: tags + productType bhi push karo
 @router.patch("/markup/{product_id}", response_model=ProductResponse)
 async def update_product_markup(
     product_id: int,
@@ -549,6 +555,12 @@ async def update_product_markup(
             f"🔄 Syncing price: shop={store.shop_domain}, "
             f"product={product.shopify_product_id}, price=${new_price}"
         )
+
+        # ✅ NAYA: tags + product_type bhi pass karo
+        product_tags = product.tags or []
+        product_categories = product.categories or []
+        product_type = product_categories[0] if product_categories else ""
+
         try:
             ok = await sync_update_shopify_price(
                 shop_domain=store.shop_domain,
@@ -556,10 +568,13 @@ async def update_product_markup(
                 shopify_product_id=product.shopify_product_id,
                 new_price=new_price,
                 refresh_token=store.refresh_token,
+                # ✅ NAYA
+                tags=product_tags,
+                product_type=product_type,
             )
             if ok:
                 logger.info(
-                    f"✅ Shopify price updated: {product.asin} → ${new_price}"
+                    f"✅ Shopify price + tags updated: {product.asin} → ${new_price}"
                 )
             else:
                 logger.warning(
@@ -571,6 +586,7 @@ async def update_product_markup(
     return product
 
 
+# ✅ UPDATED: tags + productType bhi push karo
 @router.post("/markup/bulk-update")
 async def bulk_update_markup(
     payload: MarkupUpdate,
@@ -624,6 +640,11 @@ async def bulk_update_markup(
                     continue
                 token_refreshed_stores.add(product_store.shop_domain)
 
+            # ✅ NAYA: tags + product_type pass karo
+            product_tags = product.tags or []
+            product_categories = product.categories or []
+            product_type = product_categories[0] if product_categories else ""
+
             try:
                 ok = await sync_update_shopify_price(
                     shop_domain=product_store.shop_domain,
@@ -631,6 +652,9 @@ async def bulk_update_markup(
                     shopify_product_id=product.shopify_product_id,
                     new_price=new_price,
                     refresh_token=product_store.refresh_token,
+                    # ✅ NAYA
+                    tags=product_tags,
+                    product_type=product_type,
                 )
                 if ok:
                     shopify_updated += 1

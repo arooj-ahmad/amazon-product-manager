@@ -13,6 +13,7 @@
 # + ✅ FIXED: expiring:"1" WAPAS ADD KIYA (Shopify permanent reject karta hai)
 # + ✅ FIXED: exchange_code_for_token ab DICT return karta hai
 # + ✅ NAYA: tags + productType push (Collections ke liye)
+# + ✅ NAYA: Existing product ke tags + productType update karo
 # ============================================
 
 import hashlib
@@ -790,6 +791,72 @@ async def ensure_product_has_option(
         return False
 
     logger.info(f"   ✅ Option '{option_name}' created successfully")
+    return True
+
+
+# ============================================
+# ✅ NAYA: EXISTING PRODUCT KE TAGS + TYPE UPDATE KARO
+# ============================================
+async def update_shopify_product_tags_and_type(
+    shop: str,
+    access_token: str,
+    shopify_product_id: str,
+    tags: list[str],
+    product_type: str = "",
+) -> bool:
+    """
+    Existing Shopify product ke tags + productType update karo.
+    Price update ke saath call karo.
+    """
+    if not shopify_product_id.startswith("gid://"):
+        product_gid = f"gid://shopify/Product/{shopify_product_id}"
+    else:
+        product_gid = shopify_product_id
+
+    mutation = """
+    mutation productUpdate($input: ProductInput!) {
+      productUpdate(input: $input) {
+        product {
+          id
+          title
+          tags
+          productType
+        }
+        userErrors {
+          field
+          message
+        }
+      }
+    }
+    """
+
+    input_data = {
+        "id": product_gid,
+        "tags": tags,
+    }
+
+    if product_type:
+        input_data["productType"] = product_type
+
+    variables = {"input": input_data}
+
+    result = await shopify_graphql(shop, access_token, mutation, variables)
+
+    if "errors" in result:
+        logger.error(f"❌ Tags update GraphQL errors: {result['errors']}")
+        return False
+
+    update_data = result.get("data", {}).get("productUpdate", {})
+    user_errors = update_data.get("userErrors", [])
+
+    if user_errors:
+        logger.error(f"❌ Tags update user errors: {user_errors}")
+        return False
+
+    updated = update_data.get("product", {})
+    logger.info(f"✅ Tags updated: {len(updated.get('tags', []))} tags")
+    if updated.get("productType"):
+        logger.info(f"   Product type: {updated.get('productType')}")
     return True
 
 
@@ -1608,6 +1675,7 @@ async def check_product_availability(
 # ============================================
 # ✅ SYNC SHOPIFY PRICE UPDATE
 # Async + auto-refresh on 401 AND 403
+# + ✅ NAYA: tags + productType bhi update karo
 # ============================================
 async def sync_update_shopify_price(
     shop_domain: str,
@@ -1615,11 +1683,15 @@ async def sync_update_shopify_price(
     shopify_product_id: str,
     new_price: float,
     refresh_token: Optional[str] = None,
+    # ✅ NAYA: tags + productType bhi accept karo
+    tags: Optional[list] = None,
+    product_type: Optional[str] = None,
 ) -> bool:
     """
     Shopify product ka price asynchronously update karein.
     Sab variants ka price set ho jayega.
     401/403 pe refresh_token se auto-retry.
+    ✅ NAYA: Agar tags diye gaye hain to tags + productType bhi update karo.
     """
     if not all([shop_domain, access_token, shopify_product_id]):
         logger.warning("Shopify sync skipped: missing config")
@@ -1690,6 +1762,8 @@ async def sync_update_shopify_price(
                             shopify_product_id=shopify_product_id,
                             new_price=new_price,
                             refresh_token=new_data.get("refresh_token"),
+                            tags=tags,
+                            product_type=product_type,
                         )
                 logger.error(
                     f"❌ {res.status_code} Unauthorized for {shop_domain} "
@@ -1783,6 +1857,17 @@ async def sync_update_shopify_price(
         logger.info(
             f"✅ Shopify price updated: {len(updated)} variant(s) → ${new_price}"
         )
+
+        # ✅ NAYA: Price update ke baad tags + productType bhi update karo
+        if tags is not None:
+            await update_shopify_product_tags_and_type(
+                shop=shop_domain,
+                access_token=access_token,
+                shopify_product_id=shopify_product_id,
+                tags=tags,
+                product_type=product_type or "",
+            )
+
         return True
 
     except httpx.HTTPStatusError as e:

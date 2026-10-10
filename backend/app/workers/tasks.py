@@ -11,6 +11,7 @@
 # + ✅ NAYA: Inventory update bhi hota hai (process_price_update mein)
 # + ✅ NAYA: Har variant ka inventory update
 # + ✅ NAYA: set_inventory_quantity ka result check
+# + ✅ NAYA: Tags + Categories Shopify pe push (Collections ke liye)
 
 from typing import Any, Dict
 import logging
@@ -104,6 +105,7 @@ async def process_batch_urls(ctx: Dict[str, Any], job_id: str, urls: list):
 
 # ============================================
 # ✅ WORKER FUNCTION 2: PRICE + INVENTORY UPDATE
+# + ✅ NAYA: Tags + Categories push
 # ============================================
 async def process_price_update(ctx: Dict[str, Any], asin: str):
     """
@@ -111,6 +113,7 @@ async def process_price_update(ctx: Dict[str, Any], asin: str):
     ✅ FIXED: Manual override skip NAHI hota
     ✅ FIXED: Price push HAR change pe
     ✅ NAYA: Inventory bhi update hota hai
+    ✅ NAYA: Tags + Categories bhi push hote hain
     """
     from app.models import Product, ShopifyStore
     from app.services.brightdata import (
@@ -124,6 +127,7 @@ async def process_price_update(ctx: Dict[str, Any], asin: str):
         update_shopify_product_status,
         set_inventory_quantity,
         shopify_graphql,
+        update_shopify_product_tags_and_type,  # ✅ NAYA
     )
 
     db = SessionLocal()
@@ -157,6 +161,12 @@ async def process_price_update(ctx: Dict[str, Any], asin: str):
             product.rating = data["rating"]
         if data.get("reviews_count") is not None:
             product.reviews_count = data["reviews_count"]
+
+        # ✅ NAYA: Categories + Tags update karo
+        if data.get("categories") is not None:
+            product.categories = data["categories"]
+        if data.get("tags") is not None:
+            product.tags = data["tags"]
 
         # 4. Price recalculate
         new_final_price = calculate_final_price(
@@ -200,13 +210,21 @@ async def process_price_update(ctx: Dict[str, Any], asin: str):
                 if status_ok:
                     logger.info(f"[PRICE] ✅ Status synced: {asin}, available={new_availability}")
 
-                # ✅ 2. Price update
+                # ✅ 2. Price update (+ tags bhi saath mein)
+                # sync_update_shopify_price ab tags + product_type bhi accept karta hai
+                product_tags = product.tags or []
+                product_categories = product.categories or []
+                product_type = product_categories[0] if product_categories else ""
+
                 ok = await sync_update_shopify_price(
                     shop_domain=store.shop_domain,
                     access_token=store.access_token,
                     shopify_product_id=shopify_id,
                     new_price=new_final_price,
                     refresh_token=store.refresh_token,
+                    # ✅ NAYA: tags + product_type pass karo
+                    tags=product_tags,
+                    product_type=product_type,
                 )
 
                 if ok:
@@ -296,6 +314,30 @@ async def process_price_update(ctx: Dict[str, Any], asin: str):
                             "type": "single_line_text_field",
                         })
 
+                    if product.rating is not None:
+                        metafields_input.append({
+                            "namespace": "custom",
+                            "key": "rating",
+                            "value": str(product.rating),
+                            "type": "single_line_text_field",
+                        })
+
+                    if product.reviews_count is not None:
+                        metafields_input.append({
+                            "namespace": "custom",
+                            "key": "reviews_count",
+                            "value": str(product.reviews_count),
+                            "type": "single_line_text_field",
+                        })
+
+                    if product.asin:
+                        metafields_input.append({
+                            "namespace": "custom",
+                            "key": "asin",
+                            "value": str(product.asin),
+                            "type": "single_line_text_field",
+                        })
+
                     if metafields_input:
                         await set_product_metafields(
                             shop=store.shop_domain,
@@ -316,6 +358,8 @@ async def process_price_update(ctx: Dict[str, Any], asin: str):
             f"[PRICE] ✅ {asin} "
             f"amazon: ${old_amazon} → ${new_amazon_price}, "
             f"final: ${old_price} → ${new_final_price}, "
+            f"categories: {len(product.categories or [])}, "
+            f"tags: {len(product.tags or [])}, "
             f"shopify_updated: {shopify_updated}"
         )
 
@@ -326,6 +370,8 @@ async def process_price_update(ctx: Dict[str, Any], asin: str):
             "new_amazon": new_amazon_price,
             "old_price": old_price,
             "new_price": new_final_price,
+            "categories_count": len(product.categories or []),
+            "tags_count": len(product.tags or []),
             "shopify_updated": shopify_updated,
         }
 
