@@ -3,9 +3,9 @@
 # Har 24 ghante Amazon se fresh prices fetch karne wala scheduler
 # + Out of Stock tracking
 # + Shopify Status Sync (DB token use karta hai)
-# + Inventory quantity sync
+# + Inventory quantity sync (har variant)
 # + Shopify price update (HAR CHANGE PE — increase ya decrease)
-# + Sirf Active products (Draft skip)
+# + SAARE products process (draft bhi)
 # + price hamesha amazon_price + markup update
 # + Shopify metafields update
 # + ✅ NAYA: shopify_status field DB mein save
@@ -15,6 +15,9 @@
 # + ✅ FIXED: Product ke shopify_store_id se store dhoondha jata hai
 # + ✅ FIXED: Manual override skip NAHI hota — sab products process hote hain
 # + ✅ FIXED: Price push HAR change pe (increase ya decrease)
+# + ✅ FIXED: is_available filter HATA DIYA — saare products process hote hain
+# + ✅ FIXED: set_inventory_quantity ka result check hota hai
+# + ✅ FIXED: Inventory error par warning log hoti hai
 # ============================================
 
 import logging
@@ -134,6 +137,7 @@ async def find_shopify_product_by_title(
 
 # ============================================
 # ✅ HELPER: SHOPIFY STATUS + INVENTORY SYNC
+# ✅ FIXED: set_inventory_quantity ka result check hota hai
 # ============================================
 async def sync_shopify_product(
     product: Product,
@@ -188,7 +192,7 @@ async def sync_shopify_product(
             db.commit()
             return
 
-        # Status update
+        # ── Status update ──
         status_success = await update_shopify_product_status(
             shop=shop,
             access_token=access_token,
@@ -201,6 +205,10 @@ async def sync_shopify_product(
                 f"✅ Shopify status synced: ASIN={product.asin}, "
                 f"available={is_available}"
             )
+        else:
+            logger.warning(
+                f"⚠️ Shopify status update failed: ASIN={product.asin}"
+            )
 
         product.shopify_status = "active" if is_available else "draft"
         product.shopify_product_id = shopify_id
@@ -210,11 +218,11 @@ async def sync_shopify_product(
             f"ASIN={product.asin}, status={product.shopify_status}"
         )
 
-        # Inventory quantity update
+        # ── Inventory quantity update (HAR VARIANT) ──
         query = """
         query getProductInventory($id: ID!) {
           product(id: $id) {
-            variants(first: 1) {
+            variants(first: 50) {
               edges {
                 node {
                   id
@@ -232,6 +240,14 @@ async def sync_shopify_product(
             shop, access_token, query, {"id": shopify_id}
         )
 
+        # ✅ Check GraphQL error
+        if "errors" in result:
+            logger.error(
+                f"❌ Inventory query error for ASIN={product.asin}: "
+                f"{result['errors']}"
+            )
+            return
+
         edges = (
             result.get("data", {})
             .get("product", {})
@@ -239,25 +255,46 @@ async def sync_shopify_product(
             .get("edges", [])
         )
 
-        if edges:
+        if not edges:
+            logger.warning(
+                f"⚠️ No variants found for ASIN={product.asin}"
+            )
+            return
+
+        # ✅ Har variant ka inventory update karo
+        for edge in edges:
             inventory_item_id = (
-                edges[0]["node"]
+                edge.get("node", {})
                 .get("inventoryItem", {})
                 .get("id")
             )
 
-            if inventory_item_id:
-                qty = stock_quantity
-                if qty == 0 and is_available:
-                    qty = 100
-
-                await set_inventory_quantity(
-                    shop=shop,
-                    access_token=access_token,
-                    inventory_item_id=inventory_item_id,
-                    quantity=qty,
+            if not inventory_item_id:
+                logger.warning(
+                    f"⚠️ inventory_item_id missing for ASIN={product.asin}"
                 )
-                logger.info(f"✅ Inventory synced: {qty}")
+                continue
+
+            qty = stock_quantity
+            if qty == 0 and is_available:
+                qty = 100
+
+            inv_ok = await set_inventory_quantity(
+                shop=shop,
+                access_token=access_token,
+                inventory_item_id=inventory_item_id,
+                quantity=qty,
+            )
+
+            if inv_ok:
+                logger.info(
+                    f"✅ Inventory synced: ASIN={product.asin}, qty={qty}"
+                )
+            else:
+                logger.error(
+                    f"❌ Inventory update FAILED: ASIN={product.asin}, "
+                    f"qty={qty}"
+                )
 
     except Exception as e:
         logger.error(f"❌ Shopify sync error: ASIN={product.asin}: {e}")
@@ -383,9 +420,10 @@ async def sync_shopify_price(product: Product, new_price: float, db: Session):
 
 # ============================================
 # JOB: UPDATE ALL PRICES
+# ✅ FIXED: is_available filter HATA DIYA
 # ============================================
 async def update_all_prices():
-    """Saare Active products ke prices update karta hai (24h)."""
+    """SAARE products ke prices update karta hai (24h)."""
     logger.info("=" * 60)
     logger.info("PRICE UPDATE JOB STARTED")
     logger.info("=" * 60)
@@ -393,10 +431,10 @@ async def update_all_prices():
     db: Session = SessionLocal()
 
     try:
-        products = db.query(Product).filter(
-            Product.is_available == True  # noqa: E712
-        ).all()
-        logger.info(f"Total Active products: {len(products)}")
+        # ✅ FIXED: Saare products process karo (draft/out-of-stock bhi)
+        # Isse wapas stock aane pe is_available = true ho jayega
+        products = db.query(Product).all()
+        logger.info(f"Total products: {len(products)}")
 
         updated_count = 0
         skipped_count = 0
@@ -408,8 +446,6 @@ async def update_all_prices():
         price_recalculated_count = 0
 
         for product in products:
-            # ✅ NAYA: Manual override skip NAHI hota
-            # Har product process hoga
             try:
                 amazon_url = f"https://www.amazon.com/dp/{product.asin}"
                 data = await fetch_product_from_brightdata(amazon_url)
@@ -492,7 +528,7 @@ async def update_all_prices():
 
                 price_recalculated_count += 1
 
-                # ✅ STEP 4: Shopify pe price + metafields HAR change pe push
+                # STEP 4: Shopify pe price + metafields HAR change pe push
                 if new_amazon_price != old_amazon:
                     await sync_shopify_price(
                         product=product,

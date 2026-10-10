@@ -1,8 +1,9 @@
 # sync_shopify_ids.py
+# ✅ FIXED: Sahi store selection + token check
 import sys
 import os
 
-# ✅ NAYA: PYTHONPATH fix — script ke folder ko add karo
+# ✅ PYTHONPATH fix — script ke folder ko add karo
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import asyncio
@@ -19,28 +20,47 @@ logging.basicConfig(
 
 async def sync_ids():
     db = SessionLocal()
-    store = db.query(ShopifyStore).first()
-    
-    if not store or not store.access_token:
+
+    # ✅ FIXED: Sahi store explicitly
+    store = db.query(ShopifyStore).filter(
+        ShopifyStore.shop_domain == "test-store-ispfraip.myshopify.com"
+    ).first()
+
+    if not store:
+        store = db.query(ShopifyStore).first()  # Fallback
+
+    if not store:
         print("❌ No Shopify store in DB")
         db.close()
         return
-    
+
+    if not store.access_token:
+        print(f"❌ No access_token for store: {store.shop_domain}")
+        print("   Please reinstall the app first.")
+        db.close()
+        return
+
     shop = store.shop_domain
     access_token = store.access_token
-    
+
+    print(f"✅ Using store: {shop}")
+    print(f"✅ Token: {access_token[:15]}...")
+    print(f"✅ Expires at: {store.expires_at}")
+    print()
+
     # ✅ Saare products jinke paas shopify_product_id nahi hai
     products = db.query(Product).filter(
         Product.shopify_product_id.is_(None),
         Product.asin.isnot(None),
     ).all()
-    
+
     print(f"Total products without shopify_id: {len(products)}")
-    
+    print("=" * 50)
+
     synced = 0
     not_found = 0
     errors = 0
-    
+
     for p in products:
         try:
             shopify_id = await get_shopify_product_by_sku(
@@ -48,22 +68,22 @@ async def sync_ids():
                 access_token=access_token,
                 sku=p.asin,
             )
-            
+
             if shopify_id:
                 p.shopify_product_id = shopify_id
                 db.commit()
                 print(f"✅ {p.asin} → {shopify_id}")
                 synced += 1
             else:
-                print(f"⚠️ {p.asin} not found in Shopify (SKU check karo)")
+                print(f"⚠️ {p.asin} not found in Shopify")
                 not_found += 1
-            
+
             await asyncio.sleep(0.5)
-        
+
         except Exception as e:
             print(f"❌ {p.asin}: {e}")
             errors += 1
-    
+
     db.close()
     print(f"\n{'='*50}")
     print(f"✅ Synced: {synced}")

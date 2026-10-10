@@ -1,5 +1,10 @@
 # run_price_update.py
 import sys
+import os
+
+# ✅ NAYA: PYTHONPATH fix — script ke folder ko add karo
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+
 import asyncio
 import logging
 
