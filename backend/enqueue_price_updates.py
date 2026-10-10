@@ -1,12 +1,14 @@
 # enqueue_price_updates.py
+# ✅ FIXED: Direct process — Redis/arq bypass
+# Cron job yeh file chalayega → saare products ka price update hoga
+
 import asyncio
 import logging
-from arq import create_pool
-from arq.connections import RedisSettings
+import sys
 
-from app.config import settings
 from app.database import SessionLocal
 from app.models import Product
+from app.workers.tasks import process_price_update
 
 logging.basicConfig(
     level=logging.INFO,
@@ -16,15 +18,15 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
-async def enqueue_all():
+async def run_all():
     """
-    Saare products ko Redis queue mein enqueue karo.
+    Saare products ka price update DIRECTLY chalao.
     - Active + Draft dono
     - Manual override skip
+    - Redis/arq ki zaroorat nahi
     """
     db = SessionLocal()
 
-    # ✅ Saare products uthao (Active + Draft)
     products = db.query(Product).filter(
         Product.is_manual_override == False,  # noqa: E712
         Product.asin.isnot(None),
@@ -33,36 +35,53 @@ async def enqueue_all():
     db.close()
 
     total = len(products)
-    logger.info(f"Total products to enqueue: {total}")
+    logger.info("=" * 60)
+    logger.info(f"🚀 DIRECT PRICE UPDATE — Total products: {total}")
+    logger.info("=" * 60)
 
     if total == 0:
-        logger.warning("No products to enqueue")
+        logger.warning("⚠️ No products to process")
         return
 
-    redis = await create_pool(
-        RedisSettings.from_dsn(settings.REDIS_URL)
-    )
+    # ✅ Context (Redis optional hai, None bhi chalega)
+    ctx = {"redis": None}
 
-    enqueued = 0
-    errors = 0
+    success = 0
+    failed = 0
+    skipped = 0
 
-    for p in products:
+    for i, p in enumerate(products, start=1):
         try:
-            await redis.enqueue_job("process_price_update", p.asin)
-            enqueued += 1
+            logger.info(f"[{i}/{total}] Processing ASIN={p.asin}...")
+            result = await process_price_update(ctx, p.asin)
 
-            if enqueued % 100 == 0:
-                logger.info(f"Enqueued: {enqueued}/{total}")
+            status = result.get("status") if isinstance(result, dict) else "unknown"
+
+            if status == "success":
+                success += 1
+                logger.info(f"[{i}/{total}] ✅ {p.asin}: {result}")
+            elif status == "skipped_manual_override":
+                skipped += 1
+                logger.info(f"[{i}/{total}] ⏭️ {p.asin}: skipped (manual override)")
+            else:
+                failed += 1
+                logger.warning(f"[{i}/{total}] ⚠️ {p.asin}: {result}")
 
         except Exception as e:
-            logger.error(f"Failed to enqueue {p.asin}: {e}")
-            errors += 1
+            failed += 1
+            logger.error(f"[{i}/{total}] ❌ {p.asin}: {e}", exc_info=True)
 
-    await redis.aclose()  # ✅ aclose() use karo (deprecated close() nahi)
-
-    logger.info(f"✅ Enqueued: {enqueued} jobs")
-    logger.info(f"❌ Errors: {errors}")
+    logger.info("=" * 60)
+    logger.info(f"✅ Success: {success}")
+    logger.info(f"⏭️ Skipped: {skipped}")
+    logger.info(f"❌ Failed: {failed}")
+    logger.info(f"📊 Total: {total}")
+    logger.info("=" * 60)
 
 
 if __name__ == "__main__":
-    asyncio.run(enqueue_all())
+    # Windows event loop fix
+    if sys.platform == "win32":
+        asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
+
+    asyncio.run(run_all())
