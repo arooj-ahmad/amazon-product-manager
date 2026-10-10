@@ -8,6 +8,8 @@
 # + Shopify price ko amazon_price mein save karo
 # + SKU na hone par bhi product add karo (chhota SKU)
 # + Markup apply karne par Shopify par bhi update karo
+# + ✅ FIXED: shop= → shop_domain= in sync_update_shopify_price calls
+# + ✅ FIXED: admin_fetch mein shopify_store_id + shopify_status set karo
 # ============================================
 
 import logging
@@ -291,6 +293,9 @@ async def admin_fetch_product(
         markup_type=user_markup_type,
     )
 
+    # ✅ NAYA: Default store dhoondho
+    default_store = db.query(ShopifyStore).first()
+
     new_product = Product(
         asin=asin,
         parent_asin=data["parent_asin"],
@@ -313,6 +318,9 @@ async def admin_fetch_product(
         stock_quantity=data.get("stock_quantity", 0),
         last_synced_at=datetime.now(timezone.utc),
         variant_attributes=data.get("variant_attributes", []),
+        # ✅ NAYA: Store link + status
+        shopify_store_id=default_store.id if default_store else None,
+        shopify_status="active",
     )
 
     db.add(new_product)
@@ -433,7 +441,7 @@ async def update_product_markup(
     if store and store.access_token and product.shopify_product_id:
         try:
             await sync_update_shopify_price(
-                shop=store.shop_domain,
+                shop_domain=store.shop_domain,   # ✅ FIXED
                 access_token=store.access_token,
                 shopify_product_id=product.shopify_product_id,
                 new_price=new_price,
@@ -482,7 +490,7 @@ async def bulk_update_markup(
         if store and store.access_token and product.shopify_product_id:
             try:
                 await sync_update_shopify_price(
-                    shop=store.shop_domain,
+                    shop_domain=store.shop_domain,   # ✅ FIXED
                     access_token=store.access_token,
                     shopify_product_id=product.shopify_product_id,
                     new_price=new_price,
@@ -502,7 +510,6 @@ async def bulk_update_markup(
 
 # ============================================
 # SHOPIFY SE PRODUCTS SYNC KARO
-# ✅ NAYA: SKU chhota banao (max 20 chars)
 # ============================================
 
 @router.post("/markup/sync-from-shopify")
@@ -512,7 +519,6 @@ async def sync_products_from_shopify(
 ):
     """
     Shopify se saare Active products fetch karo aur database mein sync karo.
-    SKU na hone par chhota ASIN banaya jata hai (max 20 chars).
     """
     if store_id:
         store = db.query(ShopifyStore).filter(ShopifyStore.id == store_id).first()

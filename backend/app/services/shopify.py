@@ -6,10 +6,9 @@
 # + 2026-07 API compatible (variants removed from productCreate)
 # + Storefront API (real-time availability check)
 # + 5 Metafields: asin, rating, amazon_price, reviews_count, availability
-#   (parent_asin — temporarily disabled due to fake ASINs from Bright Data)
 # + Variations Support (parent + variant creation & auto-grouping)
-# + Option Existence Check (via productSet — 2026-07 compatible)
-# + Sync Price Update (for pricing settings)
+# + Option Existence Check (via productSet)
+# + ✅ FIXED: sync_update_shopify_price is now async + API version safety check
 # ============================================
 
 import hashlib
@@ -25,6 +24,17 @@ import jwt
 from app.config import settings
 
 logger = logging.getLogger(__name__)
+
+
+# ============================================
+# HELPER: Safe API version
+# ============================================
+def _safe_api_version() -> str:
+    """2026-10 / unstable / empty ko 2025-01 pe fallback karo."""
+    v = (settings.SHOPIFY_API_VERSION or "2025-01").strip()
+    if v in ("2026-10", "unstable", ""):
+        return "2025-01"
+    return v
 
 
 # ============================================
@@ -141,9 +151,6 @@ async def exchange_code_for_token(shop: str, code: str) -> Optional[str]:
 
 # ============================================
 # TOKEN EXCHANGE (Session/ID token → Offline access token)
-# Managed install wale embedded apps ke liye — Shopify OAuth
-# callback call nahi karta, is liye frontend ka session token
-# exchange karke offline token lete hain.
 # ============================================
 async def exchange_id_token_for_offline_token(
     shop: str, id_token: str
@@ -159,7 +166,7 @@ async def exchange_id_token_for_offline_token(
         "requested_token_type": (
             "urn:shopify:params:oauth:token-type:offline-access-token"
         ),
-        "expiring": "1",  # ✅ YEH ADD KARO — expiring offline token ke liye
+        "expiring": "1",
     }
 
     try:
@@ -180,9 +187,9 @@ async def exchange_id_token_for_offline_token(
             return {
                 "access_token": data.get("access_token"),
                 "scope": data.get("scope"),
-                "expires_in": data.get("expires_in"),           # ✅ NAYA
-                "refresh_token": data.get("refresh_token"),     # ✅ NAYA
-                "refresh_token_expires_in": data.get("refresh_token_expires_in"),  # ✅ NAYA
+                "expires_in": data.get("expires_in"),
+                "refresh_token": data.get("refresh_token"),
+                "refresh_token_expires_in": data.get("refresh_token_expires_in"),
             }
     except Exception as e:
         logger.error(f"Token exchange (id_token) error for {shop}: {e}")
@@ -198,11 +205,7 @@ async def shopify_graphql(
     query: str,
     variables: dict = None,
 ) -> dict:
-    # 2026-10 unreleased/unsupported version par 403 aata hai, stable version use karein
-    api_version = (settings.SHOPIFY_API_VERSION or "2025-01").strip()
-    if api_version in ("2026-10", "unstable", ""):
-        api_version = "2025-01"
-
+    api_version = _safe_api_version()
     url = f"https://{shop}/admin/api/{api_version}/graphql.json"
 
     headers = {
@@ -476,7 +479,7 @@ async def update_variant_with_tracked(
 
 
 # ============================================
-# SET PRODUCT METAFIELDS (Separate Mutation)
+# SET PRODUCT METAFIELDS
 # ============================================
 async def set_product_metafields(
     shop: str,
@@ -545,7 +548,7 @@ async def set_product_metafields(
 
 
 # ============================================
-# ✅ ENSURE PRODUCT HAS OPTION (productSet — 2026-07 compatible)
+# ENSURE PRODUCT HAS OPTION
 # ============================================
 async def ensure_product_has_option(
     shop: str,
@@ -554,11 +557,6 @@ async def ensure_product_has_option(
     option_name: str,
     option_values: list,
 ) -> bool:
-    """
-    Product mein option exist karta hai ya nahi, check karta hai.
-    Agar nahi, toh `productSet` mutation se add karta hai.
-    Shopify API 2026-07 compatible.
-    """
     query = """
     query getProductOptions($id: ID!) {
       product(id: $id) {
@@ -678,7 +676,7 @@ async def ensure_product_has_option(
 
 
 # ============================================
-# ✅ CREATE PRODUCT WITH VARIANTS
+# CREATE PRODUCT WITH VARIANTS
 # ============================================
 async def create_shopify_product_with_variants(
     shop: str,
@@ -924,7 +922,7 @@ async def create_shopify_product_with_variants(
 
 
 # ============================================
-# ✅ ADD VARIANT TO EXISTING PRODUCT
+# ADD VARIANT TO EXISTING PRODUCT
 # ============================================
 async def add_variant_to_existing_product(
     shop: str,
@@ -1440,7 +1438,7 @@ async def check_product_availability(
 
     api_url = (
         f"https://{store_domain}/api/"
-        f"{settings.SHOPIFY_API_VERSION}/graphql.json"
+        f"{_safe_api_version()}/graphql.json"
     )
 
     query = """
@@ -1531,49 +1529,43 @@ async def check_product_availability(
 
 
 # ============================================
-# ✅ SYNC SHOPIFY PRICE UPDATE (NAYA — Pricing Settings ke liye)
-# FastAPI sync context (SQLAlchemy) se call karne ke liye
-# Yeh function Shopify variant price synchronously update karta hai
+# ✅ SYNC SHOPIFY PRICE UPDATE (FIXED)
+# Now async — matches `await sync_update_shopify_price(...)` in products.py
+# + API version safety check
 # ============================================
-def sync_update_shopify_price(
+async def sync_update_shopify_price(
     shop_domain: str,
     access_token: str,
     shopify_product_id: str,
     new_price: float,
 ) -> bool:
     """
-    Shopify product ka price synchronously update karein.
+    Shopify product ka price asynchronously update karein.
     All variants ka price set ho jayega.
-    
-    Args:
-        shop_domain: "amazon-product-manager.myshopify.com"
-        access_token: Shopify Admin API access token
-        shopify_product_id: Numeric ID (e.g., "10336018530535") ya GID
-        new_price: New price in shop currency
-    
-    Returns:
-        True if success, False otherwise
     """
     if not all([shop_domain, access_token, shopify_product_id]):
         logger.warning("Shopify sync skipped: missing config")
         return False
-    
+
     # GID format
     if not str(shopify_product_id).startswith("gid://"):
         product_gid = f"gid://shopify/Product/{shopify_product_id}"
     else:
         product_gid = shopify_product_id
-    
+
+    # ✅ API version safety check
+    api_version = _safe_api_version()
+
     api_url = (
         f"https://{shop_domain}/admin/api/"
-        f"{settings.SHOPIFY_API_VERSION}/graphql.json"
+        f"{api_version}/graphql.json"
     )
-    
+
     headers = {
         "X-Shopify-Access-Token": access_token,
         "Content-Type": "application/json",
     }
-    
+
     # Step 1: Fetch variants
     get_variants_query = """
     query getProductVariants($id: ID!) {
@@ -1592,10 +1584,10 @@ def sync_update_shopify_price(
       }
     }
     """
-    
+
     try:
-        with httpx.Client(timeout=30.0) as client:
-            res = client.post(
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            res = await client.post(
                 api_url,
                 headers=headers,
                 json={
@@ -1605,21 +1597,21 @@ def sync_update_shopify_price(
             )
             res.raise_for_status()
             data = res.json()
-        
+
         if "errors" in data:
             logger.error(f"❌ Shopify variants fetch errors: {data['errors']}")
             return False
-        
+
         product = data.get("data", {}).get("product")
         if not product:
             logger.error(f"❌ Shopify product not found: {product_gid}")
             return False
-        
+
         variant_edges = product.get("variants", {}).get("edges", [])
         if not variant_edges:
             logger.warning(f"⚠️ No variants found for: {product_gid}")
             return False
-        
+
         # Step 2: Update all variants' price
         variants_to_update = [
             {
@@ -1628,7 +1620,7 @@ def sync_update_shopify_price(
             }
             for edge in variant_edges
         ]
-        
+
         mutation = """
         mutation productVariantsBulkUpdate(
           $productId: ID!,
@@ -1649,9 +1641,9 @@ def sync_update_shopify_price(
           }
         }
         """
-        
-        with httpx.Client(timeout=30.0) as client:
-            update_res = client.post(
+
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            update_res = await client.post(
                 api_url,
                 headers=headers,
                 json={
@@ -1664,32 +1656,32 @@ def sync_update_shopify_price(
             )
             update_res.raise_for_status()
             update_data = update_res.json()
-        
+
         if "errors" in update_data:
             logger.error(f"❌ Shopify update errors: {update_data['errors']}")
             return False
-        
+
         user_errors = (
             update_data.get("data", {})
             .get("productVariantsBulkUpdate", {})
             .get("userErrors", [])
         )
-        
+
         if user_errors:
             logger.error(f"❌ Shopify user errors: {user_errors}")
             return False
-        
+
         updated = (
             update_data.get("data", {})
             .get("productVariantsBulkUpdate", {})
             .get("productVariants", [])
         )
-        
+
         logger.info(
             f"✅ Shopify price updated: {len(updated)} variant(s) → ${new_price}"
         )
         return True
-        
+
     except httpx.HTTPStatusError as e:
         logger.error(
             f"❌ Shopify HTTP error: {e.response.status_code} — "
