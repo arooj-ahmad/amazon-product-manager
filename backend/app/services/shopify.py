@@ -10,6 +10,7 @@
 # + ✅ FIXED: sync_update_shopify_price is async
 # + ✅ NAYA: refresh_shopify_token() helper
 # + ✅ NAYA: sync_update_shopify_price auto-refresh on 401
+# + ✅ FIXED: expiring:"1" HATA DIYA — ab PERMANENT token milega
 # ============================================
 
 import hashlib
@@ -152,6 +153,7 @@ async def exchange_code_for_token(shop: str, code: str) -> Optional[str]:
 
 # ============================================
 # TOKEN EXCHANGE (Session/ID token → Offline access token)
+# ✅ FIXED: "expiring": "1" HATA DIYA — ab permanent token
 # ============================================
 async def exchange_id_token_for_offline_token(
     shop: str, id_token: str
@@ -167,7 +169,7 @@ async def exchange_id_token_for_offline_token(
         "requested_token_type": (
             "urn:shopify:params:oauth:token-type:offline-access-token"
         ),
-        "expiring": "1",
+        # ✅ "expiring": "1" HATA DIYA — permanent token milega
     }
 
     try:
@@ -198,7 +200,7 @@ async def exchange_id_token_for_offline_token(
 
 
 # ============================================
-# ✅ NAYA: TOKEN REFRESH
+# ✅ TOKEN REFRESH (legacy support)
 # ============================================
 async def refresh_shopify_token(
     shop_domain: str,
@@ -1498,7 +1500,7 @@ async def check_product_availability(
 
 
 # ============================================
-# ✅ SYNC SHOPIFY PRICE UPDATE (NAYA)
+# ✅ SYNC SHOPIFY PRICE UPDATE
 # Async + auto-refresh on 401
 # ============================================
 async def sync_update_shopify_price(

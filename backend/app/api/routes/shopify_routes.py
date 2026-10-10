@@ -8,6 +8,7 @@
 # + ✅ NAYA: shopify_store_id aur shopify_status set karo
 # + ✅ FIXED: refresh_store_token mein refresh_token + expiry save karo
 # + ✅ FIXED: /callback bhi refresh_token + expiry save kare
+# + ✅ FIXED: expires_at = None (permanent token ke liye)
 # ============================================
 
 import logging
@@ -106,7 +107,7 @@ def shopify_install(
 
 # ============================================
 # CALLBACK (OAuth)
-# ✅ FIXED: refresh_token + expiry bhi save karo
+# ✅ FIXED: expires_at = None (permanent token ke liye)
 # ============================================
 @router.get("/callback")
 async def shopify_callback(
@@ -128,7 +129,6 @@ async def shopify_callback(
 
     logger.info(f"✅ HMAC verified for {shop}")
 
-    # Exchange code for token (returns dict now, not just string)
     token_data = await exchange_code_for_token(shop, code)
 
     if not token_data or not token_data.get("access_token"):
@@ -147,19 +147,9 @@ async def shopify_callback(
 
     access_token = token_data["access_token"]
 
-    # ✅ Expiry calculate karo (agar token_data mein hai)
-    now = datetime.now(timezone.utc)
-    expires_in = token_data.get("expires_in")
-    refresh_expires_in = token_data.get("refresh_token_expires_in")
-
-    expires_at = (
-        now + timedelta(seconds=int(expires_in))
-        if expires_in else None
-    )
-    refresh_token_expires_at = (
-        now + timedelta(seconds=int(refresh_expires_in))
-        if refresh_expires_in else None
-    )
+    # ✅ FIXED: Permanent token — expiry NULL
+    expires_at = None
+    refresh_token_expires_at = None
 
     existing = (
         db.query(ShopifyStore)
@@ -175,7 +165,8 @@ async def shopify_callback(
         existing.scopes = settings.SHOPIFY_SCOPES
         logger.info(
             f"Updated token for {shop} "
-            f"(refresh_token_saved={bool(token_data.get('refresh_token'))})"
+            f"(refresh_token_saved={bool(token_data.get('refresh_token'))}, "
+            f"permanent=True)"
         )
     else:
         new_store = ShopifyStore(
@@ -187,7 +178,7 @@ async def shopify_callback(
             scopes=settings.SHOPIFY_SCOPES,
         )
         db.add(new_store)
-        logger.info(f"New store installed: {shop}")
+        logger.info(f"New store installed: {shop} (permanent token)")
 
     db.commit()
 
@@ -198,7 +189,7 @@ async def shopify_callback(
                 <div style="max-width: 500px; margin: 0 auto; background: white; padding: 40px; border-radius: 12px; box-shadow: 0 2px 8px rgba(0,0,0,0.1);">
                     <h1 style="color: #008060;">✅ App Installed!</h1>
                     <p style="color: #637381;">Your store <strong>{shop}</strong> is now connected.</p>
-                    <p style="color: #637381; font-size: 14px;">Access token saved successfully.</p>
+                    <p style="color: #637381; font-size: 14px;">Permanent token saved successfully.</p>
                     <a href="https://{shop}/admin/apps"
                        style="display: inline-block; margin-top: 20px; padding: 12px 24px; background: #008060; color: white; text-decoration: none; border-radius: 6px;">
                         Go to Shopify Admin
@@ -408,6 +399,7 @@ async def push_product_to_shopify(
 
 # ============================================
 # ADD PRODUCT FROM SHOPIFY APP (Iframe Se)
+# ✅ FIXED: refresh_store_token mein expires_at = None
 # ============================================
 @router.post("/app/add-product")
 async def add_product_from_shopify_app(
@@ -452,25 +444,16 @@ async def add_product_from_shopify_app(
         .first()
     )
 
-    # ✅ refresh_store_token — refresh_token + expiry save karo
+    # ✅ FIXED: expires_at = None — permanent token
     async def refresh_store_token() -> bool:
         nonlocal store
         token_data = await exchange_id_token_for_offline_token(shop_domain, token)
         if not token_data or not token_data.get("access_token"):
             return False
 
-        now = datetime.now(timezone.utc)
-        expires_in = token_data.get("expires_in")
-        refresh_expires_in = token_data.get("refresh_token_expires_in")
-
-        expires_at = (
-            now + timedelta(seconds=int(expires_in))
-            if expires_in else None
-        )
-        refresh_token_expires_at = (
-            now + timedelta(seconds=int(refresh_expires_in))
-            if refresh_expires_in else None
-        )
+        # ✅ Permanent token — expiry NULL
+        expires_at = None
+        refresh_token_expires_at = None
 
         if store:
             store.access_token = token_data["access_token"]
@@ -493,7 +476,7 @@ async def add_product_from_shopify_app(
         db.refresh(store)
         logger.info(
             f"🔄 Token refreshed for {shop_domain} "
-            f"(expires_at={expires_at}, refresh_token_saved={bool(store.refresh_token)})"
+            f"(permanent=True, refresh_token_saved={bool(store.refresh_token)})"
         )
         return True
 
