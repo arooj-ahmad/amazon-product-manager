@@ -1,4 +1,5 @@
 // src/components/Header.jsx
+// + ✅ FIXED: Markup Settings link mein ?shop= param add
 import { styles, theme } from '../styles/theme'
 
 const badgeBase = {
@@ -14,6 +15,11 @@ const badgeBase = {
 }
 
 export default function Header({ shopifyReady, shopDomain, subscription }) {
+  // ✅ FIXED: Markup Settings link mein shop domain pass karo
+  const markupUrl = shopDomain
+    ? `/markup-settings?shop=${encodeURIComponent(shopDomain)}`
+    : '/markup-settings'
+
   return (
     <>
       <h1 style={styles.h1}>🛒 Amazon Product Manager</h1>
@@ -99,9 +105,9 @@ export default function Header({ shopifyReady, shopDomain, subscription }) {
           </span>
         )}
 
-        {/* ✅ FIX: target="_top" hata diya */}
+        {/* ✅ FIXED: shop domain query param ke saath link */}
         <a
-          href="/markup-settings"
+          href={markupUrl}
           style={{
             ...badgeBase,
             background: theme.colors.badgeInfoBg,
