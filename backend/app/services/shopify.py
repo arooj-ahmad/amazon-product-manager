@@ -9,8 +9,8 @@
 # + Option Existence Check (via productSet)
 # + ✅ FIXED: sync_update_shopify_price is async
 # + ✅ FIXED: refresh_shopify_token() helper
-# + ✅ FIXED: sync_update_shopify_price auto-refresh on 401
-# + ✅ FIXED: expiring:"1" HATA DIYA — ab PERMANENT token milega
+# + ✅ FIXED: sync_update_shopify_price auto-refresh on 401 AND 403
+# + ✅ FIXED: expiring:"1" WAPAS ADD KIYA (Shopify permanent reject karta hai)
 # + ✅ FIXED: exchange_code_for_token ab DICT return karta hai
 # ============================================
 
@@ -162,7 +162,7 @@ async def exchange_code_for_token(shop: str, code: str) -> Optional[dict]:
 
 # ============================================
 # TOKEN EXCHANGE (Session/ID token → Offline access token)
-# ✅ FIXED: "expiring": "1" HATA DIYA — ab permanent token
+# ✅ FIXED: "expiring": "1" WAPAS ADD KIYA
 # ============================================
 async def exchange_id_token_for_offline_token(
     shop: str, id_token: str
@@ -178,7 +178,8 @@ async def exchange_id_token_for_offline_token(
         "requested_token_type": (
             "urn:shopify:params:oauth:token-type:offline-access-token"
         ),
-        # ✅ "expiring": "1" HATA DIYA — permanent token milega
+        # ✅ WAPAS ADD KIYA — Shopify permanent tokens reject karta hai
+        "expiring": "1",
     }
 
     try:
@@ -209,7 +210,7 @@ async def exchange_id_token_for_offline_token(
 
 
 # ============================================
-# ✅ TOKEN REFRESH (legacy support)
+# ✅ TOKEN REFRESH
 # ============================================
 async def refresh_shopify_token(
     shop_domain: str,
@@ -1510,7 +1511,7 @@ async def check_product_availability(
 
 # ============================================
 # ✅ SYNC SHOPIFY PRICE UPDATE
-# Async + auto-refresh on 401
+# Async + auto-refresh on 401 AND 403
 # ============================================
 async def sync_update_shopify_price(
     shop_domain: str,
@@ -1522,7 +1523,7 @@ async def sync_update_shopify_price(
     """
     Shopify product ka price asynchronously update karein.
     Sab variants ka price set ho jayega.
-    401 pe refresh_token se auto-retry.
+    401/403 pe refresh_token se auto-retry.
     """
     if not all([shop_domain, access_token, shopify_product_id]):
         logger.warning("Shopify sync skipped: missing config")
@@ -1576,12 +1577,12 @@ async def sync_update_shopify_price(
                     "variables": {"id": product_gid},
                 },
             )
-            if res.status_code == 401:
-                # ✅ 401 — refresh token se retry
+            # ✅ FIXED: 401 AND 403 pe refresh karo
+            if res.status_code in (401, 403):
                 if refresh_token:
                     logger.warning(
-                        f"🔄 401 — refreshing token for {shop_domain} "
-                        f"and retrying..."
+                        f"🔄 {res.status_code} — refreshing token for "
+                        f"{shop_domain} and retrying..."
                     )
                     new_data = await refresh_shopify_token(
                         shop_domain, refresh_token
@@ -1595,8 +1596,9 @@ async def sync_update_shopify_price(
                             refresh_token=new_data.get("refresh_token"),
                         )
                 logger.error(
-                    f"❌ 401 Unauthorized for {shop_domain} "
-                    f"(no valid refresh_token)"
+                    f"❌ {res.status_code} Unauthorized for {shop_domain} "
+                    f"(no valid refresh_token). "
+                    f"Response: {res.text[:300]}"
                 )
                 return False
 
