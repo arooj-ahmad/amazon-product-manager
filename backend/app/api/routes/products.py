@@ -1,17 +1,9 @@
 # ============================================
 # app/api/routes/products.py
-# Product CRUD + Variation grouping + Slug
-# + Markup Settings endpoints
-# + Out of Stock tracking
-# + Real-time availability check (Storefront API)
-# + Shopify se products sync karo
-# + Shopify price ko amazon_price mein save karo
-# + SKU na hone par bhi product add karo (chhota SKU)
-# + Markup apply karne par Shopify par bhi update karo
-# + ✅ FIXED: shop= → shop_domain= in sync_update_shopify_price calls
-# + ✅ FIXED: admin_fetch mein shopify_store_id + shopify_status set karo
-# + ✅ FIXED: Har product ke liye uske shopify_store_id wala store use karo
-#              (pehla store nahi — multi-store support)
+# + ✅ FIXED: shop= → shop_domain=
+# + ✅ FIXED: Store selection per product
+# + ✅ NAYA: refresh_token pass karo auto-refresh ke liye
+# + ✅ NAYA: Refresh ke baad DB mein naya token save karo
 # ============================================
 
 import logging
@@ -43,6 +35,7 @@ from app.services.shopify import (
     check_product_availability,
     shopify_graphql,
     sync_update_shopify_price,
+    refresh_shopify_token,
 )
 
 
@@ -59,10 +52,7 @@ def _get_store_for_product(
     product: Product,
     fallback_store_id: int = None,
 ) -> ShopifyStore:
-    """
-    Product ke shopify_store_id se store dhoondho.
-    Fallback: fallback_store_id → pehla store.
-    """
+    """Product ke shopify_store_id se store dhoondho."""
     store = None
     if product.shopify_store_id:
         store = (
@@ -139,7 +129,7 @@ def get_all_products(db: Session = Depends(get_db)):
 
 
 # ============================================
-# AVAILABILITY CHECK (Storefront API)
+# AVAILABILITY CHECK
 # ============================================
 @router.get("/products/{product_id}/availability")
 async def get_product_availability(
@@ -272,7 +262,7 @@ def get_product_variants(product_id: int, db: Session = Depends(get_db)):
 
 
 # ============================================
-# ADMIN ROUTES (PROTECTED)
+# ADMIN ROUTES
 # ============================================
 
 @router.get("/admin/products", response_model=ProductListResponse)
@@ -325,7 +315,6 @@ async def admin_fetch_product(
         markup_type=user_markup_type,
     )
 
-    # ✅ NAYA: Default store dhoondho
     default_store = db.query(ShopifyStore).first()
 
     new_product = Product(
@@ -350,7 +339,6 @@ async def admin_fetch_product(
         stock_quantity=data.get("stock_quantity", 0),
         last_synced_at=datetime.now(timezone.utc),
         variant_attributes=data.get("variant_attributes", []),
-        # ✅ NAYA: Store link + status
         shopify_store_id=default_store.id if default_store else None,
         shopify_status="active",
     )
@@ -428,7 +416,6 @@ def list_products_for_markup(
     store_id: int = None,
     db: Session = Depends(get_db),
 ):
-    """Markup Settings page ke liye SIRF woh products jo Shopify par Active hain."""
     query = db.query(Product).filter(
         Product.shopify_status == "active",
     )
@@ -468,12 +455,12 @@ async def update_product_markup(
     db.commit()
     db.refresh(product)
 
-    # ✅ FIXED: Product ke shopify_store_id se store dhoondho (pehla nahi)
+    # ✅ FIXED: Product ke store se
     store = _get_store_for_product(db, product)
 
     if store and store.access_token and product.shopify_product_id:
         logger.info(
-            f"🔄 Syncing price to Shopify: shop={store.shop_domain}, "
+            f"🔄 Syncing price: shop={store.shop_domain}, "
             f"product={product.shopify_product_id}, price=${new_price}"
         )
         try:
@@ -482,6 +469,7 @@ async def update_product_markup(
                 access_token=store.access_token,
                 shopify_product_id=product.shopify_product_id,
                 new_price=new_price,
+                refresh_token=store.refresh_token,   # ✅ NAYA
             )
             if ok:
                 logger.info(
@@ -489,17 +477,10 @@ async def update_product_markup(
                 )
             else:
                 logger.warning(
-                    f"⚠️ Shopify price update FAILED: {product.asin} "
-                    f"(shop={store.shop_domain})"
+                    f"⚠️ Shopify price update FAILED: {product.asin}"
                 )
         except Exception as e:
             logger.error(f"❌ Shopify update exception: {e}")
-    else:
-        logger.warning(
-            f"⚠️ Shopify sync skipped: store={bool(store)}, "
-            f"token={bool(store.access_token) if store else False}, "
-            f"product_id={product.shopify_product_id}"
-        )
 
     return product
 
@@ -534,7 +515,7 @@ async def bulk_update_markup(
         product.is_manual_override = True
         updated += 1
 
-        # ✅ FIXED: Har product ke liye uske store ka token use karo
+        # ✅ Per-product store
         product_store = _get_store_for_product(
             db, product, fallback_store_id=store_id
         )
@@ -550,14 +531,14 @@ async def bulk_update_markup(
                     access_token=product_store.access_token,
                     shopify_product_id=product.shopify_product_id,
                     new_price=new_price,
+                    refresh_token=product_store.refresh_token,   # ✅ NAYA
                 )
                 if ok:
                     shopify_updated += 1
                 else:
                     shopify_failed += 1
                     logger.warning(
-                        f"⚠️ Shopify update FAILED: {product.asin} "
-                        f"(shop={product_store.shop_domain})"
+                        f"⚠️ Shopify update FAILED: {product.asin}"
                     )
             except Exception as e:
                 shopify_failed += 1
@@ -584,9 +565,6 @@ async def sync_products_from_shopify(
     store_id: int = None,
     db: Session = Depends(get_db),
 ):
-    """
-    Shopify se saare Active products fetch karo aur database mein sync karo.
-    """
     if store_id:
         store = db.query(ShopifyStore).filter(ShopifyStore.id == store_id).first()
     else:

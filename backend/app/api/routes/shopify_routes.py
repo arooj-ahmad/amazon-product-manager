@@ -6,9 +6,12 @@
 # + Variations support (parent detection + smart variant attributes)
 # + /store-id endpoint (shop domain se store ID)
 # + ✅ NAYA: shopify_store_id aur shopify_status set karo
+# + ✅ FIXED: refresh_store_token mein refresh_token + expiry save karo
+# + ✅ FIXED: /callback bhi refresh_token + expiry save kare
 # ============================================
 
 import logging
+from datetime import datetime, timedelta, timezone
 
 from fastapi import (
     APIRouter,
@@ -102,7 +105,8 @@ def shopify_install(
 
 
 # ============================================
-# CALLBACK
+# CALLBACK (OAuth)
+# ✅ FIXED: refresh_token + expiry bhi save karo
 # ============================================
 @router.get("/callback")
 async def shopify_callback(
@@ -124,9 +128,10 @@ async def shopify_callback(
 
     logger.info(f"✅ HMAC verified for {shop}")
 
-    access_token = await exchange_code_for_token(shop, code)
+    # Exchange code for token (returns dict now, not just string)
+    token_data = await exchange_code_for_token(shop, code)
 
-    if not access_token:
+    if not token_data or not token_data.get("access_token"):
         logger.error(f"❌ Token exchange failed for {shop}")
         return HTMLResponse(
             content="""
@@ -140,6 +145,22 @@ async def shopify_callback(
             status_code=400,
         )
 
+    access_token = token_data["access_token"]
+
+    # ✅ Expiry calculate karo (agar token_data mein hai)
+    now = datetime.now(timezone.utc)
+    expires_in = token_data.get("expires_in")
+    refresh_expires_in = token_data.get("refresh_token_expires_in")
+
+    expires_at = (
+        now + timedelta(seconds=int(expires_in))
+        if expires_in else None
+    )
+    refresh_token_expires_at = (
+        now + timedelta(seconds=int(refresh_expires_in))
+        if refresh_expires_in else None
+    )
+
     existing = (
         db.query(ShopifyStore)
         .filter(ShopifyStore.shop_domain == shop)
@@ -148,12 +169,21 @@ async def shopify_callback(
 
     if existing:
         existing.access_token = access_token
+        existing.refresh_token = token_data.get("refresh_token")
+        existing.expires_at = expires_at
+        existing.refresh_token_expires_at = refresh_token_expires_at
         existing.scopes = settings.SHOPIFY_SCOPES
-        logger.info(f"Updated token for {shop}")
+        logger.info(
+            f"Updated token for {shop} "
+            f"(refresh_token_saved={bool(token_data.get('refresh_token'))})"
+        )
     else:
         new_store = ShopifyStore(
             shop_domain=shop,
             access_token=access_token,
+            refresh_token=token_data.get("refresh_token"),
+            expires_at=expires_at,
+            refresh_token_expires_at=refresh_token_expires_at,
             scopes=settings.SHOPIFY_SCOPES,
         )
         db.add(new_store)
@@ -252,7 +282,6 @@ async def push_product_to_shopify(
             detail=f"Store {shop_domain} not connected",
         )
 
-    # ✅ NAYA: Store ID aur status set karo
     product.shopify_store_id = store.id
     product.shopify_status = "active"
 
@@ -379,7 +408,6 @@ async def push_product_to_shopify(
 
 # ============================================
 # ADD PRODUCT FROM SHOPIFY APP (Iframe Se)
-# ✅ NAYA: shopify_store_id aur shopify_status set karo
 # ============================================
 @router.post("/app/add-product")
 async def add_product_from_shopify_app(
@@ -424,24 +452,49 @@ async def add_product_from_shopify_app(
         .first()
     )
 
+    # ✅ refresh_store_token — refresh_token + expiry save karo
     async def refresh_store_token() -> bool:
         nonlocal store
         token_data = await exchange_id_token_for_offline_token(shop_domain, token)
         if not token_data or not token_data.get("access_token"):
             return False
+
+        now = datetime.now(timezone.utc)
+        expires_in = token_data.get("expires_in")
+        refresh_expires_in = token_data.get("refresh_token_expires_in")
+
+        expires_at = (
+            now + timedelta(seconds=int(expires_in))
+            if expires_in else None
+        )
+        refresh_token_expires_at = (
+            now + timedelta(seconds=int(refresh_expires_in))
+            if refresh_expires_in else None
+        )
+
         if store:
             store.access_token = token_data["access_token"]
+            store.refresh_token = token_data.get("refresh_token")
+            store.expires_at = expires_at
+            store.refresh_token_expires_at = refresh_token_expires_at
             store.scopes = token_data.get("scope") or settings.SHOPIFY_SCOPES
         else:
             store = ShopifyStore(
                 shop_domain=shop_domain,
                 access_token=token_data["access_token"],
+                refresh_token=token_data.get("refresh_token"),
+                expires_at=expires_at,
+                refresh_token_expires_at=refresh_token_expires_at,
                 scopes=token_data.get("scope") or settings.SHOPIFY_SCOPES,
             )
             db.add(store)
+
         db.commit()
         db.refresh(store)
-        logger.info(f"🔄 Token refreshed for {shop_domain}")
+        logger.info(
+            f"🔄 Token refreshed for {shop_domain} "
+            f"(expires_at={expires_at}, refresh_token_saved={bool(store.refresh_token)})"
+        )
         return True
 
     if not store:
@@ -499,7 +552,6 @@ async def add_product_from_shopify_app(
         markup_type=user_markup_type,
     )
 
-    # ✅ NAYA: Store ID aur status set karo
     new_product = Product(
         asin=asin,
         parent_asin=parent_asin,
@@ -521,7 +573,6 @@ async def add_product_from_shopify_app(
         markup_type=user_markup_type,
         is_manual_override=False,
         variant_attributes=data.get("variant_attributes", []),
-        # ✅ NAYA: Store ID aur status set karo
         shopify_store_id=store.id,
         shopify_status="active",
     )
@@ -667,7 +718,7 @@ async def add_product_from_shopify_app(
         "shopify_product_id": shopify_product_id,
         "variant_added": variant_added,
         "shop_domain": shop_domain,
-        "store_id": store.id,   # ✅ NAYA
+        "store_id": store.id,
     }
 
 

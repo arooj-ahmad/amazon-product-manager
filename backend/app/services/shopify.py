@@ -3,12 +3,13 @@
 # Shopify OAuth + GraphQL Admin API + ID Token Verify
 # + Product Status Update (OUT OF STOCK tracking)
 # + Inventory Tracking (with changeFromQuantity)
-# + 2026-07 API compatible (variants removed from productCreate)
 # + Storefront API (real-time availability check)
 # + 5 Metafields: asin, rating, amazon_price, reviews_count, availability
 # + Variations Support (parent + variant creation & auto-grouping)
 # + Option Existence Check (via productSet)
-# + ✅ FIXED: sync_update_shopify_price is now async + API version safety check
+# + ✅ FIXED: sync_update_shopify_price is async
+# + ✅ NAYA: refresh_shopify_token() helper
+# + ✅ NAYA: sync_update_shopify_price auto-refresh on 401
 # ============================================
 
 import hashlib
@@ -193,6 +194,57 @@ async def exchange_id_token_for_offline_token(
             }
     except Exception as e:
         logger.error(f"Token exchange (id_token) error for {shop}: {e}")
+        return None
+
+
+# ============================================
+# ✅ NAYA: TOKEN REFRESH
+# ============================================
+async def refresh_shopify_token(
+    shop_domain: str,
+    refresh_token: str,
+) -> Optional[dict]:
+    """
+    Expired access token ko refresh token se renew karo.
+    Shopify expiring offline tokens ke liye.
+    """
+    if not refresh_token:
+        logger.warning(f"No refresh_token for {shop_domain}")
+        return None
+
+    url = f"https://{shop_domain}/admin/oauth/access_token"
+
+    payload = {
+        "client_id": (settings.SHOPIFY_API_KEY or "").strip(),
+        "client_secret": (settings.SHOPIFY_API_SECRET or "").strip(),
+        "grant_type": "refresh_token",
+        "refresh_token": refresh_token,
+    }
+
+    try:
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            response = await client.post(
+                url,
+                json=payload,
+                headers={"Accept": "application/json"},
+            )
+            if response.status_code != 200:
+                logger.error(
+                    f"❌ Token refresh failed for {shop_domain}: "
+                    f"{response.status_code} {response.text[:200]}"
+                )
+                return None
+            data = response.json()
+            logger.info(f"✅ Access token refreshed for {shop_domain}")
+            return {
+                "access_token": data.get("access_token"),
+                "scope": data.get("scope"),
+                "expires_in": data.get("expires_in"),
+                "refresh_token": data.get("refresh_token"),
+                "refresh_token_expires_in": data.get("refresh_token_expires_in"),
+            }
+    except Exception as e:
+        logger.error(f"Token refresh error for {shop_domain}: {e}")
         return None
 
 
@@ -541,8 +593,6 @@ async def set_product_metafields(
 
     created = mf_data.get("metafields", [])
     logger.info(f"✅ Metafields set successfully: {len(created)}")
-    for mf in created:
-        logger.info(f"   • {mf['namespace']}.{mf['key']} = {mf['value']}")
 
     return True
 
@@ -759,8 +809,7 @@ async def create_shopify_product_with_variants(
     shopify_product = product_create.get("product", {})
     product_id = shopify_product.get("id")
 
-    logger.info(f"✅ Product created with {len(option_values)} variants: {shopify_product.get('title')}")
-    logger.info(f"   Product ID: {product_id}")
+    logger.info(f"✅ Product created: {shopify_product.get('title')}")
 
     variant_edges = (
         shopify_product.get("variants", {}).get("edges", [])
@@ -818,16 +867,6 @@ async def create_shopify_product_with_variants(
             {"productId": product_id, "variants": variants_to_update},
         )
 
-        var_errors = (
-            var_result.get("data", {})
-            .get("productVariantsBulkUpdate", {})
-            .get("userErrors", [])
-        )
-        if var_errors:
-            logger.error(f"❌ Variant update errors: {var_errors}")
-        else:
-            logger.info(f"✅ {len(variants_to_update)} variants updated")
-
         updated_variants = (
             var_result.get("data", {})
             .get("productVariantsBulkUpdate", {})
@@ -857,65 +896,6 @@ async def create_shopify_product_with_variants(
             access_token=access_token,
             product_id=product_id,
             image_urls=images[:10],
-        )
-
-    metafields_input = []
-
-    asin_value = str(product_data.get("asin", "") or "")
-    if asin_value and asin_value != "None":
-        metafields_input.append({
-            "namespace": "custom",
-            "key": "asin",
-            "value": asin_value,
-            "type": "single_line_text_field",
-        })
-
-    rating_value = str(product_data.get("rating", "") or "")
-    if rating_value and rating_value != "None":
-        metafields_input.append({
-            "namespace": "custom",
-            "key": "rating",
-            "value": rating_value,
-            "type": "single_line_text_field",
-        })
-
-    reviews_count_value = product_data.get("reviews_count")
-    if reviews_count_value is not None:
-        reviews_count_str = str(reviews_count_value)
-        if reviews_count_str and reviews_count_str != "None":
-            metafields_input.append({
-                "namespace": "custom",
-                "key": "reviews_count",
-                "value": reviews_count_str,
-                "type": "single_line_text_field",
-            })
-
-    amazon_price_value = product_data.get("amazon_price")
-    if amazon_price_value is not None:
-        amazon_price_str = str(amazon_price_value)
-        if amazon_price_str and amazon_price_str != "None":
-            metafields_input.append({
-                "namespace": "custom",
-                "key": "amazon_price",
-                "value": amazon_price_str,
-                "type": "single_line_text_field",
-            })
-
-    availability_value = str(product_data.get("availability", "") or "")
-    if availability_value and availability_value != "None":
-        metafields_input.append({
-            "namespace": "custom",
-            "key": "availability",
-            "value": availability_value,
-            "type": "single_line_text_field",
-        })
-
-    if product_id and metafields_input:
-        await set_product_metafields(
-            shop=shop,
-            access_token=access_token,
-            product_id=product_id,
-            metafields=metafields_input,
         )
 
     return result
@@ -1061,9 +1041,6 @@ async def create_shopify_product(
             "value": asin_value,
             "type": "single_line_text_field",
         })
-        logger.info(f"   ASIN metafield: {asin_value}")
-
-    logger.info(f"   ⏭️ Parent ASIN skipped (temporarily disabled)")
 
     rating_value = str(product_data.get("rating", "") or "")
     if rating_value and rating_value != "None":
@@ -1073,7 +1050,6 @@ async def create_shopify_product(
             "value": rating_value,
             "type": "single_line_text_field",
         })
-        logger.info(f"   Rating metafield: {rating_value}")
 
     reviews_count_value = product_data.get("reviews_count")
     if reviews_count_value is not None:
@@ -1085,7 +1061,6 @@ async def create_shopify_product(
                 "value": reviews_count_str,
                 "type": "single_line_text_field",
             })
-            logger.info(f"   Reviews Count metafield: {reviews_count_str}")
 
     amazon_price_value = product_data.get("amazon_price")
     if amazon_price_value is not None:
@@ -1097,7 +1072,6 @@ async def create_shopify_product(
                 "value": amazon_price_str,
                 "type": "single_line_text_field",
             })
-            logger.info(f"   Amazon Price metafield: {amazon_price_str}")
 
     availability_value = str(product_data.get("availability", "") or "")
     if availability_value and availability_value != "None":
@@ -1107,9 +1081,6 @@ async def create_shopify_product(
             "value": availability_value,
             "type": "single_line_text_field",
         })
-        logger.info(f"   Availability metafield: {availability_value}")
-
-    logger.info(f"   Total metafields to set: {len(metafields_input)}")
 
     input_data = {
         "title": product_data.get("title") or "Untitled Product",
@@ -1135,7 +1106,6 @@ async def create_shopify_product(
 
     if product_options:
         input_data["productOptions"] = product_options
-        logger.info(f"   ✅ Product options: {product_options}")
 
     mutation_create = """
     mutation productCreate($input: ProductCreateInput!) {
@@ -1190,7 +1160,6 @@ async def create_shopify_product(
     product_id = shopify_product.get("id")
 
     logger.info(f"✅ Product created: {shopify_product.get('title')}")
-    logger.info(f"   Product ID: {product_id}")
 
     if product_id and metafields_input:
         await set_product_metafields(
@@ -1529,19 +1498,20 @@ async def check_product_availability(
 
 
 # ============================================
-# ✅ SYNC SHOPIFY PRICE UPDATE (FIXED)
-# Now async — matches `await sync_update_shopify_price(...)` in products.py
-# + API version safety check
+# ✅ SYNC SHOPIFY PRICE UPDATE (NAYA)
+# Async + auto-refresh on 401
 # ============================================
 async def sync_update_shopify_price(
     shop_domain: str,
     access_token: str,
     shopify_product_id: str,
     new_price: float,
+    refresh_token: Optional[str] = None,
 ) -> bool:
     """
     Shopify product ka price asynchronously update karein.
-    All variants ka price set ho jayega.
+    Sab variants ka price set ho jayega.
+    401 pe refresh_token se auto-retry.
     """
     if not all([shop_domain, access_token, shopify_product_id]):
         logger.warning("Shopify sync skipped: missing config")
@@ -1595,6 +1565,30 @@ async def sync_update_shopify_price(
                     "variables": {"id": product_gid},
                 },
             )
+            if res.status_code == 401:
+                # ✅ 401 — refresh token se retry
+                if refresh_token:
+                    logger.warning(
+                        f"🔄 401 — refreshing token for {shop_domain} "
+                        f"and retrying..."
+                    )
+                    new_data = await refresh_shopify_token(
+                        shop_domain, refresh_token
+                    )
+                    if new_data and new_data.get("access_token"):
+                        return await sync_update_shopify_price(
+                            shop_domain=shop_domain,
+                            access_token=new_data["access_token"],
+                            shopify_product_id=shopify_product_id,
+                            new_price=new_price,
+                            refresh_token=new_data.get("refresh_token"),
+                        )
+                logger.error(
+                    f"❌ 401 Unauthorized for {shop_domain} "
+                    f"(no valid refresh_token)"
+                )
+                return False
+
             res.raise_for_status()
             data = res.json()
 
