@@ -1,5 +1,6 @@
 # enqueue_price_updates.py
 # ✅ FIXED: Direct process — Redis/arq bypass
+# ✅ FIXED: Manual override skip NAHI hota
 # Cron job yeh file chalayega → saare products ka price update hoga
 
 import asyncio
@@ -22,13 +23,13 @@ async def run_all():
     """
     Saare products ka price update DIRECTLY chalao.
     - Active + Draft dono
-    - Manual override skip
+    - Manual override bhi process (skip nahi)
     - Redis/arq ki zaroorat nahi
     """
     db = SessionLocal()
 
+    # ✅ FIXED: Manual override filter HATA diya
     products = db.query(Product).filter(
-        Product.is_manual_override == False,  # noqa: E712
         Product.asin.isnot(None),
     ).all()
 
