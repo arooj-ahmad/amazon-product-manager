@@ -14,8 +14,7 @@
 # + ✅ FIXED: exchange_code_for_token ab DICT return karta hai
 # + ✅ NAYA: tags + productType push (Collections ke liye)
 # + ✅ NAYA: Existing product ke tags + productType update karo
-# + ✅ NAYA: Shopify Taxonomy search (parent + child context)
-# + ✅ NAYA: Fallback manual mapping for known categories
+# + ❌ REMOVED: Category/Taxonomy code (Shopify AI khud suggest karega)
 # ============================================
 
 import hashlib
@@ -31,53 +30,6 @@ import jwt
 from app.config import settings
 
 logger = logging.getLogger(__name__)
-
-
-# ============================================
-# ✅ NAYA: FALLBACK MANUAL TAXONOMY MAP
-# Known Amazon categories → Shopify Taxonomy IDs
-# Yeh API search se PEHLE check hoga (fast + accurate)
-# ============================================
-SHOPIFY_TAXONOMY_FALLBACK = {
-    # Electronics
-    "electronics": "gid://shopify/TaxonomyCategory/el",
-    "computers & accessories": "gid://shopify/TaxonomyCategory/el-2",
-    "computers & tablets": "gid://shopify/TaxonomyCategory/el-2-1",
-    "desktops": "gid://shopify/TaxonomyCategory/el-2-3",
-    "towers": "gid://shopify/TaxonomyCategory/el-2-3-2",
-    "laptops": "gid://shopify/TaxonomyCategory/el-2-2",
-    "tablets": "gid://shopify/TaxonomyCategory/el-2-1",
-    "monitors": "gid://shopify/TaxonomyCategory/el-2-4",
-
-    # Books
-    "books": "gid://shopify/TaxonomyCategory/bo",
-    "teen & young adult": "gid://shopify/TaxonomyCategory/bo-2",
-    "literature & fiction": "gid://shopify/TaxonomyCategory/bo-2-1",
-
-    # Clothing
-    "clothing, shoes & jewelry": "gid://shopify/TaxonomyCategory/cl",
-    "women": "gid://shopify/TaxonomyCategory/cl-2",
-    "clothing": "gid://shopify/TaxonomyCategory/cl-2-1",
-    "dresses": "gid://shopify/TaxonomyCategory/cl-2-1-1",
-}
-
-
-def _get_fallback_category(categories: list) -> Optional[str]:
-    """
-    Manual mapping se category dhundho.
-    Known categories ke liye fast + accurate.
-    """
-    if not categories:
-        return None
-
-    # Reverse mein check karo (deepest category pehle)
-    for cat in reversed(categories):
-        cat_lower = cat.lower().strip()
-        if cat_lower in SHOPIFY_TAXONOMY_FALLBACK:
-            logger.info(f"   ✅ Fallback category: {SHOPIFY_TAXONOMY_FALLBACK[cat_lower]}")
-            return SHOPIFY_TAXONOMY_FALLBACK[cat_lower]
-
-    return None
 
 
 # ============================================
@@ -140,150 +92,6 @@ def _get_product_type(product_data: dict) -> str:
         if isinstance(first, str):
             return first.strip()[:255]
     return ""
-
-
-# ============================================
-# ✅ NAYA: SHOPIFY TAXONOMY SEARCH (IMPROVED)
-# Parent + child context ke saath search karo
-# ============================================
-async def get_shopify_category_id(
-    shop: str,
-    access_token: str,
-    search_query: str,
-    parent_query: Optional[str] = None,
-) -> Optional[str]:
-    """
-    Shopify Taxonomy API se category ID dhundho.
-    Multiple queries try karta hai — best match return karta hai.
-    
-    ✅ IMPROVED:
-    - Parent + child context use karta hai (better match)
-    - Multiple queries fallback
-    - Manual fallback mapping (known categories)
-    
-    Args:
-        shop: Shopify store domain
-        access_token: Shopify access token
-        search_query: Amazon deepest category (e.g., "Minis", "Desktops")
-        parent_query: Amazon parent category (e.g., "Computers & Tablets")
-    
-    Returns:
-        Shopify Taxonomy Category GID or None
-    """
-    if not search_query or not isinstance(search_query, str):
-        return None
-
-    search_query = search_query.strip()
-    if len(search_query) < 2:
-        return None
-
-    # ✅ Multiple queries try karo — best match ke liye
-    queries_to_try = []
-
-    # 1. Parent + Child (best context)
-    if parent_query and isinstance(parent_query, str):
-        parent_clean = parent_query.strip()
-        if parent_clean and len(parent_clean) > 2:
-            queries_to_try.append(f"{parent_clean} {search_query}")
-
-    # 2. Only child
-    queries_to_try.append(search_query)
-
-    # 3. Only parent (fallback)
-    if parent_query and isinstance(parent_query, str):
-        parent_clean = parent_query.strip()
-        if parent_clean and len(parent_clean) > 2:
-            queries_to_try.append(parent_clean)
-
-    query_graphql = """
-    query searchTaxonomy($query: String!) {
-      taxonomy {
-        categories(first: 5, search: $query) {
-          edges {
-            node {
-              id
-              name
-              fullName
-              level
-            }
-          }
-        }
-      }
-    }
-    """
-
-    for query_str in queries_to_try:
-        query_str = query_str.strip()
-        if len(query_str) < 2:
-            continue
-
-        logger.info(f"   🔍 Taxonomy search: '{query_str}'")
-
-        result = await shopify_graphql(
-            shop=shop,
-            access_token=access_token,
-            query=query_graphql,
-            variables={"query": query_str},
-        )
-
-        if "errors" in result:
-            logger.warning(f"   ⚠️ Taxonomy search failed: {result['errors']}")
-            continue
-
-        edges = (
-            result.get("data", {})
-            .get("taxonomy", {})
-            .get("categories", {})
-            .get("edges", [])
-        )
-
-        if not edges:
-            continue
-
-        # Best match = first result (Shopify relevance order)
-        best = edges[0]["node"]
-        logger.info(
-            f"   ✅ Taxonomy match: {best.get('fullName')} "
-            f"→ {best.get('id')}"
-        )
-        return best.get("id")
-
-    logger.info(f"   No taxonomy match for: {search_query}")
-    return None
-
-
-# ============================================
-# ✅ NAYA: BEST CATEGORY FINDER (HYBRID)
-# Fallback mapping + API search
-# ============================================
-async def _find_best_category(
-    shop: str,
-    access_token: str,
-    categories: list,
-) -> Optional[str]:
-    """
-    Best category dhundho — hybrid approach.
-    1. Manual mapping (known categories) — fast + accurate
-    2. API search (unknown categories) — flexible
-    """
-    if not categories:
-        return None
-
-    # 1. Fallback mapping check karo PEHLE
-    fallback = _get_fallback_category(categories)
-    if fallback:
-        return fallback
-
-    # 2. API search karo
-    deepest = categories[-1] if categories else None
-    parent = categories[-2] if len(categories) >= 2 else None
-
-    return await get_shopify_category_id(
-        shop=shop,
-        access_token=access_token,
-        search_query=deepest,
-        parent_query=parent,
-    )
 
 
 # ============================================
@@ -1048,7 +856,8 @@ async def update_shopify_product_tags_and_type(
 
 # ============================================
 # CREATE PRODUCT WITH VARIANTS
-# + ✅ NAYA: tags + productType + category (hybrid)
+# + ✅ tags + productType
+# + ❌ Category removed (Shopify AI suggest karega)
 # ============================================
 async def create_shopify_product_with_variants(
     shop: str,
@@ -1068,11 +877,6 @@ async def create_shopify_product_with_variants(
           handle
           tags
           productType
-          category {
-            id
-            name
-            fullName
-          }
           options {
             id
             name
@@ -1134,21 +938,7 @@ async def create_shopify_product_with_variants(
         input_data["productType"] = product_type
         logger.info(f"   Product type: {product_type}")
 
-    # ✅ NAYA: Best category dhundho (hybrid approach)
-    shopify_category_id = product_data.get("shopify_category_id")
-
-    if not shopify_category_id:
-        categories = product_data.get("categories") or []
-        shopify_category_id = await _find_best_category(
-            shop=shop,
-            access_token=access_token,
-            categories=categories,
-        )
-
-    # ✅ Category add karo
-    if shopify_category_id:
-        input_data["category"] = shopify_category_id
-        logger.info(f"   Category: {shopify_category_id}")
+    # ❌ Category add NAHI karo — Shopify AI suggest karega
 
     result = await shopify_graphql(
         shop, access_token, mutation_create, {"input": input_data}
@@ -1171,8 +961,6 @@ async def create_shopify_product_with_variants(
     logger.info(f"✅ Product created: {shopify_product.get('title')}")
     if shopify_product.get("tags"):
         logger.info(f"   Tags confirmed: {shopify_product.get('tags')}")
-    if shopify_product.get("category"):
-        logger.info(f"   Category confirmed: {shopify_product.get('category')}")
 
     variant_edges = (
         shopify_product.get("variants", {}).get("edges", [])
@@ -1379,7 +1167,8 @@ async def add_variant_to_existing_product(
 
 # ============================================
 # PRODUCT CREATE (SIMPLE)
-# + ✅ NAYA: tags + productType + category (hybrid)
+# + ✅ tags + productType
+# + ❌ Category removed (Shopify AI suggest karega)
 # ============================================
 async def create_shopify_product(
     shop: str,
@@ -1467,21 +1256,7 @@ async def create_shopify_product(
         input_data["productType"] = product_type
         logger.info(f"   Product type: {product_type}")
 
-    # ✅ NAYA: Best category dhundho (hybrid approach)
-    shopify_category_id = product_data.get("shopify_category_id")
-
-    if not shopify_category_id:
-        categories = product_data.get("categories") or []
-        shopify_category_id = await _find_best_category(
-            shop=shop,
-            access_token=access_token,
-            categories=categories,
-        )
-
-    # ✅ Category add karo
-    if shopify_category_id:
-        input_data["category"] = shopify_category_id
-        logger.info(f"   Category: {shopify_category_id}")
+    # ❌ Category add NAHI karo — Shopify AI suggest karega
 
     variant_attrs = product_data.get("variant_attributes") or []
     product_options = []
@@ -1510,11 +1285,6 @@ async def create_shopify_product(
           handle
           tags
           productType
-          category {
-            id
-            name
-            fullName
-          }
           options {
             id
             name
@@ -1565,8 +1335,6 @@ async def create_shopify_product(
         logger.info(f"   Tags confirmed: {shopify_product.get('tags')}")
     if shopify_product.get("productType"):
         logger.info(f"   Product type confirmed: {shopify_product.get('productType')}")
-    if shopify_product.get("category"):
-        logger.info(f"   Category confirmed: {shopify_product.get('category')}")
 
     if product_id and metafields_input:
         await set_product_metafields(
