@@ -5,9 +5,12 @@
 # + ✅ FIXED: Product ke shopify_store_id se store dhoondha jata hai
 # + ✅ FIXED: update_shopify_product_status await ke saath call hota hai
 # + ✅ FIXED: API version safety check
-# + ✅ FIXED: 401 pe auto-refresh + retry
+# + ✅ FIXED: 401/403 pe auto-refresh + retry
 # + ✅ FIXED: Manual override skip NAHI hota
 # + ✅ FIXED: Price push HAR change pe (increase ya decrease)
+# + ✅ NAYA: Inventory update bhi hota hai (process_price_update mein)
+# + ✅ NAYA: Har variant ka inventory update
+# + ✅ NAYA: set_inventory_quantity ka result check
 
 from typing import Any, Dict
 import logging
@@ -100,13 +103,14 @@ async def process_batch_urls(ctx: Dict[str, Any], job_id: str, urls: list):
 
 
 # ============================================
-# ✅ WORKER FUNCTION 2: PRICE UPDATE (FIXED)
+# ✅ WORKER FUNCTION 2: PRICE + INVENTORY UPDATE
 # ============================================
 async def process_price_update(ctx: Dict[str, Any], asin: str):
     """
-    Ek product ka price update karo.
+    Ek product ka price + inventory update karo.
     ✅ FIXED: Manual override skip NAHI hota
     ✅ FIXED: Price push HAR change pe
+    ✅ NAYA: Inventory bhi update hota hai
     """
     from app.models import Product, ShopifyStore
     from app.services.brightdata import (
@@ -118,6 +122,8 @@ async def process_price_update(ctx: Dict[str, Any], asin: str):
         get_shopify_product_by_sku,
         set_product_metafields,
         update_shopify_product_status,
+        set_inventory_quantity,
+        shopify_graphql,
     )
 
     db = SessionLocal()
@@ -129,8 +135,6 @@ async def process_price_update(ctx: Dict[str, Any], asin: str):
         if not product:
             logger.warning(f"[PRICE] Product not found: {asin}")
             return {"asin": asin, "status": "not_found"}
-
-        # ❌ MANUAL OVERRIDE CHECK HATAO — skip nahi karo
 
         # 2. Bright Data se fetch
         amazon_url = f"https://www.amazon.com/dp/{asin}"
@@ -172,7 +176,6 @@ async def process_price_update(ctx: Dict[str, Any], asin: str):
 
         shopify_updated = False
 
-        # ✅ FIXED: HAR change pe push karo (increase ya decrease)
         if store and store.access_token:
             shopify_id = product.shopify_product_id
 
@@ -187,6 +190,17 @@ async def process_price_update(ctx: Dict[str, Any], asin: str):
                     db.commit()
 
             if shopify_id:
+                # ✅ 1. Status update
+                status_ok = await update_shopify_product_status(
+                    shop=store.shop_domain,
+                    access_token=store.access_token,
+                    shopify_product_id=shopify_id,
+                    is_available=new_availability,
+                )
+                if status_ok:
+                    logger.info(f"[PRICE] ✅ Status synced: {asin}, available={new_availability}")
+
+                # ✅ 2. Price update
                 ok = await sync_update_shopify_price(
                     shop_domain=store.shop_domain,
                     access_token=store.access_token,
@@ -196,7 +210,74 @@ async def process_price_update(ctx: Dict[str, Any], asin: str):
                 )
 
                 if ok:
-                    # Metafields update
+                    # ✅ 3. Inventory update (HAR VARIANT)
+                    inv_query = """
+                    query getProductInventory($id: ID!) {
+                      product(id: $id) {
+                        variants(first: 50) {
+                          edges {
+                            node {
+                              id
+                              inventoryItem {
+                                id
+                              }
+                            }
+                          }
+                        }
+                      }
+                    }
+                    """
+
+                    inv_result = await shopify_graphql(
+                        store.shop_domain,
+                        store.access_token,
+                        inv_query,
+                        {"id": shopify_id},
+                    )
+
+                    if "errors" in inv_result:
+                        logger.error(
+                            f"[PRICE] ❌ Inventory query error: "
+                            f"{inv_result['errors']}"
+                        )
+                    else:
+                        inv_edges = (
+                            inv_result.get("data", {})
+                            .get("product", {})
+                            .get("variants", {})
+                            .get("edges", [])
+                        )
+
+                        for edge in inv_edges:
+                            inv_item_id = (
+                                edge.get("node", {})
+                                .get("inventoryItem", {})
+                                .get("id")
+                            )
+                            if inv_item_id:
+                                qty = product.stock_quantity or 0
+                                if qty == 0 and new_availability:
+                                    qty = 100
+
+                                inv_ok = await set_inventory_quantity(
+                                    shop=store.shop_domain,
+                                    access_token=store.access_token,
+                                    inventory_item_id=inv_item_id,
+                                    quantity=qty,
+                                )
+
+                                if inv_ok:
+                                    logger.info(
+                                        f"[PRICE] ✅ Inventory synced: "
+                                        f"{asin}, qty={qty}"
+                                    )
+                                else:
+                                    logger.error(
+                                        f"[PRICE] ❌ Inventory update FAILED: "
+                                        f"{asin}, qty={qty}"
+                                    )
+
+                    # ✅ 4. Metafields update
                     metafields_input = []
 
                     if product.amazon_price is not None:
@@ -226,20 +307,10 @@ async def process_price_update(ctx: Dict[str, Any], asin: str):
                     shopify_updated = True
                 else:
                     logger.warning(
-                        f"[PRICE] Shopify update failed for {asin}"
+                        f"[PRICE] Shopify price update failed for {asin}"
                     )
         else:
             logger.warning(f"[PRICE] No valid store/token for {asin}")
-
-        # 6. Availability change pe Shopify status update
-        if old_availability != new_availability:
-            if store and store.access_token and product.shopify_product_id:
-                await update_shopify_product_status(
-                    shop=store.shop_domain,
-                    access_token=store.access_token,
-                    shopify_product_id=product.shopify_product_id,
-                    is_available=new_availability,
-                )
 
         logger.info(
             f"[PRICE] ✅ {asin} "
