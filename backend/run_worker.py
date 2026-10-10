@@ -1,9 +1,13 @@
 # run_worker.py
 import sys
+import os
+
+# ✅ NAYA: PYTHONPATH fix
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+
 import asyncio
 import logging
 
-# Logging setup — INFO level (taake logs dikhein)
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s | %(levelname)s | %(name)s | %(message)s",

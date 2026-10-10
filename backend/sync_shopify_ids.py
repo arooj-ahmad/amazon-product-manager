@@ -1,4 +1,10 @@
 # sync_shopify_ids.py
+import sys
+import os
+
+# ✅ NAYA: PYTHONPATH fix — script ke folder ko add karo
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+
 import asyncio
 import logging
 from app.database import SessionLocal
@@ -52,7 +58,6 @@ async def sync_ids():
                 print(f"⚠️ {p.asin} not found in Shopify (SKU check karo)")
                 not_found += 1
             
-            # ✅ Rate limit — Shopify API limit
             await asyncio.sleep(0.5)
         
         except Exception as e:
@@ -69,4 +74,6 @@ async def sync_ids():
 
 
 if __name__ == "__main__":
+    if sys.platform == "win32":
+        asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
     asyncio.run(sync_ids())

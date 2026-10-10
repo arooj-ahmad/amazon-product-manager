@@ -1,8 +1,13 @@
 # test_scheduler.py
+import sys
+import os
+
+# ✅ NAYA: PYTHONPATH fix
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+
 import asyncio
 import logging
 
-# ✅ Logging ON karo — taake saare logs dikhein
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
@@ -14,10 +19,8 @@ from app.models import Product
 
 
 async def test():
-    # Pehle check karo kitne Active products hain
     db = SessionLocal()
     
-    # ✅ Sirf Active products count karo (Draft skip)
     active_products = db.query(Product).filter(
         Product.is_available == True
     ).all()
@@ -39,11 +42,12 @@ async def test():
     
     db.close()
     
-    # Ab scheduler job chalao
     print("\n--- Running price update ---")
     await run_price_update_now()
     print("--- Done ---")
 
 
 if __name__ == "__main__":
+    if sys.platform == "win32":
+        asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
     asyncio.run(test())
