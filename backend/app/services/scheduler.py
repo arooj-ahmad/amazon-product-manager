@@ -4,7 +4,7 @@
 # + Out of Stock tracking
 # + Shopify Status Sync (DB token use karta hai)
 # + Inventory quantity sync
-# + Shopify price update (sirf increase pe)
+# + Shopify price update (HAR CHANGE PE — increase ya decrease)
 # + Sirf Active products (Draft skip)
 # + price hamesha amazon_price + markup update
 # + Shopify metafields update
@@ -13,6 +13,8 @@
 # + ✅ FIXED: sync_update_shopify_price ab await ke saath
 # + ✅ FIXED: refresh_token pass hota hai
 # + ✅ FIXED: Product ke shopify_store_id se store dhoondha jata hai
+# + ✅ FIXED: Manual override skip NAHI hota — sab products process hote hain
+# + ✅ FIXED: Price push HAR change pe (increase ya decrease)
 # ============================================
 
 import logging
@@ -83,10 +85,7 @@ async def find_shopify_product_by_title(
     access_token: str,
     title: str,
 ) -> str | None:
-    """
-    Shopify pe product ko title se dhoondta hai.
-    SKU match na hone par yeh fallback hai.
-    """
+    """Shopify pe product ko title se dhoondta hai (SKU fallback)."""
     if not title or len(title.strip()) < 3:
         return None
 
@@ -142,13 +141,7 @@ async def sync_shopify_product(
     stock_quantity: int,
     db: Session,
 ):
-    """
-    Product ka Shopify status + inventory update karta hai.
-    ✅ NAYA: product.shopify_status bhi DB mein save karta hai.
-    ✅ NAYA: SKU na mile toh title se dhoondta hai.
-    ✅ FIXED: Product ke shopify_store_id se store dhoondta hai.
-    """
-    # ✅ FIXED: Sahi store dhoondho
+    """Product ka Shopify status + inventory update karta hai."""
     store = _get_store_for_product(db, product)
 
     if not store or not store.access_token:
@@ -163,11 +156,9 @@ async def sync_shopify_product(
     try:
         shopify_id = product.shopify_product_id
 
-        # ── Method 1: DB mein saved ID ──
         if shopify_id:
             logger.info(f"✅ Using saved shopify_product_id: {shopify_id}")
 
-        # ── Method 2: SKU se dhoondo ──
         if not shopify_id:
             shopify_id = await get_shopify_product_by_sku(
                 shop=shop,
@@ -178,7 +169,6 @@ async def sync_shopify_product(
                 product.shopify_product_id = shopify_id
                 logger.info(f"✅ Shopify product linked by SKU: {shopify_id}")
 
-        # ── Method 3: Title se dhoondo (NEW) ──
         if not shopify_id and product.title:
             shopify_id = await find_shopify_product_by_title(
                 shop=shop,
@@ -189,7 +179,6 @@ async def sync_shopify_product(
                 product.shopify_product_id = shopify_id
                 logger.info(f"✅ Shopify product linked by TITLE: {shopify_id}")
 
-        # ── Agar phir bhi nahi mila ──
         if not shopify_id:
             logger.warning(
                 f"❌ Shopify product not found for ASIN={product.asin} "
@@ -199,7 +188,7 @@ async def sync_shopify_product(
             db.commit()
             return
 
-        # ── Step 1: Status update ──
+        # Status update
         status_success = await update_shopify_product_status(
             shop=shop,
             access_token=access_token,
@@ -221,7 +210,7 @@ async def sync_shopify_product(
             f"ASIN={product.asin}, status={product.shopify_status}"
         )
 
-        # ── Step 2: Inventory quantity update ──
+        # Inventory quantity update
         query = """
         query getProductInventory($id: ID!) {
           product(id: $id) {
@@ -275,15 +264,10 @@ async def sync_shopify_product(
 
 
 # ============================================
-# ✅ HELPER: SHOPIFY PRICE + METAFIELDS UPDATE (FIXED)
+# ✅ HELPER: SHOPIFY PRICE + METAFIELDS UPDATE
 # ============================================
 async def sync_shopify_price(product: Product, new_price: float, db: Session):
-    """
-    Shopify pe product ka price + metafields update karta hai.
-    ✅ FIXED: await sync_update_shopify_price + refresh_token
-    ✅ FIXED: Product ke shopify_store_id se store
-    """
-    # ✅ FIXED: Sahi store
+    """Shopify pe product ka price + metafields update karta hai."""
     store = _get_store_for_product(db, product)
 
     if not store or not store.access_token:
@@ -296,7 +280,6 @@ async def sync_shopify_price(product: Product, new_price: float, db: Session):
 
     shopify_id = product.shopify_product_id
 
-    # SKU se try karo agar DB mein nahi hai
     if not shopify_id:
         shopify_id = await get_shopify_product_by_sku(
             shop=shop,
@@ -306,7 +289,6 @@ async def sync_shopify_price(product: Product, new_price: float, db: Session):
         if shopify_id:
             product.shopify_product_id = shopify_id
 
-    # Title se try karo
     if not shopify_id and product.title:
         shopify_id = await find_shopify_product_by_title(
             shop=shop,
@@ -321,13 +303,12 @@ async def sync_shopify_price(product: Product, new_price: float, db: Session):
         return False
 
     try:
-        # ✅ FIXED: await + refresh_token
         success = await sync_update_shopify_price(
             shop_domain=shop,
             access_token=access_token,
             shopify_product_id=shopify_id,
             new_price=new_price,
-            refresh_token=refresh_token,   # ✅ NAYA
+            refresh_token=refresh_token,
         )
         if success:
             logger.info(
@@ -423,16 +404,12 @@ async def update_all_prices():
         out_of_stock_count = 0
         back_in_stock_count = 0
         shopify_synced_count = 0
-        price_increased_count = 0
-        price_decreased_count = 0
+        price_changed_count = 0
         price_recalculated_count = 0
 
         for product in products:
-            if product.is_manual_override:
-                logger.info(f"[SKIP] ASIN={product.asin} (manual override)")
-                skipped_count += 1
-                continue
-
+            # ✅ NAYA: Manual override skip NAHI hota
+            # Har product process hoga
             try:
                 amazon_url = f"https://www.amazon.com/dp/{product.asin}"
                 data = await fetch_product_from_brightdata(amazon_url)
@@ -492,6 +469,7 @@ async def update_all_prices():
                 product.amazon_price = new_amazon_price
                 product.price = new_final_price
 
+                # Metadata update
                 if data.get("title") and data["title"] != product.title:
                     product.title = data["title"]
                 if data.get("image_url") and data["image_url"] != product.image_url:
@@ -514,8 +492,8 @@ async def update_all_prices():
 
                 price_recalculated_count += 1
 
-                # STEP 4: Shopify pe price + metafields update
-                if new_amazon_price > old_amazon:
+                # ✅ STEP 4: Shopify pe price + metafields HAR change pe push
+                if new_amazon_price != old_amazon:
                     await sync_shopify_price(
                         product=product,
                         new_price=new_final_price,
@@ -523,23 +501,12 @@ async def update_all_prices():
                     )
 
                     logger.info(
-                        f"[PRICE INCREASED] ASIN={product.asin} "
+                        f"[PRICE CHANGED] ASIN={product.asin} "
                         f"amazon: ${old_amazon} → ${new_amazon_price}, "
                         f"final: ${old_price} → ${new_final_price}"
                     )
-                    price_increased_count += 1
+                    price_changed_count += 1
                     updated_count += 1
-
-                elif new_amazon_price < old_amazon:
-                    logger.info(
-                        f"[PRICE DECREASED - DB UPDATED, SHOPIFY SKIPPED] "
-                        f"ASIN={product.asin} "
-                        f"amazon: ${old_amazon} → ${new_amazon_price}, "
-                        f"final: ${old_price} → ${new_final_price}"
-                    )
-                    price_decreased_count += 1
-                    updated_count += 1
-
                 else:
                     logger.info(
                         f"[NO CHANGE] ASIN={product.asin} "
@@ -560,13 +527,11 @@ async def update_all_prices():
         logger.info(
             f"PRICE UPDATE COMPLETE — "
             f"Updated: {updated_count}, "
-            f"Skipped: {skipped_count}, "
             f"Errors: {error_count}, "
             f"Out of Stock: {out_of_stock_count}, "
             f"Back in Stock: {back_in_stock_count}, "
             f"Shopify Synced: {shopify_synced_count}, "
-            f"Price Increased: {price_increased_count}, "
-            f"Price Decreased (DB only): {price_decreased_count}, "
+            f"Price Changed: {price_changed_count}, "
             f"Price Recalculated: {price_recalculated_count}"
         )
         logger.info("=" * 60)
