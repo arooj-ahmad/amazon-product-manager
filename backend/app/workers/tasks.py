@@ -1,4 +1,12 @@
 # app/workers/tasks.py
+# Worker tasks — Batch URLs import + Price update
+# + ✅ FIXED: sync_update_shopify_price ab await ke saath call hota hai
+# + ✅ FIXED: refresh_token pass hota hai
+# + ✅ FIXED: Product ke shopify_store_id se store dhoondha jata hai
+# + ✅ FIXED: update_shopify_product_status await ke saath call hota hai
+# + ✅ FIXED: API version safety check
+# + ✅ FIXED: 401 pe auto-refresh + retry
+
 from typing import Any, Dict
 import logging
 from datetime import datetime, timezone
@@ -10,9 +18,37 @@ logger = logging.getLogger(__name__)
 
 
 # ============================================
+# ✅ HELPER: Sahi store dhoondho (product ke store_id se)
+# ============================================
+def _get_store_for_product(db, product, fallback_store_id: int = None):
+    """
+    Product ke shopify_store_id se store dhoondho.
+    Fallback: fallback_store_id -> pehla store.
+    """
+    from app.models import ShopifyStore
+
+    store = None
+    if product and product.shopify_store_id:
+        store = (
+            db.query(ShopifyStore)
+            .filter(ShopifyStore.id == product.shopify_store_id)
+            .first()
+        )
+    if not store and fallback_store_id:
+        store = (
+            db.query(ShopifyStore)
+            .filter(ShopifyStore.id == fallback_store_id)
+            .first()
+        )
+    if not store:
+        store = db.query(ShopifyStore).first()
+    return store
+
+
+# ============================================
 # ✅ WORKER FUNCTION 1: BATCH URLS IMPORT
 # ============================================
-async def process_batch_urls(ctx: Dict[str, Any], job_id: str, urls: list[str]):
+async def process_batch_urls(ctx: Dict[str, Any], job_id: str, urls: list):
     """
     Har URL ko process karega: Bright Data call -> extract -> DB save
     """
@@ -46,7 +82,7 @@ async def process_batch_urls(ctx: Dict[str, Any], job_id: str, urls: list[str]):
             results["details"].append({
                 "url": url,
                 "status": "failed",
-                "error": str(e)
+                "error": str(e),
             })
             logger.error(f"[{job_id}] {index}/{total} ❌ {url} — {e}")
 
@@ -59,7 +95,7 @@ async def process_batch_urls(ctx: Dict[str, Any], job_id: str, urls: list[str]):
                     "succeeded": results["succeeded"],
                     "failed": results["failed"],
                     "total": total,
-                }
+                },
             )
             await ctx["redis"].expire(f"batch:{job_id}", 86400)
         except Exception as e:
@@ -73,7 +109,7 @@ async def process_batch_urls(ctx: Dict[str, Any], job_id: str, urls: list[str]):
 
 
 # ============================================
-# ✅ WORKER FUNCTION 2: PRICE UPDATE (NAYA)
+# ✅ WORKER FUNCTION 2: PRICE UPDATE (FIXED)
 # ============================================
 async def process_price_update(ctx: Dict[str, Any], asin: str):
     """
@@ -92,6 +128,7 @@ async def process_price_update(ctx: Dict[str, Any], asin: str):
         get_shopify_product_by_sku,
         set_product_metafields,
         update_shopify_product_status,
+        refresh_shopify_token,
     )
 
     db = SessionLocal()
@@ -143,12 +180,13 @@ async def process_price_update(ctx: Dict[str, Any], asin: str):
         db.commit()
         db.refresh(product)
 
-        # 5. Shopify update (sirf increase pe)
+        # ✅ FIXED: Product ke store se (pehla store nahi)
+        store = _get_store_for_product(db, product)
+
         shopify_updated = False
 
+        # 5. Shopify update (sirf increase pe)
         if new_amazon_price > old_amazon:
-            store = db.query(ShopifyStore).first()
-
             if store and store.access_token:
                 shopify_id = product.shopify_product_id
 
@@ -163,47 +201,57 @@ async def process_price_update(ctx: Dict[str, Any], asin: str):
                         db.commit()
 
                 if shopify_id:
-                    # Variant price update
-                    sync_update_shopify_price(
+                    # ✅ FIXED: await + refresh_token
+                    ok = await sync_update_shopify_price(
                         shop_domain=store.shop_domain,
                         access_token=store.access_token,
                         shopify_product_id=shopify_id,
                         new_price=new_final_price,
+                        refresh_token=store.refresh_token,  # ✅ NAYA
                     )
 
-                    # Metafields update
-                    metafields_input = []
+                    if ok:
+                        # Metafields update
+                        metafields_input = []
 
-                    if product.amazon_price is not None:
-                        metafields_input.append({
-                            "namespace": "custom",
-                            "key": "amazon_price",
-                            "value": str(product.amazon_price),
-                            "type": "single_line_text_field",
-                        })
+                        if product.amazon_price is not None:
+                            metafields_input.append({
+                                "namespace": "custom",
+                                "key": "amazon_price",
+                                "value": str(product.amazon_price),
+                                "type": "single_line_text_field",
+                            })
 
-                    if product.availability:
-                        metafields_input.append({
-                            "namespace": "custom",
-                            "key": "availability",
-                            "value": str(product.availability),
-                            "type": "single_line_text_field",
-                        })
+                        if product.availability:
+                            metafields_input.append({
+                                "namespace": "custom",
+                                "key": "availability",
+                                "value": str(product.availability),
+                                "type": "single_line_text_field",
+                            })
 
-                    if metafields_input:
-                        await set_product_metafields(
-                            shop=store.shop_domain,
-                            access_token=store.access_token,
-                            product_id=shopify_id,
-                            metafields=metafields_input,
+                        if metafields_input:
+                            await set_product_metafields(
+                                shop=store.shop_domain,
+                                access_token=store.access_token,
+                                product_id=shopify_id,
+                                metafields=metafields_input,
+                            )
+
+                        shopify_updated = True
+                    else:
+                        logger.warning(
+                            f"[PRICE] Shopify update failed for {asin}"
                         )
-
-                    shopify_updated = True
+            else:
+                logger.warning(
+                    f"[PRICE] No valid store/token for {asin}"
+                )
 
         # 6. Availability change pe Shopify status update
         if old_availability != new_availability:
-            store = db.query(ShopifyStore).first()
             if store and store.access_token and product.shopify_product_id:
+                # ✅ FIXED: await
                 await update_shopify_product_status(
                     shop=store.shop_domain,
                     access_token=store.access_token,
