@@ -2,6 +2,7 @@
 # app/api/routes/webhooks.py
 # Shopify Webhooks — subscription events + product events
 # + ✅ NAYA: products/delete webhook handler
+# + ✅ FIXED: Universal match (GID + numeric + LIKE query)
 # ============================================
 
 import base64
@@ -15,7 +16,7 @@ from sqlalchemy.orm import Session
 
 from app.config import settings
 from app.database import get_db
-from app.models import Product, ShopifyStore  # ✅ NAYA
+from app.models import Product, ShopifyStore
 from app.models.shopify_subscription import ShopifySubscription
 
 logger = logging.getLogger(__name__)
@@ -90,7 +91,7 @@ async def shopify_webhook(
                 shop_domain=x_shopify_shop_domain,
                 db=db,
             )
-        # ── ✅ NAYA: Product events ──
+        # ── Product events ──
         elif x_shopify_topic == "products/delete":
             await _handle_product_delete(
                 shop_domain=x_shopify_shop_domain,
@@ -187,19 +188,19 @@ async def _handle_app_uninstalled(shop_domain, db):
 
 
 # ============================================
-# ✅ NAYA: PRODUCT DELETE HANDLER
-# Shopify se product delete hone par DB se bhi delete karo
+# ✅ PRODUCT DELETE HANDLER — Universal Match
 # ============================================
 async def _handle_product_delete(shop_domain, payload, db):
     """
     Shopify se product delete hone par DB se bhi delete karo.
-    
-    Payload example:
-    {
-      "id": 1234567890,
-      "title": "Product Name",
-      ...
-    }
+
+    DB mein format: gid://shopify/Product/15407641821220
+    Webhook payload: { "id": 15407641821220 }
+
+    3 strategies try karta hai:
+    1. GID format match
+    2. Numeric format match
+    3. LIKE query (universal — koi bhi format match kare)
     """
     shopify_id = payload.get("id")
     product_title = payload.get("title", "Unknown")
@@ -208,52 +209,48 @@ async def _handle_product_delete(shop_domain, payload, db):
         logger.warning("⚠️ Product delete webhook: no id")
         return
 
-    # GID format banao
-    product_gid = f"gid://shopify/Product/{shopify_id}"
-
     logger.info(
         f"🗑️ Shopify product deleted: {product_title} "
         f"(id={shopify_id})"
     )
 
-    # DB mein dhundho — multiple formats try karo
     product = None
 
-    # 1. GID format
+    # ── Strategy 1: GID format (DB mein yahi saved hai) ──
+    product_gid = f"gid://shopify/Product/{shopify_id}"
     product = (
         db.query(Product)
         .filter(Product.shopify_product_id == product_gid)
         .first()
     )
 
-    # 2. Numeric format
+    if product:
+        logger.info(f"   ✅ Matched via GID: {product_gid}")
+
+    # ── Strategy 2: Numeric format ──
     if not product:
         product = (
             db.query(Product)
             .filter(Product.shopify_product_id == str(shopify_id))
             .first()
         )
+        if product:
+            logger.info(f"   ✅ Matched via numeric: {shopify_id}")
 
-    # 3. Store-specific check
+    # ── Strategy 3: LIKE query (universal fallback) ──
     if not product:
-        store = (
-            db.query(ShopifyStore)
-            .filter(ShopifyStore.shop_domain == shop_domain)
+        product = (
+            db.query(Product)
+            .filter(Product.shopify_product_id.like(f"%{shopify_id}%"))
             .first()
         )
-        if store:
-            product = (
-                db.query(Product)
-                .filter(
-                    Product.shopify_store_id == store.id,
-                    Product.shopify_product_id.in_([
-                        product_gid,
-                        str(shopify_id),
-                    ])
-                )
-                .first()
+        if product:
+            logger.info(
+                f"   ✅ Matched via LIKE: %{shopify_id}% "
+                f"→ {product.shopify_product_id}"
             )
 
+    # ── Delete if found ──
     if product:
         asin = product.asin
         db.delete(product)
@@ -262,13 +259,12 @@ async def _handle_product_delete(shop_domain, payload, db):
     else:
         logger.info(
             f"ℹ️ Webhook: product not found in DB "
-            f"(shopify_id={shopify_id})"
+            f"(shopify_id={shopify_id}, tried GID + numeric + LIKE)"
         )
 
 
 # ============================================
-# ✅ NAYA: PRODUCT UPDATE HANDLER (Optional)
-# Shopify se product update hone par DB update karo
+# ✅ PRODUCT UPDATE HANDLER
 # ============================================
 async def _handle_product_update(shop_domain, payload, db):
     """
@@ -279,19 +275,29 @@ async def _handle_product_update(shop_domain, payload, db):
     if not shopify_id:
         return
 
-    product_gid = f"gid://shopify/Product/{shopify_id}"
+    product = None
 
-    # DB mein dhundho
+    # GID format
+    product_gid = f"gid://shopify/Product/{shopify_id}"
     product = (
         db.query(Product)
         .filter(Product.shopify_product_id == product_gid)
         .first()
     )
 
+    # Numeric format
     if not product:
         product = (
             db.query(Product)
             .filter(Product.shopify_product_id == str(shopify_id))
+            .first()
+        )
+
+    # LIKE query
+    if not product:
+        product = (
+            db.query(Product)
+            .filter(Product.shopify_product_id.like(f"%{shopify_id}%"))
             .first()
         )
 
