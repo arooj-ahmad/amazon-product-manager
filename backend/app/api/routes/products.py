@@ -10,6 +10,8 @@
 # + Markup apply karne par Shopify par bhi update karo
 # + ✅ FIXED: shop= → shop_domain= in sync_update_shopify_price calls
 # + ✅ FIXED: admin_fetch mein shopify_store_id + shopify_status set karo
+# + ✅ FIXED: Har product ke liye uske shopify_store_id wala store use karo
+#              (pehla store nahi — multi-store support)
 # ============================================
 
 import logging
@@ -47,6 +49,36 @@ from app.services.shopify import (
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api", tags=["Products"])
+
+
+# ============================================
+# HELPER: Product ke liye sahi store dhoondho
+# ============================================
+def _get_store_for_product(
+    db: Session,
+    product: Product,
+    fallback_store_id: int = None,
+) -> ShopifyStore:
+    """
+    Product ke shopify_store_id se store dhoondho.
+    Fallback: fallback_store_id → pehla store.
+    """
+    store = None
+    if product.shopify_store_id:
+        store = (
+            db.query(ShopifyStore)
+            .filter(ShopifyStore.id == product.shopify_store_id)
+            .first()
+        )
+    if not store and fallback_store_id:
+        store = (
+            db.query(ShopifyStore)
+            .filter(ShopifyStore.id == fallback_store_id)
+            .first()
+        )
+    if not store:
+        store = db.query(ShopifyStore).first()
+    return store
 
 
 # ============================================
@@ -436,19 +468,38 @@ async def update_product_markup(
     db.commit()
     db.refresh(product)
 
-    # Shopify par price update karo
-    store = db.query(ShopifyStore).first()
+    # ✅ FIXED: Product ke shopify_store_id se store dhoondho (pehla nahi)
+    store = _get_store_for_product(db, product)
+
     if store and store.access_token and product.shopify_product_id:
+        logger.info(
+            f"🔄 Syncing price to Shopify: shop={store.shop_domain}, "
+            f"product={product.shopify_product_id}, price=${new_price}"
+        )
         try:
-            await sync_update_shopify_price(
-                shop_domain=store.shop_domain,   # ✅ FIXED
+            ok = await sync_update_shopify_price(
+                shop_domain=store.shop_domain,
                 access_token=store.access_token,
                 shopify_product_id=product.shopify_product_id,
                 new_price=new_price,
             )
-            logger.info(f"✅ Shopify price updated: {product.asin} → ${new_price}")
+            if ok:
+                logger.info(
+                    f"✅ Shopify price updated: {product.asin} → ${new_price}"
+                )
+            else:
+                logger.warning(
+                    f"⚠️ Shopify price update FAILED: {product.asin} "
+                    f"(shop={store.shop_domain})"
+                )
         except Exception as e:
-            logger.error(f"❌ Shopify update failed: {e}")
+            logger.error(f"❌ Shopify update exception: {e}")
+    else:
+        logger.warning(
+            f"⚠️ Shopify sync skipped: store={bool(store)}, "
+            f"token={bool(store.access_token) if store else False}, "
+            f"product_id={product.shopify_product_id}"
+        )
 
     return product
 
@@ -469,11 +520,7 @@ async def bulk_update_markup(
     products = query.all()
     updated = 0
     shopify_updated = 0
-
-    if store_id:
-        store = db.query(ShopifyStore).filter(ShopifyStore.id == store_id).first()
-    else:
-        store = db.query(ShopifyStore).first()
+    shopify_failed = 0
 
     for product in products:
         new_price = calculate_final_price(
@@ -487,17 +534,36 @@ async def bulk_update_markup(
         product.is_manual_override = True
         updated += 1
 
-        if store and store.access_token and product.shopify_product_id:
+        # ✅ FIXED: Har product ke liye uske store ka token use karo
+        product_store = _get_store_for_product(
+            db, product, fallback_store_id=store_id
+        )
+
+        if (
+            product_store
+            and product_store.access_token
+            and product.shopify_product_id
+        ):
             try:
-                await sync_update_shopify_price(
-                    shop_domain=store.shop_domain,   # ✅ FIXED
-                    access_token=store.access_token,
+                ok = await sync_update_shopify_price(
+                    shop_domain=product_store.shop_domain,
+                    access_token=product_store.access_token,
                     shopify_product_id=product.shopify_product_id,
                     new_price=new_price,
                 )
-                shopify_updated += 1
+                if ok:
+                    shopify_updated += 1
+                else:
+                    shopify_failed += 1
+                    logger.warning(
+                        f"⚠️ Shopify update FAILED: {product.asin} "
+                        f"(shop={product_store.shop_domain})"
+                    )
             except Exception as e:
-                logger.error(f"❌ Shopify update failed for {product.asin}: {e}")
+                shopify_failed += 1
+                logger.error(
+                    f"❌ Shopify update exception for {product.asin}: {e}"
+                )
 
     db.commit()
 
@@ -505,6 +571,7 @@ async def bulk_update_markup(
         "success": True,
         "updated": updated,
         "shopify_updated": shopify_updated,
+        "shopify_failed": shopify_failed,
     }
 
 
