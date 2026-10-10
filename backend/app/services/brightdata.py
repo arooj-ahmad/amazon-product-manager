@@ -7,6 +7,7 @@
 # + Parent ASIN validation (fake ASIN skip)
 # + Variations + Variant Attributes (for Shopify grouping)
 # + ✅ NAYA: Availability check with fallback
+# + ✅ NAYA: Categories (Collections) + Tags (Features/Specs)
 # ============================================
 
 import logging
@@ -180,6 +181,124 @@ def check_availability(raw: dict) -> tuple[bool, str, str]:
 
 
 # ============================================
+# ✅ NAYA HELPER: CATEGORIES PARSE
+# ============================================
+def parse_categories(raw: dict) -> list[str]:
+    """
+    Amazon response se categories (collections) nikalta hai.
+    Multiple sources try karta hai:
+      1. category_tree (best — hierarchy)
+      2. categories (list)
+      3. root_bs_category + bs_category (fallback)
+    """
+    categories: list[str] = []
+
+    # ── Source 1: category_tree (hierarchy) ──
+    category_tree = raw.get("category_tree") or []
+    if isinstance(category_tree, list):
+        for cat in category_tree:
+            if isinstance(cat, dict):
+                name = cat.get("name") or cat.get("title")
+                if name and isinstance(name, str):
+                    categories.append(name.strip())
+            elif isinstance(cat, str):
+                categories.append(cat.strip())
+
+    # ── Source 2: categories list ──
+    if not categories:
+        raw_cats = raw.get("categories") or []
+        if isinstance(raw_cats, list):
+            for c in raw_cats:
+                if isinstance(c, str):
+                    categories.append(c.strip())
+                elif isinstance(c, dict) and c.get("name"):
+                    categories.append(c["name"].strip())
+
+    # ── Source 3: root_bs_category + bs_category (fallback) ──
+    if not categories:
+        root = raw.get("root_bs_category")
+        sub = raw.get("bs_category")
+        if root and isinstance(root, str):
+            categories.append(root.strip())
+        if sub and isinstance(sub, str) and sub != root:
+            categories.append(sub.strip())
+
+    # Clean + deduplicate
+    categories = [
+        c for c in dict.fromkeys(categories)
+        if c and len(c) < 100
+    ]
+
+    logger.info(f"✅ Parsed categories: {categories}")
+    return categories
+
+
+# ============================================
+# ✅ NAYA HELPER: TAGS PARSE
+# ============================================
+def parse_tags(raw: dict, categories: list[str]) -> list[str]:
+    """
+    Amazon response se tags (features, specs, details) nikalta hai.
+    Shopify tags ke liye — automated collections ke liye bhi use hoga.
+    """
+    tags: list[str] = []
+
+    # ── 1. Features (short one-liners) ──
+    features = raw.get("features") or []
+    if isinstance(features, list):
+        for f in features:
+            if isinstance(f, str):
+                clean = f.strip().replace("\n", " ").replace(",", "")
+                if 3 < len(clean) < 80:
+                    tags.append(clean)
+
+    # ── 2. Product Details (key: value) ──
+    product_details = raw.get("product_details") or []
+    if isinstance(product_details, list):
+        for item in product_details:
+            if isinstance(item, dict):
+                key = item.get("type")
+                value = item.get("value")
+                if key and value:
+                    val_str = str(value).strip()
+                    if 0 < len(val_str) < 80:
+                        tags.append(f"{key}: {val_str}")
+    elif isinstance(product_details, dict):
+        for key, value in product_details.items():
+            if not key or value is None:
+                continue
+            val_str = str(value).strip()
+            if 0 < len(val_str) < 80:
+                tags.append(f"{key}: {val_str}")
+
+    # ── 3. Additional metadata ──
+    for field, label in [
+        ("department", "Department"),
+        ("country_of_origin", "Country"),
+        ("brand", "Brand"),
+        ("manufacturer", "Manufacturer"),
+    ]:
+        val = raw.get(field)
+        if val and isinstance(val, str) and len(val) < 50:
+            tags.append(f"{label}: {val.strip()}")
+
+    # ── 4. Category names ko bhi tags mein daalo ──
+    # Shopify automated collections category name se match karein
+    for cat in categories:
+        if cat and cat not in tags and len(cat) < 50:
+            tags.append(cat)
+
+    # Clean + deduplicate + limit
+    tags = [
+        t for t in dict.fromkeys(tags)
+        if t and len(t) < 100
+    ][:20]  # Max 20 tags
+
+    logger.info(f"✅ Parsed tags ({len(tags)}): {tags}")
+    return tags
+
+
+# ============================================
 # BRIGHT DATA API CALL
 # ============================================
 async def fetch_product_from_brightdata(amazon_url: str) -> dict:
@@ -254,6 +373,14 @@ async def fetch_product_from_brightdata(amazon_url: str) -> dict:
     logger.info(f"final_price: {raw.get('final_price')}")
     logger.info(f"price: {raw.get('price')}")
     logger.info(f"list_price: {raw.get('list_price')}")
+    logger.info(f"--- CATEGORY FIELDS ---")
+    logger.info(f"category_tree: {raw.get('category_tree')}")
+    logger.info(f"categories: {raw.get('categories')}")
+    logger.info(f"root_bs_category: {raw.get('root_bs_category')}")
+    logger.info(f"bs_category: {raw.get('bs_category')}")
+    logger.info(f"--- TAG FIELDS ---")
+    logger.info(f"features: {raw.get('features')}")
+    logger.info(f"product_details: {raw.get('product_details')}")
     logger.info("=" * 60)
 
     # Extract fields
@@ -452,12 +579,19 @@ async def fetch_product_from_brightdata(amazon_url: str) -> dict:
 
     final_availability = str(availability_text) if availability_text else "In Stock"
 
+    # ========================================
+    # ✅ NAYA: CATEGORIES + TAGS PARSE
+    # ========================================
+    categories = parse_categories(raw)
+    tags = parse_tags(raw, categories)
+
     logger.info(
         f"Parsed product: ASIN={asin}, ParentASIN={parent_asin}, "
         f"AmazonPrice=${amazon_price}, ListPrice=${list_price}, "
         f"Rating={rating_value}, Reviews={reviews_count}, "
         f"Variations={len(variations)}, VarAttrs={len(variant_attributes)}, "
         f"Images={len(unique_images)}, Specs={len(specs)}, "
+        f"Categories={len(categories)}, Tags={len(tags)}, "
         f"Availability='{final_availability}', Available={is_available}, "
         f"Stock={stock_quantity}"
     )
@@ -481,6 +615,9 @@ async def fetch_product_from_brightdata(amazon_url: str) -> dict:
         "stock_quantity": stock_quantity,
         "variations": variations,
         "variant_attributes": variant_attributes,
+        # ✅ NAYA
+        "categories": categories,
+        "tags": tags,
     }
 
 

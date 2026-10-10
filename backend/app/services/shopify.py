@@ -12,6 +12,7 @@
 # + ✅ FIXED: sync_update_shopify_price auto-refresh on 401 AND 403
 # + ✅ FIXED: expiring:"1" WAPAS ADD KIYA (Shopify permanent reject karta hai)
 # + ✅ FIXED: exchange_code_for_token ab DICT return karta hai
+# + ✅ NAYA: tags + productType push (Collections ke liye)
 # ============================================
 
 import hashlib
@@ -38,6 +39,61 @@ def _safe_api_version() -> str:
     if v in ("2026-10", "unstable", ""):
         return "2025-01"
     return v
+
+
+# ============================================
+# HELPER: Build Shopify tags (string array)
+# ============================================
+def _build_shopify_tags(product_data: dict) -> list[str]:
+    """
+    Product data se Shopify tags ka array banao.
+    Shopify ProductInput.tags ek string array leta hai.
+    
+    Sources:
+      1. product_data["tags"] — brightdata se aaye tags
+      2. product_data["categories"] — categories ko bhi tag banao
+    """
+    tags: list[str] = []
+
+    # 1. Direct tags
+    raw_tags = product_data.get("tags") or []
+    if isinstance(raw_tags, list):
+        for t in raw_tags:
+            if isinstance(t, str):
+                clean = t.strip()
+                if clean and len(clean) < 100:
+                    tags.append(clean)
+
+    # 2. Categories ko bhi tag banao (automated collections ke liye)
+    raw_cats = product_data.get("categories") or []
+    if isinstance(raw_cats, list):
+        for c in raw_cats:
+            if isinstance(c, str):
+                clean = c.strip()
+                if clean and len(clean) < 50 and clean not in tags:
+                    tags.append(clean)
+
+    # Deduplicate (order preserve)
+    tags = list(dict.fromkeys(tags))
+
+    # Shopify limit: 250 tags per product
+    return tags[:250]
+
+
+# ============================================
+# HELPER: First category → productType
+# ============================================
+def _get_product_type(product_data: dict) -> str:
+    """
+    Shopify mein ek hi productType hota hai.
+    First category ko productType banao.
+    """
+    categories = product_data.get("categories") or []
+    if isinstance(categories, list) and categories:
+        first = categories[0]
+        if isinstance(first, str):
+            return first.strip()[:255]
+    return ""
 
 
 # ============================================
@@ -739,6 +795,7 @@ async def ensure_product_has_option(
 
 # ============================================
 # CREATE PRODUCT WITH VARIANTS
+# + ✅ NAYA: tags + productType
 # ============================================
 async def create_shopify_product_with_variants(
     shop: str,
@@ -756,6 +813,8 @@ async def create_shopify_product_with_variants(
           id
           title
           handle
+          tags
+          productType
           options {
             id
             name
@@ -790,6 +849,10 @@ async def create_shopify_product_with_variants(
         logger.warning("No option values provided — using default")
         option_values = [{"name": "Default"}]
 
+    # ✅ Tags + productType build karo
+    shopify_tags = _build_shopify_tags(product_data)
+    product_type = _get_product_type(product_data)
+
     input_data = {
         "title": product_data.get("title") or "Untitled Product",
         "descriptionHtml": product_data.get("description", ""),
@@ -802,6 +865,16 @@ async def create_shopify_product_with_variants(
             }
         ],
     }
+
+    # ✅ Tags add karo (agar hain to)
+    if shopify_tags:
+        input_data["tags"] = shopify_tags
+        logger.info(f"   Pushing {len(shopify_tags)} tags to Shopify")
+
+    # ✅ Product type add karo (agar hai to)
+    if product_type:
+        input_data["productType"] = product_type
+        logger.info(f"   Product type: {product_type}")
 
     result = await shopify_graphql(
         shop, access_token, mutation_create, {"input": input_data}
@@ -822,6 +895,8 @@ async def create_shopify_product_with_variants(
     product_id = shopify_product.get("id")
 
     logger.info(f"✅ Product created: {shopify_product.get('title')}")
+    if shopify_product.get("tags"):
+        logger.info(f"   Tags confirmed: {shopify_product.get('tags')}")
 
     variant_edges = (
         shopify_product.get("variants", {}).get("edges", [])
@@ -1028,6 +1103,7 @@ async def add_variant_to_existing_product(
 
 # ============================================
 # PRODUCT CREATE (SIMPLE)
+# + ✅ NAYA: tags + productType
 # ============================================
 async def create_shopify_product(
     shop: str,
@@ -1094,12 +1170,26 @@ async def create_shopify_product(
             "type": "single_line_text_field",
         })
 
+    # ✅ Tags + productType build karo
+    shopify_tags = _build_shopify_tags(product_data)
+    product_type = _get_product_type(product_data)
+
     input_data = {
         "title": product_data.get("title") or "Untitled Product",
         "descriptionHtml": product_data.get("description", ""),
         "vendor": product_data.get("brand", ""),
         "status": status,
     }
+
+    # ✅ Tags add karo
+    if shopify_tags:
+        input_data["tags"] = shopify_tags
+        logger.info(f"   Pushing {len(shopify_tags)} tags to Shopify")
+
+    # ✅ Product type add karo
+    if product_type:
+        input_data["productType"] = product_type
+        logger.info(f"   Product type: {product_type}")
 
     variant_attrs = product_data.get("variant_attributes") or []
     product_options = []
@@ -1126,6 +1216,8 @@ async def create_shopify_product(
           id
           title
           handle
+          tags
+          productType
           options {
             id
             name
@@ -1172,6 +1264,10 @@ async def create_shopify_product(
     product_id = shopify_product.get("id")
 
     logger.info(f"✅ Product created: {shopify_product.get('title')}")
+    if shopify_product.get("tags"):
+        logger.info(f"   Tags confirmed: {shopify_product.get('tags')}")
+    if shopify_product.get("productType"):
+        logger.info(f"   Product type confirmed: {shopify_product.get('productType')}")
 
     if product_id and metafields_input:
         await set_product_metafields(

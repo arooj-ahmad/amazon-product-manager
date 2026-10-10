@@ -5,6 +5,7 @@
 # + Variant attributes (Shopify options ke liye)
 # + Shopify status tracking (active/draft)
 # + ✅ NAYA: shopify_store_id (multi-store support)
+# + ✅ NAYA: categories (Collections) + tags (Shopify tags)
 # ============================================
 
 from sqlalchemy import (
@@ -20,6 +21,7 @@ from sqlalchemy import (
     Text,
     func,
 )
+from sqlalchemy.dialects.postgresql import JSONB
 
 from app.database import Base
 
@@ -47,6 +49,17 @@ class Product(Base):
     specifications = Column(JSON, default=dict)
     rating = Column(Float, nullable=True)
     reviews_count = Column(BigInteger, nullable=True)
+
+    # ----------------------------------------
+    # ✅ NAYA: Collections + Tags
+    # ----------------------------------------
+    # Amazon categories — Shopify collections ke liye
+    # Format: ["Books", "Romance", "Fantasy"]
+    categories = Column(JSONB, default=list, nullable=False)
+
+    # Amazon features/specs — Shopify tags ke liye
+    # Format: ["Paperback: 366 pages", "Language: English", "Books"]
+    tags = Column(JSONB, default=list, nullable=False)
 
     # ----------------------------------------
     # Stock Tracking
