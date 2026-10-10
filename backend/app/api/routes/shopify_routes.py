@@ -1,14 +1,9 @@
 # ============================================
 # app/api/routes/shopify_routes.py
 # Shopify OAuth + Product Push + Embedded App
-# + Availability + Inventory tracking
-# + ASIN + Parent ASIN + Rating + Reviews + Amazon Price + Availability
-# + Variations support (parent detection + smart variant attributes)
-# + /store-id endpoint (shop domain se store ID)
-# + ✅ NAYA: shopify_store_id aur shopify_status set karo
-# + ✅ FIXED: refresh_store_token mein refresh_token + expiry save karo
-# + ✅ FIXED: /callback bhi refresh_token + expiry save kare
-# + ✅ FIXED: expires_at = None (permanent token ke liye)
+# + ✅ FIXED: refresh_store_token ab HAR BAAR call hota hai
+# + ✅ FIXED: expires_at = None (permanent token)
+# + ✅ FIXED: exchange_code_for_token ab dict return karta hai
 # ============================================
 
 import logging
@@ -107,7 +102,8 @@ def shopify_install(
 
 # ============================================
 # CALLBACK (OAuth)
-# ✅ FIXED: expires_at = None (permanent token ke liye)
+# ✅ FIXED: expires_at = None (permanent token)
+# ✅ FIXED: exchange_code_for_token ab dict return karta hai
 # ============================================
 @router.get("/callback")
 async def shopify_callback(
@@ -129,6 +125,7 @@ async def shopify_callback(
 
     logger.info(f"✅ HMAC verified for {shop}")
 
+    # ✅ FIXED: exchange_code_for_token ab dict return karta hai
     token_data = await exchange_code_for_token(shop, code)
 
     if not token_data or not token_data.get("access_token"):
@@ -147,7 +144,7 @@ async def shopify_callback(
 
     access_token = token_data["access_token"]
 
-    # ✅ FIXED: Permanent token — expiry NULL
+    # ✅ Permanent token — expiry NULL
     expires_at = None
     refresh_token_expires_at = None
 
@@ -164,9 +161,9 @@ async def shopify_callback(
         existing.refresh_token_expires_at = refresh_token_expires_at
         existing.scopes = settings.SHOPIFY_SCOPES
         logger.info(
-            f"Updated token for {shop} "
-            f"(refresh_token_saved={bool(token_data.get('refresh_token'))}, "
-            f"permanent=True)"
+            f"✅ Updated token for {shop} "
+            f"(permanent=True, "
+            f"refresh_token_saved={bool(token_data.get('refresh_token'))})"
         )
     else:
         new_store = ShopifyStore(
@@ -178,9 +175,15 @@ async def shopify_callback(
             scopes=settings.SHOPIFY_SCOPES,
         )
         db.add(new_store)
-        logger.info(f"New store installed: {shop} (permanent token)")
+        logger.info(f"✅ New store installed: {shop} (permanent token)")
 
     db.commit()
+
+    # ✅ Log token info (debug ke liye)
+    logger.info(
+        f"✅ Token saved for {shop} "
+        f"(len={len(access_token)}, prefix={access_token[:15]}...)"
+    )
 
     return HTMLResponse(
         content=f"""
@@ -399,7 +402,7 @@ async def push_product_to_shopify(
 
 # ============================================
 # ADD PRODUCT FROM SHOPIFY APP (Iframe Se)
-# ✅ FIXED: refresh_store_token mein expires_at = None
+# ✅ FIXED: refresh_store_token ab HAR BAAR call hota hai
 # ============================================
 @router.post("/app/add-product")
 async def add_product_from_shopify_app(
@@ -444,11 +447,12 @@ async def add_product_from_shopify_app(
         .first()
     )
 
-    # ✅ FIXED: expires_at = None — permanent token
+    # ✅ FIXED: refresh_store_token har baar call hoga
     async def refresh_store_token() -> bool:
         nonlocal store
         token_data = await exchange_id_token_for_offline_token(shop_domain, token)
         if not token_data or not token_data.get("access_token"):
+            logger.error(f"❌ refresh_store_token: token_data empty for {shop_domain}")
             return False
 
         # ✅ Permanent token — expiry NULL
@@ -475,23 +479,24 @@ async def add_product_from_shopify_app(
         db.commit()
         db.refresh(store)
         logger.info(
-            f"🔄 Token refreshed for {shop_domain} "
-            f"(permanent=True, refresh_token_saved={bool(store.refresh_token)})"
+            f"✅ Token refreshed for {shop_domain} "
+            f"(permanent=True, "
+            f"token_len={len(token_data['access_token'])}, "
+            f"prefix={token_data['access_token'][:15]}...)"
         )
         return True
 
-    if not store:
-        ok = await refresh_store_token()
-        if not ok:
+    # ✅ FIXED: HAR BAAR refresh karo (chahe store exist kare ya na)
+    refreshed_ok = await refresh_store_token()
+    if not refreshed_ok:
+        if not store:
             raise HTTPException(
                 status_code=404,
                 detail=f"Store {shop_domain} not connected. Please reinstall the app.",
             )
-
-    if not store:
-        raise HTTPException(
-            status_code=404,
-            detail=f"Store {shop_domain} not connected. Please reinstall the app.",
+        logger.warning(
+            f"⚠️ Token refresh failed for {shop_domain}, "
+            f"using existing token"
         )
 
     try:

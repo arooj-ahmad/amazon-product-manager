@@ -8,9 +8,10 @@
 # + Variations Support (parent + variant creation & auto-grouping)
 # + Option Existence Check (via productSet)
 # + ✅ FIXED: sync_update_shopify_price is async
-# + ✅ NAYA: refresh_shopify_token() helper
-# + ✅ NAYA: sync_update_shopify_price auto-refresh on 401
+# + ✅ FIXED: refresh_shopify_token() helper
+# + ✅ FIXED: sync_update_shopify_price auto-refresh on 401
 # + ✅ FIXED: expiring:"1" HATA DIYA — ab PERMANENT token milega
+# + ✅ FIXED: exchange_code_for_token ab DICT return karta hai
 # ============================================
 
 import hashlib
@@ -130,8 +131,9 @@ def verify_id_token(token: str) -> dict:
 
 # ============================================
 # OAUTH: ACCESS TOKEN EXCHANGE
+# ✅ FIXED: ab DICT return karta hai (na ki string)
 # ============================================
-async def exchange_code_for_token(shop: str, code: str) -> Optional[str]:
+async def exchange_code_for_token(shop: str, code: str) -> Optional[dict]:
     url = f"https://{shop}/admin/oauth/access_token"
 
     payload = {
@@ -145,7 +147,14 @@ async def exchange_code_for_token(shop: str, code: str) -> Optional[str]:
             response = await client.post(url, json=payload)
             response.raise_for_status()
             data = response.json()
-            return data.get("access_token")
+            logger.info(f"✅ Token exchanged for {shop}")
+            return {
+                "access_token": data.get("access_token"),
+                "scope": data.get("scope"),
+                "expires_in": data.get("expires_in"),
+                "refresh_token": data.get("refresh_token"),
+                "refresh_token_expires_in": data.get("refresh_token_expires_in"),
+            }
     except Exception as e:
         logger.error(f"Token exchange fail: {e}")
         return None
