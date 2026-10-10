@@ -14,6 +14,7 @@
 # + ✅ FIXED: exchange_code_for_token ab DICT return karta hai
 # + ✅ NAYA: tags + productType push (Collections ke liye)
 # + ✅ NAYA: Existing product ke tags + productType update karo
+# + ✅ NAYA: Shopify Taxonomy search + category push
 # ============================================
 
 import hashlib
@@ -49,10 +50,6 @@ def _build_shopify_tags(product_data: dict) -> list[str]:
     """
     Product data se Shopify tags ka array banao.
     Shopify ProductInput.tags ek string array leta hai.
-    
-    Sources:
-      1. product_data["tags"] — brightdata se aaye tags
-      2. product_data["categories"] — categories ko bhi tag banao
     """
     tags: list[str] = []
 
@@ -95,6 +92,85 @@ def _get_product_type(product_data: dict) -> str:
         if isinstance(first, str):
             return first.strip()[:255]
     return ""
+
+
+# ============================================
+# ✅ NAYA: SHOPIFY TAXONOMY SEARCH
+# ============================================
+async def get_shopify_category_id(
+    shop: str,
+    access_token: str,
+    search_query: str,
+) -> Optional[str]:
+    """
+    Shopify Taxonomy API se category ID dhundho.
+    Amazon category name se best match.
+    
+    Shopify officially recommended method hai — manual mapping nahi chahiye.
+    
+    Args:
+        shop: Shopify store domain
+        access_token: Shopify access token
+        search_query: Amazon category (e.g., "Electronics", "Desktop Computers")
+    
+    Returns:
+        Shopify Taxonomy Category GID or None
+    """
+    if not search_query or not isinstance(search_query, str):
+        return None
+    
+    # Clean query
+    query_str = search_query.strip()
+    if len(query_str) < 2:
+        return None
+    
+    query = """
+    query searchTaxonomy($query: String!) {
+      taxonomy {
+        categories(first: 3, search: $query) {
+          edges {
+            node {
+              id
+              name
+              fullName
+              level
+            }
+          }
+        }
+      }
+    }
+    """
+    
+    result = await shopify_graphql(
+        shop=shop,
+        access_token=access_token,
+        query=query,
+        variables={"query": query_str},
+    )
+    
+    if "errors" in result:
+        logger.warning(f"⚠️ Taxonomy search failed: {result['errors']}")
+        return None
+    
+    edges = (
+        result.get("data", {})
+        .get("taxonomy", {})
+        .get("categories", {})
+        .get("edges", [])
+    )
+    
+    if not edges:
+        logger.info(f"   No taxonomy match for: {query_str}")
+        return None
+    
+    # Best match = first result (Shopify relevance order)
+    best = edges[0]["node"]
+    logger.info(
+        f"   ✅ Taxonomy match: {best.get('fullName')} "
+        f"→ {best.get('id')}"
+    )
+    
+    return best.get("id")
 
 
 # ============================================
@@ -188,7 +264,6 @@ def verify_id_token(token: str) -> dict:
 
 # ============================================
 # OAUTH: ACCESS TOKEN EXCHANGE
-# ✅ FIXED: ab DICT return karta hai (na ki string)
 # ============================================
 async def exchange_code_for_token(shop: str, code: str) -> Optional[dict]:
     url = f"https://{shop}/admin/oauth/access_token"
@@ -219,7 +294,6 @@ async def exchange_code_for_token(shop: str, code: str) -> Optional[dict]:
 
 # ============================================
 # TOKEN EXCHANGE (Session/ID token → Offline access token)
-# ✅ FIXED: "expiring": "1" WAPAS ADD KIYA
 # ============================================
 async def exchange_id_token_for_offline_token(
     shop: str, id_token: str
@@ -806,7 +880,6 @@ async def update_shopify_product_tags_and_type(
 ) -> bool:
     """
     Existing Shopify product ke tags + productType update karo.
-    Price update ke saath call karo.
     """
     if not shopify_product_id.startswith("gid://"):
         product_gid = f"gid://shopify/Product/{shopify_product_id}"
@@ -862,7 +935,7 @@ async def update_shopify_product_tags_and_type(
 
 # ============================================
 # CREATE PRODUCT WITH VARIANTS
-# + ✅ NAYA: tags + productType
+# + ✅ NAYA: tags + productType + category
 # ============================================
 async def create_shopify_product_with_variants(
     shop: str,
@@ -882,6 +955,11 @@ async def create_shopify_product_with_variants(
           handle
           tags
           productType
+          category {
+            id
+            name
+            fullName
+          }
           options {
             id
             name
@@ -943,6 +1021,26 @@ async def create_shopify_product_with_variants(
         input_data["productType"] = product_type
         logger.info(f"   Product type: {product_type}")
 
+    # ✅ NAYA: Category ID search karo (agar nahi diya)
+    shopify_category_id = product_data.get("shopify_category_id")
+    
+    if not shopify_category_id:
+        # Amazon category se search karo
+        categories = product_data.get("categories") or []
+        if categories:
+            # Deepest category use karo (last one)
+            search_term = categories[-1]
+            shopify_category_id = await get_shopify_category_id(
+                shop=shop,
+                access_token=access_token,
+                search_query=search_term,
+            )
+    
+    # ✅ Category add karo
+    if shopify_category_id:
+        input_data["category"] = shopify_category_id
+        logger.info(f"   Category: {shopify_category_id}")
+
     result = await shopify_graphql(
         shop, access_token, mutation_create, {"input": input_data}
     )
@@ -964,6 +1062,8 @@ async def create_shopify_product_with_variants(
     logger.info(f"✅ Product created: {shopify_product.get('title')}")
     if shopify_product.get("tags"):
         logger.info(f"   Tags confirmed: {shopify_product.get('tags')}")
+    if shopify_product.get("category"):
+        logger.info(f"   Category confirmed: {shopify_product.get('category')}")
 
     variant_edges = (
         shopify_product.get("variants", {}).get("edges", [])
@@ -1170,7 +1270,7 @@ async def add_variant_to_existing_product(
 
 # ============================================
 # PRODUCT CREATE (SIMPLE)
-# + ✅ NAYA: tags + productType
+# + ✅ NAYA: tags + productType + category
 # ============================================
 async def create_shopify_product(
     shop: str,
@@ -1258,6 +1358,26 @@ async def create_shopify_product(
         input_data["productType"] = product_type
         logger.info(f"   Product type: {product_type}")
 
+    # ✅ NAYA: Category ID search karo (agar nahi diya)
+    shopify_category_id = product_data.get("shopify_category_id")
+    
+    if not shopify_category_id:
+        # Amazon category se search karo
+        categories = product_data.get("categories") or []
+        if categories:
+            # Deepest category use karo (last one)
+            search_term = categories[-1]
+            shopify_category_id = await get_shopify_category_id(
+                shop=shop,
+                access_token=access_token,
+                search_query=search_term,
+            )
+    
+    # ✅ Category add karo
+    if shopify_category_id:
+        input_data["category"] = shopify_category_id
+        logger.info(f"   Category: {shopify_category_id}")
+
     variant_attrs = product_data.get("variant_attributes") or []
     product_options = []
 
@@ -1285,6 +1405,11 @@ async def create_shopify_product(
           handle
           tags
           productType
+          category {
+            id
+            name
+            fullName
+          }
           options {
             id
             name
@@ -1335,6 +1460,8 @@ async def create_shopify_product(
         logger.info(f"   Tags confirmed: {shopify_product.get('tags')}")
     if shopify_product.get("productType"):
         logger.info(f"   Product type confirmed: {shopify_product.get('productType')}")
+    if shopify_product.get("category"):
+        logger.info(f"   Category confirmed: {shopify_product.get('category')}")
 
     if product_id and metafields_input:
         await set_product_metafields(
