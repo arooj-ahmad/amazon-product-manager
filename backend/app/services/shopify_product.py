@@ -3,13 +3,11 @@
 # Product create (simple + variants), variant add,
 # images, status update, tags update,
 # product delete, SKU search, PUBLISH, METAFIELDS
-# + ✅ UPDATED: Multiple variants support (Color + Size)
-# + ✅ FIXED: ensure_product_has_option sends variants input
-# + ✅ NAYA: SKU (ASIN) always set on variants
-# + ✅ FIXED: variants only when productOptions exist
-# + ✅ NAYA: Metafields in Description HTML (auto-show)
-# + ✅ NAYA: Auto-publish to channels (Online Store, POS)
-# + ✅ NAYA: All standard metafields (model, dimensions, material, etc.)
+# + ✅ FIXED: Metafield DEFINITIONS auto-create (Admin UI mein show honge)
+# + ✅ FIXED: Multiple variants support (Color + Size)
+# + ✅ FIXED: SKU (ASIN) always set on variants
+# + ✅ FIXED: Metafields in Description HTML (auto-show)
+# + ✅ FIXED: Auto-publish to channels
 # ============================================
 
 import logging
@@ -24,6 +22,78 @@ from app.services.shopify_taxonomy import find_best_category
 from app.services.shopify_inventory import set_inventory_quantity
 
 logger = logging.getLogger(__name__)
+
+
+# ============================================
+# ✅ METAFIELD DEFINITIONS MAP
+# key → (display_name, type, description)
+# Yeh zaroori hai taaki metafields Admin UI mein show hon
+# ============================================
+METAFIELD_DEFINITIONS = {
+    # Core
+    "asin": ("ASIN", "single_line_text_field", "Amazon Standard Identification Number"),
+    "brand": ("Brand", "single_line_text_field", "Brand name"),
+    "manufacturer": ("Manufacturer", "single_line_text_field", "Manufacturer name"),
+    "rating": ("Rating", "number_decimal", "Amazon rating (0-5)"),
+    "reviews_count": ("Reviews Count", "number_integer", "Number of reviews"),
+    "amazon_price": ("Amazon Price", "number_decimal", "Price on Amazon"),
+    "availability": ("Availability", "single_line_text_field", "Stock availability"),
+
+    # Identification
+    "model_number": ("Model Number", "single_line_text_field", "Model number"),
+    "item_model_number": ("Item Model Number", "single_line_text_field", "Item model number"),
+    "model_name": ("Model Name", "single_line_text_field", "Model name"),
+    "part_number": ("Part Number", "single_line_text_field", "Part number"),
+    "upc": ("UPC", "single_line_text_field", "Universal Product Code"),
+    "ean": ("EAN", "single_line_text_field", "European Article Number"),
+    "isbn": ("ISBN", "single_line_text_field", "International Standard Book Number"),
+
+    # Dimensions
+    "item_dimensions": ("Item Dimensions", "single_line_text_field", "Item dimensions"),
+    "item_weight": ("Item Weight", "single_line_text_field", "Item weight"),
+    "package_dimensions": ("Package Dimensions", "single_line_text_field", "Package dimensions"),
+    "size": ("Size", "single_line_text_field", "Size"),
+    "color": ("Color", "single_line_text_field", "Color"),
+    "material_type": ("Material Type", "single_line_text_field", "Material"),
+    "style_name": ("Style Name", "single_line_text_field", "Style"),
+    "theme": ("Theme", "single_line_text_field", "Theme"),
+
+    # Details
+    "department": ("Department", "single_line_text_field", "Department"),
+    "country_of_origin": ("Country of Origin", "single_line_text_field", "Country of origin"),
+    "date_first_available": ("Date First Available", "single_line_text_field", "Date first available"),
+    "best_sellers_rank": ("Best Sellers Rank", "single_line_text_field", "Best sellers rank"),
+    "language": ("Language", "single_line_text_field", "Language"),
+    "reading_age": ("Reading Age", "single_line_text_field", "Reading age"),
+    "unit_count": ("Unit Count", "single_line_text_field", "Unit count"),
+    "number_of_pieces": ("Number of Pieces", "number_integer", "Number of pieces"),
+    "care_instructions": ("Care Instructions", "multi_line_text_field", "Care instructions"),
+    "closure_type": ("Closure Type", "single_line_text_field", "Closure type"),
+    "fabric_type": ("Fabric Type", "single_line_text_field", "Fabric type"),
+
+    # Category specific
+    "number_of_players": ("Number of Players", "single_line_text_field", "Number of players"),
+    "educational_objective": ("Educational Objective", "single_line_text_field", "Educational objective"),
+    "power_source": ("Power Source", "single_line_text_field", "Power source"),
+    "battery_types": ("Battery Types", "single_line_text_field", "Battery types"),
+    "operation_mode": ("Operation Mode", "single_line_text_field", "Operation mode"),
+    "specific_uses": ("Specific Uses", "single_line_text_field", "Specific uses"),
+    "special_features": ("Special Features", "single_line_text_field", "Special features"),
+
+    # Electronics
+    "connectivity": ("Connectivity", "single_line_text_field", "Connectivity"),
+    "processor": ("Processor", "single_line_text_field", "Processor"),
+    "ram_technology": ("RAM Technology", "single_line_text_field", "RAM technology"),
+    "memory": ("Memory", "single_line_text_field", "Memory"),
+    "screen_size": ("Screen Size", "single_line_text_field", "Screen size"),
+    "resolution": ("Resolution", "single_line_text_field", "Resolution"),
+    "operating_system": ("Operating System", "single_line_text_field", "Operating system"),
+    "hard_disk": ("Hard Disk", "single_line_text_field", "Hard disk"),
+    "graphics_coprocessor": ("Graphics Coprocessor", "single_line_text_field", "Graphics coprocessor"),
+
+    # Warranty
+    "warranty": ("Warranty", "multi_line_text_field", "Warranty information"),
+}
 
 
 # ============================================
@@ -44,6 +114,112 @@ def _slugify_key(name: str) -> str:
         .strip("_")
         [:50]
     )
+
+
+# ============================================
+# ✅ NEW: Ensure Metafield Definitions exist
+# Yeh function har key ke liye definition create karega
+# taaki metafields Shopify Admin UI mein show hon
+# ============================================
+async def ensure_metafield_definitions(
+    shop: str,
+    access_token: str,
+    keys: list,
+) -> bool:
+    """
+    Har key ke liye metafieldDefinition create karo (agar exist nahi karti).
+    Yeh step zaroori hai taaki metafields Shopify Admin UI mein show hon.
+    """
+    if not keys:
+        return True
+
+    # Pehle existing definitions fetch karo
+    query = """
+    query getDefinitions($first: Int!) {
+      metafieldDefinitions(first: $first, ownerType: PRODUCT) {
+        edges {
+          node { id namespace key }
+        }
+      }
+    }
+    """
+
+    result = await shopify_graphql(shop, access_token, query, {"first": 250})
+
+    existing = set()
+    if "data" in result:
+        edges = result["data"].get("metafieldDefinitions", {}).get("edges", [])
+        for edge in edges:
+            node = edge.get("node", {})
+            if node.get("namespace") == "custom":
+                existing.add(node.get("key"))
+
+    # Jo missing hain unki definition banao
+    to_create = []
+    for key in keys:
+        if key in existing:
+            continue
+        if key not in METAFIELD_DEFINITIONS:
+            # Unknown key — default single_line
+            name = key.replace("_", " ").title()
+            mf_type = "single_line_text_field"
+            desc = f"Custom field: {name}"
+        else:
+            name, mf_type, desc = METAFIELD_DEFINITIONS[key]
+
+        to_create.append({
+            "name": name,
+            "namespace": "custom",
+            "key": key,
+            "description": desc,
+            "type": mf_type,
+            "ownerType": "PRODUCT",
+            "pin": True,  # ✅ Product page pe show hoga
+        })
+
+    if not to_create:
+        logger.info(f"   ✅ All {len(keys)} metafield definitions already exist")
+        return True
+
+    logger.info(f"   📝 Creating {len(to_create)} metafield definitions...")
+
+    mutation = """
+    mutation createDefinition($definition: MetafieldDefinitionInput!) {
+      metafieldDefinitionCreate(definition: $definition) {
+        createdDefinition { id name key }
+        userErrors { field message code }
+      }
+    }
+    """
+
+    # Ek-ek karke create karo (Shopify batch API nahi deta)
+    success_count = 0
+    for defn in to_create:
+        try:
+            r = await shopify_graphql(shop, access_token, mutation, {"definition": defn})
+            if "errors" in r:
+                logger.error(f"   ❌ Definition error ({defn['key']}): {r['errors']}")
+                continue
+
+            user_errors = (
+                r.get("data", {})
+                .get("metafieldDefinitionCreate", {})
+                .get("userErrors", [])
+            )
+            if user_errors:
+                msgs = [e.get("message", "") for e in user_errors]
+                if any("already exists" in m.lower() or "taken" in m.lower() for m in msgs):
+                    success_count += 1
+                    continue
+                logger.error(f"   ❌ Definition userErrors ({defn['key']}): {user_errors}")
+                continue
+
+            success_count += 1
+        except Exception as e:
+            logger.error(f"   ❌ Definition exception ({defn['key']}): {e}")
+
+    logger.info(f"   ✅ Metafield definitions ready: {success_count}/{len(to_create)}")
+    return success_count > 0
 
 
 # ============================================
@@ -139,8 +315,8 @@ def _build_all_metafields(product_data: dict) -> list:
     _add("language", product_data.get("language"))
     _add("reading_age", product_data.get("reading_age"))
     _add("unit_count", product_data.get("unit_count"))
-    _add("number_of_pieces", product_data.get("number_of_pieces"))
-    _add("care_instructions", product_data.get("care_instructions"))
+    _add("number_of_pieces", product_data.get("number_of_pieces"), "number_integer")
+    _add("care_instructions", product_data.get("care_instructions"), "multi_line_text_field")
     _add("closure_type", product_data.get("closure_type"))
     _add("fabric_type", product_data.get("fabric_type"))
 
@@ -510,7 +686,7 @@ async def update_variant_with_tracked(
 
 
 # ============================================
-# SET PRODUCT METAFIELDS
+# ✅ SET PRODUCT METAFIELDS (FIXED — Definitions pehle ensure karega)
 # ============================================
 async def set_product_metafields(
     shop: str,
@@ -522,6 +698,11 @@ async def set_product_metafields(
         logger.info("   No metafields to set")
         return True
 
+    # ✅ STEP 1: Pehle ensure karo ki definitions exist karti hain
+    keys = [mf["key"] for mf in metafields]
+    await ensure_metafield_definitions(shop, access_token, keys)
+
+    # ✅ STEP 2: Ab metafields set karo
     mutation = """
     mutation metafieldsSet($metafields: [MetafieldsSetInput!]!) {
       metafieldsSet(metafields: $metafields) {
