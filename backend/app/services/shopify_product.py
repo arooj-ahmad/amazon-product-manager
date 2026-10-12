@@ -8,6 +8,8 @@
 # + ✅ FIXED: SKU (ASIN) always set on variants
 # + ✅ FIXED: Metafields in Description HTML (auto-show)
 # + ✅ FIXED: Auto-publish to channels
+# + ✅ FIXED v2: Metafield TYPE mismatch (INVALID_TYPE) — existing
+#               definition ke type ke hisaab se value auto-adapt hogi
 # ============================================
 
 import logging
@@ -117,28 +119,36 @@ def _slugify_key(name: str) -> str:
 
 
 # ============================================
-# ✅ NEW: Ensure Metafield Definitions exist
-# Yeh function har key ke liye definition create karega
-# taaki metafields Shopify Admin UI mein show hon
+# ✅ FIXED v2: Ensure Metafield Definitions exist
+# - Missing definitions create karega
+# - Existing definitions ka ACTUAL TYPE bhi return karega
+#   (taaki set_product_metafields value ko adapt kar sake)
+# RETURNS: dict {key: actual_type}
 # ============================================
 async def ensure_metafield_definitions(
     shop: str,
     access_token: str,
     keys: list,
-) -> bool:
+) -> dict:
     """
     Har key ke liye metafieldDefinition create karo (agar exist nahi karti).
-    Yeh step zaroori hai taaki metafields Shopify Admin UI mein show hon.
+    Existing definitions ka actual type bhi fetch karo.
+    Returns: {key: type_name}
     """
     if not keys:
-        return True
+        return {}
 
-    # Pehle existing definitions fetch karo
+    # ✅ Existing definitions fetch karo — TYPE ke saath
     query = """
     query getDefinitions($first: Int!) {
       metafieldDefinitions(first: $first, ownerType: PRODUCT) {
         edges {
-          node { id namespace key }
+          node {
+            id
+            namespace
+            key
+            type { name }
+          }
         }
       }
     }
@@ -146,18 +156,24 @@ async def ensure_metafield_definitions(
 
     result = await shopify_graphql(shop, access_token, query, {"first": 250})
 
-    existing = set()
+    # key → actual type mapping
+    existing_types = {}
     if "data" in result:
         edges = result["data"].get("metafieldDefinitions", {}).get("edges", [])
         for edge in edges:
             node = edge.get("node", {})
-            if node.get("namespace") == "custom":
-                existing.add(node.get("key"))
+            if node.get("namespace") != "custom":
+                continue
+            key = node.get("key")
+            type_obj = node.get("type") or {}
+            type_name = type_obj.get("name") if isinstance(type_obj, dict) else None
+            if key and type_name:
+                existing_types[key] = type_name
 
     # Jo missing hain unki definition banao
     to_create = []
     for key in keys:
-        if key in existing:
+        if key in existing_types:
             continue
         if key not in METAFIELD_DEFINITIONS:
             # Unknown key — default single_line
@@ -179,14 +195,14 @@ async def ensure_metafield_definitions(
 
     if not to_create:
         logger.info(f"   ✅ All {len(keys)} metafield definitions already exist")
-        return True
+        return existing_types
 
     logger.info(f"   📝 Creating {len(to_create)} metafield definitions...")
 
     mutation = """
     mutation createDefinition($definition: MetafieldDefinitionInput!) {
       metafieldDefinitionCreate(definition: $definition) {
-        createdDefinition { id name key }
+        createdDefinition { id name key type { name } }
         userErrors { field message code }
       }
     }
@@ -197,8 +213,11 @@ async def ensure_metafield_definitions(
     for defn in to_create:
         try:
             r = await shopify_graphql(shop, access_token, mutation, {"definition": defn})
+
             if "errors" in r:
                 logger.error(f"   ❌ Definition error ({defn['key']}): {r['errors']}")
+                # Fallback — assume text (safe)
+                existing_types[defn["key"]] = "single_line_text_field"
                 continue
 
             user_errors = (
@@ -206,20 +225,34 @@ async def ensure_metafield_definitions(
                 .get("metafieldDefinitionCreate", {})
                 .get("userErrors", [])
             )
+
             if user_errors:
                 msgs = [e.get("message", "") for e in user_errors]
                 if any("already exists" in m.lower() or "taken" in m.lower() for m in msgs):
+                    # Already exists — safe fallback
+                    existing_types[defn["key"]] = "single_line_text_field"
                     success_count += 1
                     continue
                 logger.error(f"   ❌ Definition userErrors ({defn['key']}): {user_errors}")
+                existing_types[defn["key"]] = "single_line_text_field"
                 continue
 
+            # ✅ Created — track actual type
+            created = (
+                r.get("data", {})
+                .get("metafieldDefinitionCreate", {})
+                .get("createdDefinition", {})
+            )
+            created_type = (created.get("type") or {}).get("name")
+            existing_types[defn["key"]] = created_type or defn["type"]
             success_count += 1
+
         except Exception as e:
             logger.error(f"   ❌ Definition exception ({defn['key']}): {e}")
+            existing_types[defn["key"]] = "single_line_text_field"
 
     logger.info(f"   ✅ Metafield definitions ready: {success_count}/{len(to_create)}")
-    return success_count > 0
+    return existing_types
 
 
 # ============================================
@@ -686,7 +719,10 @@ async def update_variant_with_tracked(
 
 
 # ============================================
-# ✅ SET PRODUCT METAFIELDS (FIXED — Definitions pehle ensure karega)
+# ✅ SET PRODUCT METAFIELDS (FIXED v2 — TYPE-AWARE)
+# - Definitions ensure karega
+# - Existing definition ke TYPE ke hisaab se value adapt karega
+# - Isliye INVALID_TYPE error kabhi nahi aayega
 # ============================================
 async def set_product_metafields(
     shop: str,
@@ -698,34 +734,88 @@ async def set_product_metafields(
         logger.info("   No metafields to set")
         return True
 
-    # ✅ STEP 1: Pehle ensure karo ki definitions exist karti hain
+    # ✅ STEP 1: Definitions ensure karo + actual types lo
     keys = [mf["key"] for mf in metafields]
-    await ensure_metafield_definitions(shop, access_token, keys)
+    actual_types = await ensure_metafield_definitions(shop, access_token, keys)
 
-    # ✅ STEP 2: Ab metafields set karo
+    # ✅ STEP 2: Har metafield ko definition ke type ke hisaab se adapt karo
+    def _adapt_value_and_type(raw_value, definition_type: str) -> tuple:
+        """
+        Raw value + definition type lo, aur compatible
+        (value_string, type) return karo.
+        """
+        val_str = str(raw_value) if raw_value is not None else ""
+
+        if definition_type == "single_line_text_field":
+            return val_str, "single_line_text_field"
+
+        if definition_type == "multi_line_text_field":
+            return val_str, "multi_line_text_field"
+
+        if definition_type == "number_integer":
+            try:
+                return str(int(float(val_str))), "number_integer"
+            except (ValueError, TypeError):
+                return val_str, "single_line_text_field"
+
+        if definition_type == "number_decimal":
+            try:
+                return str(float(val_str)), "number_decimal"
+            except (ValueError, TypeError):
+                return val_str, "single_line_text_field"
+
+        if definition_type == "boolean":
+            b = val_str.strip().lower() in ("true", "1", "yes")
+            return ("true" if b else "false"), "boolean"
+
+        if definition_type == "date":
+            return val_str, "date"
+
+        if definition_type == "date_time":
+            return val_str, "date_time"
+
+        if definition_type == "url":
+            return val_str, "url"
+
+        # Unknown — text fallback
+        return val_str, "single_line_text_field"
+
+    metafields_with_owner = []
+    for mf in metafields:
+        key = mf["key"]
+        def_type = actual_types.get(key, mf.get("type", "single_line_text_field"))
+
+        value_str, final_type = _adapt_value_and_type(mf["value"], def_type)
+
+        # Empty values skip karo
+        if not value_str or value_str == "None":
+            continue
+
+        metafields_with_owner.append({
+            "ownerId": product_id,
+            "namespace": mf.get("namespace", "custom"),
+            "key": key,
+            "value": value_str,
+            "type": final_type,
+        })
+
+    if not metafields_with_owner:
+        logger.info("   No valid metafields to set after adaptation")
+        return True
+
+    # ✅ STEP 3: Metafields set karo
     mutation = """
     mutation metafieldsSet($metafields: [MetafieldsSetInput!]!) {
       metafieldsSet(metafields: $metafields) {
-        metafields { id namespace key value }
+        metafields { id namespace key value type }
         userErrors { field message code }
       }
     }
     """
 
-    metafields_with_owner = [
-        {
-            "ownerId": product_id,
-            "namespace": mf["namespace"],
-            "key": mf["key"],
-            "value": mf["value"],
-            "type": mf["type"],
-        }
-        for mf in metafields
-    ]
-
     variables = {"metafields": metafields_with_owner}
 
-    logger.info(f"   Setting {len(metafields)} metafields...")
+    logger.info(f"   Setting {len(metafields_with_owner)} metafields...")
 
     result = await shopify_graphql(shop, access_token, mutation, variables)
 
