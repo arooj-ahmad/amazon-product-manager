@@ -3,6 +3,7 @@
 # Product create (simple + variants), variant add,
 # images, status update, tags update,
 # product delete, SKU search
+# + ✅ UPDATED: Multiple variants support (Color + Size)
 # ============================================
 
 import logging
@@ -663,37 +664,60 @@ async def create_shopify_product_with_variants(
 
 
 # ============================================
-# ADD VARIANT TO EXISTING PRODUCT
+# ✅ UPDATED: ADD VARIANT TO EXISTING PRODUCT (Multiple Options)
 # ============================================
 async def add_variant_to_existing_product(
     shop: str,
     access_token: str,
     product_id: str,
     variant_data: dict,
+    all_options: list = None,  # ✅ NAYA: multiple options
 ) -> dict:
-    option_name = variant_data.get("option_name") or "Style"
-    option_value = variant_data.get("title") or "Default"
+    """
+    Existing product mein naya variant add karo — multiple options ke saath.
+    
+    Args:
+        all_options: [
+            {"name": "Color", "value": "Blue"},
+            {"name": "Size", "value": "Small"}
+        ]
+    """
+    # Fallback: agar all_options nahi diya — single option
+    if not all_options:
+        option_name = variant_data.get("option_name") or "Style"
+        option_value = variant_data.get("title") or "Default"
+        all_options = [{"name": option_name, "value": option_value}]
 
-    logger.info(f"   Adding variant: {option_name}={option_value}")
-
-    option_exists = await ensure_product_has_option(
-        shop=shop,
-        access_token=access_token,
-        product_id=product_id,
-        option_name=option_name,
-        option_values=[option_value],
+    logger.info(
+        f"   Adding variant: "
+        + " / ".join(f"{o['name']}={o['value']}" for o in all_options)
     )
 
-    if not option_exists:
-        logger.error(
-            f"❌ Could not ensure option '{option_name}' exists"
+    # ✅ Step 1: Ensure saare options exist in product
+    for opt in all_options:
+        option_exists = await ensure_product_has_option(
+            shop=shop,
+            access_token=access_token,
+            product_id=product_id,
+            option_name=opt["name"],
+            option_values=[opt["value"]],
         )
-        return {
-            "errors": [
-                {"message": f"Failed to create option '{option_name}'"}
-            ]
-        }
 
+        if not option_exists:
+            logger.error(f"❌ Could not ensure option '{opt['name']}'")
+            return {
+                "errors": [
+                    {"message": f"Failed to create option '{opt['name']}'"}
+                ]
+            }
+
+    # ✅ Step 2: Build optionValues
+    option_values = [
+        {"optionName": opt["name"], "name": opt["value"]}
+        for opt in all_options
+    ]
+
+    # ✅ Step 3: Create variant
     mutation = """
     mutation productVariantsBulkCreate(
       $productId: ID!,
@@ -725,9 +749,7 @@ async def add_variant_to_existing_product(
         "productId": product_id,
         "variants": [
             {
-                "optionValues": [
-                    {"name": option_value, "optionName": option_name}
-                ],
+                "optionValues": option_values,
                 "price": str(variant_data.get("price", 0)),
                 "inventoryItem": {
                     "sku": variant_data.get("sku", ""),
@@ -748,7 +770,15 @@ async def add_variant_to_existing_product(
         .get("productVariantsBulkCreate", {})
         .get("userErrors", [])
     )
+
+    # ✅ Handle "already exists" error
     if var_errors:
+        for err in var_errors:
+            msg = (err.get("message") or "").lower()
+            if "already exists" in msg:
+                logger.info(f"ℹ️ Variant already exists: {msg}")
+                return {"already_exists": True, "userErrors": var_errors}
+
         logger.error(f"❌ Variant create user errors: {var_errors}")
         return result
 
@@ -877,9 +907,7 @@ async def create_shopify_product(
         input_data["category"] = shopify_category_id
         logger.info(f"   Category: {shopify_category_id}")
 
-    # Smart variant detection
-    # - Sirf "Size" ya "Color" ke liye variants bhejo
-    # - "Style" ignore karo (usually generic value hoti hai)
+    # ✅ Smart variant detection — COLOR + SIZE dono
     variant_attrs = product_data.get("variant_attributes") or []
     product_options = []
     variant_values = []
@@ -889,7 +917,7 @@ async def create_shopify_product(
             continue
         name = (attr.get("name") or "").strip()
         value = (attr.get("value") or "").strip()
-        if name.lower() in ("size", "color") and value:
+        if name.lower() in ("color", "size") and value:
             product_options.append({
                 "name": name,
                 "values": [{"name": value}],
@@ -898,9 +926,7 @@ async def create_shopify_product(
                 "optionName": name,
                 "name": value,
             })
-            break  # Ek hi option use karo
 
-    # productOptions + variants DONO bhejo (warna Shopify error dega)
     if product_options and variant_values:
         input_data["productOptions"] = product_options
         input_data["variants"] = [
@@ -914,10 +940,11 @@ async def create_shopify_product(
             }
         ]
         logger.info(
-            f"   Adding variant: {variant_values[0].get('optionName')}"
-            f"={variant_values[0].get('name')}"
+            f"   Adding variant: "
+            + " / ".join(
+                f"{v['optionName']}={v['name']}" for v in variant_values
+            )
         )
-    # Warna productOptions bilkul mat bhejo — Shopify default title banayega
 
     mutation_create = """
     mutation productSet($input: ProductSetInput!) {
