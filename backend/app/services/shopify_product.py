@@ -10,6 +10,7 @@
 # + ✅ FIXED: Auto-publish to channels
 # + ✅ FIXED v2: Metafield TYPE mismatch (INVALID_TYPE) — existing
 #               definition ke type ke hisaab se value auto-adapt hogi
+# + ✅ UPGRADED: Description mein SAARE metafields HTML table ke saath
 # ============================================
 
 import logging
@@ -29,7 +30,6 @@ logger = logging.getLogger(__name__)
 # ============================================
 # ✅ METAFIELD DEFINITIONS MAP
 # key → (display_name, type, description)
-# Yeh zaroori hai taaki metafields Admin UI mein show hon
 # ============================================
 METAFIELD_DEFINITIONS = {
     # Core
@@ -120,10 +120,6 @@ def _slugify_key(name: str) -> str:
 
 # ============================================
 # ✅ FIXED v2: Ensure Metafield Definitions exist
-# - Missing definitions create karega
-# - Existing definitions ka ACTUAL TYPE bhi return karega
-#   (taaki set_product_metafields value ko adapt kar sake)
-# RETURNS: dict {key: actual_type}
 # ============================================
 async def ensure_metafield_definitions(
     shop: str,
@@ -138,7 +134,6 @@ async def ensure_metafield_definitions(
     if not keys:
         return {}
 
-    # ✅ Existing definitions fetch karo — TYPE ke saath
     query = """
     query getDefinitions($first: Int!) {
       metafieldDefinitions(first: $first, ownerType: PRODUCT) {
@@ -156,7 +151,6 @@ async def ensure_metafield_definitions(
 
     result = await shopify_graphql(shop, access_token, query, {"first": 250})
 
-    # key → actual type mapping
     existing_types = {}
     if "data" in result:
         edges = result["data"].get("metafieldDefinitions", {}).get("edges", [])
@@ -170,13 +164,11 @@ async def ensure_metafield_definitions(
             if key and type_name:
                 existing_types[key] = type_name
 
-    # Jo missing hain unki definition banao
     to_create = []
     for key in keys:
         if key in existing_types:
             continue
         if key not in METAFIELD_DEFINITIONS:
-            # Unknown key — default single_line
             name = key.replace("_", " ").title()
             mf_type = "single_line_text_field"
             desc = f"Custom field: {name}"
@@ -190,7 +182,7 @@ async def ensure_metafield_definitions(
             "description": desc,
             "type": mf_type,
             "ownerType": "PRODUCT",
-            "pin": True,  # ✅ Product page pe show hoga
+            "pin": True,
         })
 
     if not to_create:
@@ -208,7 +200,6 @@ async def ensure_metafield_definitions(
     }
     """
 
-    # Ek-ek karke create karo (Shopify batch API nahi deta)
     success_count = 0
     for defn in to_create:
         try:
@@ -216,7 +207,6 @@ async def ensure_metafield_definitions(
 
             if "errors" in r:
                 logger.error(f"   ❌ Definition error ({defn['key']}): {r['errors']}")
-                # Fallback — assume text (safe)
                 existing_types[defn["key"]] = "single_line_text_field"
                 continue
 
@@ -229,7 +219,6 @@ async def ensure_metafield_definitions(
             if user_errors:
                 msgs = [e.get("message", "") for e in user_errors]
                 if any("already exists" in m.lower() or "taken" in m.lower() for m in msgs):
-                    # Already exists — safe fallback
                     existing_types[defn["key"]] = "single_line_text_field"
                     success_count += 1
                     continue
@@ -237,7 +226,6 @@ async def ensure_metafield_definitions(
                 existing_types[defn["key"]] = "single_line_text_field"
                 continue
 
-            # ✅ Created — track actual type
             created = (
                 r.get("data", {})
                 .get("metafieldDefinitionCreate", {})
@@ -256,18 +244,14 @@ async def ensure_metafield_definitions(
 
 
 # ============================================
-# HELPER: Build ALL Metafields (Standard + Product Details)
+# HELPER: Build ALL Metafields
 # ============================================
 def _build_all_metafields(product_data: dict) -> list:
-    """
-    Amazon product data se SAARE standard metafields build karo.
-    Yeh 24+ fields try karega — jo product_data mein hain.
-    """
+    """Amazon product data se SAARE standard metafields build karo."""
     metafields = []
     seen_keys = set()
 
     def _add(key: str, value, mf_type: str = "single_line_text_field"):
-        """Helper — add metafield if not empty and not duplicate."""
         if key in seen_keys:
             return
         if value is None:
@@ -285,9 +269,7 @@ def _build_all_metafields(product_data: dict) -> list:
         })
         seen_keys.add(key)
 
-    # ═══════════════════════════════════════════
-    # 1. CORE FIELDS (HAR PRODUCT MEIN)
-    # ═══════════════════════════════════════════
+    # 1. CORE
     _add("asin", product_data.get("asin"))
     _add("brand", product_data.get("brand"))
     _add("manufacturer", product_data.get("manufacturer"))
@@ -315,9 +297,7 @@ def _build_all_metafields(product_data: dict) -> list:
 
     _add("availability", product_data.get("availability"))
 
-    # ═══════════════════════════════════════════
     # 2. IDENTIFICATION
-    # ═══════════════════════════════════════════
     _add("model_number", product_data.get("model_number"))
     _add("item_model_number", product_data.get("item_model_number"))
     _add("model_name", product_data.get("model_name"))
@@ -326,9 +306,7 @@ def _build_all_metafields(product_data: dict) -> list:
     _add("ean", product_data.get("ean"))
     _add("isbn", product_data.get("isbn"))
 
-    # ═══════════════════════════════════════════
-    # 3. DIMENSIONS & PHYSICAL
-    # ═══════════════════════════════════════════
+    # 3. DIMENSIONS
     _add("item_dimensions", product_data.get("item_dimensions"))
     _add("item_weight", product_data.get("item_weight"))
     _add("package_dimensions", product_data.get("package_dimensions"))
@@ -338,9 +316,7 @@ def _build_all_metafields(product_data: dict) -> list:
     _add("style_name", product_data.get("style_name"))
     _add("theme", product_data.get("theme"))
 
-    # ═══════════════════════════════════════════
     # 4. DETAILS
-    # ═══════════════════════════════════════════
     _add("department", product_data.get("department"))
     _add("country_of_origin", product_data.get("country_of_origin"))
     _add("date_first_available", product_data.get("date_first_available"))
@@ -353,9 +329,7 @@ def _build_all_metafields(product_data: dict) -> list:
     _add("closure_type", product_data.get("closure_type"))
     _add("fabric_type", product_data.get("fabric_type"))
 
-    # ═══════════════════════════════════════════
-    # 5. CATEGORY-SPECIFIC (Toys, Electronics, etc.)
-    # ═══════════════════════════════════════════
+    # 5. CATEGORY-SPECIFIC
     _add("number_of_players", product_data.get("number_of_players"))
     _add("educational_objective", product_data.get("educational_objective"))
     _add("power_source", product_data.get("power_source"))
@@ -378,9 +352,7 @@ def _build_all_metafields(product_data: dict) -> list:
     # Warranty
     _add("warranty", product_data.get("warranty"), "multi_line_text_field")
 
-    # ═══════════════════════════════════════════
-    # 6. AUTO-MAP: product_details (raw array)
-    # ═══════════════════════════════════════════
+    # 6. AUTO-MAP
     product_details = product_data.get("product_details") or []
     if isinstance(product_details, list):
         for item in product_details:
@@ -399,7 +371,6 @@ def _build_all_metafields(product_data: dict) -> list:
             if not val_str or val_str == "None":
                 continue
 
-            # Type detect
             if len(val_str) > 100:
                 mf_type = "multi_line_text_field"
             elif val_str.replace(".", "").replace("-", "").isdigit():
@@ -414,51 +385,166 @@ def _build_all_metafields(product_data: dict) -> list:
 
 
 # ============================================
-# HELPER: Build Description with Metafields
+# ✅ UPGRADED: Build Description with SAARE Metafields (HTML Table)
 # ============================================
 def _build_description_with_metafields(product_data: dict) -> str:
-    """Amazon description + metafields HTML build karo."""
+    """
+    Amazon description + SAARE metafields HTML table ke saath build karo.
+    Yeh table product page pe automatically show hoti hai.
+    """
     description = product_data.get("description", "") or ""
 
-    metafields_html = []
+    # ─────────────────────────────────────────
+    # Display labels
+    # ─────────────────────────────────────────
+    FIELD_LABELS = {
+        "asin": "ASIN",
+        "brand": "Brand",
+        "manufacturer": "Manufacturer",
+        "rating": "Rating",
+        "reviews_count": "Reviews",
+        "amazon_price": "Amazon Price",
+        "availability": "Availability",
+        "model_number": "Model Number",
+        "item_model_number": "Item Model Number",
+        "model_name": "Model Name",
+        "part_number": "Part Number",
+        "upc": "UPC",
+        "ean": "EAN",
+        "isbn": "ISBN",
+        "item_dimensions": "Item Dimensions",
+        "item_weight": "Item Weight",
+        "package_dimensions": "Package Dimensions",
+        "size": "Size",
+        "color": "Color",
+        "material_type": "Material",
+        "style_name": "Style",
+        "theme": "Theme",
+        "department": "Department",
+        "country_of_origin": "Country of Origin",
+        "date_first_available": "Date First Available",
+        "best_sellers_rank": "Best Sellers Rank",
+        "language": "Language",
+        "reading_age": "Reading Age",
+        "unit_count": "Unit Count",
+        "number_of_pieces": "Number of Pieces",
+        "care_instructions": "Care Instructions",
+        "closure_type": "Closure Type",
+        "fabric_type": "Fabric Type",
+        "number_of_players": "Number of Players",
+        "educational_objective": "Educational Objective",
+        "power_source": "Power Source",
+        "battery_types": "Battery Types",
+        "operation_mode": "Operation Mode",
+        "specific_uses": "Specific Uses",
+        "special_features": "Special Features",
+        "connectivity": "Connectivity",
+        "processor": "Processor",
+        "ram_technology": "RAM Technology",
+        "memory": "Memory",
+        "screen_size": "Screen Size",
+        "resolution": "Resolution",
+        "operating_system": "Operating System",
+        "hard_disk": "Hard Disk",
+        "graphics_coprocessor": "Graphics Coprocessor",
+        "warranty": "Warranty",
+    }
 
-    rating = product_data.get("rating")
-    if rating:
-        metafields_html.append(
-            f'<p><strong>⭐ Rating:</strong> {rating} out of 5</p>'
+    # ─────────────────────────────────────────
+    # Fields order (priority wise)
+    # ─────────────────────────────────────────
+    fields_to_show = [
+        "asin", "brand", "manufacturer",
+        "model_number", "model_name", "part_number",
+        "rating", "reviews_count", "amazon_price", "availability",
+        "color", "size", "material_type", "style_name",
+        "item_dimensions", "item_weight", "package_dimensions",
+        "department", "country_of_origin", "date_first_available",
+        "best_sellers_rank", "language", "reading_age",
+        "unit_count", "number_of_pieces",
+        "care_instructions", "closure_type", "fabric_type",
+        "number_of_players", "educational_objective",
+        "power_source", "battery_types", "operation_mode",
+        "specific_uses", "special_features",
+        "connectivity", "processor", "ram_technology",
+        "memory", "screen_size", "resolution",
+        "operating_system", "hard_disk", "graphics_coprocessor",
+        "upc", "ean", "isbn", "theme", "warranty",
+    ]
+
+    # ─────────────────────────────────────────
+    # Rows build karo
+    # ─────────────────────────────────────────
+    rows = []
+    seen = set()
+
+    for key in fields_to_show:
+        if key in seen:
+            continue
+        value = product_data.get(key)
+        if value is None:
+            continue
+        val_str = str(value).strip()
+        if not val_str or val_str == "None":
+            continue
+
+        # HTML escape
+        val_str = (
+            val_str
+            .replace("&", "&amp;")
+            .replace("<", "&lt;")
+            .replace(">", "&gt;")
         )
 
-    amazon_price = product_data.get("amazon_price")
-    if amazon_price:
-        metafields_html.append(
-            f'<p><strong>💰 Amazon Price:</strong> ${amazon_price}</p>'
-        )
+        label = FIELD_LABELS.get(key, key.replace("_", " ").title())
 
-    asin = product_data.get("asin")
-    if asin and asin != "None":
-        metafields_html.append(
-            f'<p><strong>🔖 ASIN:</strong> {asin}</p>'
-        )
+        # Special formatting
+        if key == "rating":
+            try:
+                r = float(value)
+                val_str = f"{r} ★ out of 5"
+            except (ValueError, TypeError):
+                pass
+        elif key == "amazon_price":
+            try:
+                p = float(value)
+                val_str = f"${p:.2f}"
+            except (ValueError, TypeError):
+                pass
+        elif key == "reviews_count":
+            try:
+                c = int(float(value))
+                val_str = f"{c:,}"
+            except (ValueError, TypeError):
+                pass
 
-    reviews = product_data.get("reviews_count")
-    if reviews:
-        metafields_html.append(
-            f'<p><strong>💬 Reviews Count:</strong> {reviews}</p>'
+        rows.append(
+            f'<tr>'
+            f'<td style="padding:8px 12px;font-weight:600;'
+            f'background:#f6f6f7;border:1px solid #e1e3e5;'
+            f'width:180px;vertical-align:top;">{label}</td>'
+            f'<td style="padding:8px 12px;border:1px solid #e1e3e5;'
+            f'vertical-align:top;">{val_str}</td>'
+            f'</tr>'
         )
+        seen.add(key)
 
-    availability = product_data.get("availability")
-    if availability:
-        metafields_html.append(
-            f'<p><strong>✅ Availability:</strong> {availability}</p>'
-        )
-
-    if metafields_html:
-        description += (
-            '<hr style="margin: 24px 0; border: none; border-top: 1px solid #e1e3e5;">'
-            '<h3 style="font-size: 18px; font-weight: 700; margin-bottom: 12px;">'
+    # ─────────────────────────────────────────
+    # Table HTML append karo
+    # ─────────────────────────────────────────
+    if rows:
+        table_html = (
+            '<hr style="margin:24px 0;border:none;border-top:1px solid #e1e3e5;">'
+            '<h3 style="font-size:18px;font-weight:700;margin-bottom:12px;">'
             '📋 Product Details</h3>'
-            + "".join(metafields_html)
+            '<table style="width:100%;border-collapse:collapse;'
+            'font-size:14px;line-height:1.5;">'
+            '<tbody>'
+            + "".join(rows) +
+            '</tbody>'
+            '</table>'
         )
+        description += table_html
 
     return description
 
@@ -720,9 +806,6 @@ async def update_variant_with_tracked(
 
 # ============================================
 # ✅ SET PRODUCT METAFIELDS (FIXED v2 — TYPE-AWARE)
-# - Definitions ensure karega
-# - Existing definition ke TYPE ke hisaab se value adapt karega
-# - Isliye INVALID_TYPE error kabhi nahi aayega
 # ============================================
 async def set_product_metafields(
     shop: str,
@@ -734,16 +817,10 @@ async def set_product_metafields(
         logger.info("   No metafields to set")
         return True
 
-    # ✅ STEP 1: Definitions ensure karo + actual types lo
     keys = [mf["key"] for mf in metafields]
     actual_types = await ensure_metafield_definitions(shop, access_token, keys)
 
-    # ✅ STEP 2: Har metafield ko definition ke type ke hisaab se adapt karo
     def _adapt_value_and_type(raw_value, definition_type: str) -> tuple:
-        """
-        Raw value + definition type lo, aur compatible
-        (value_string, type) return karo.
-        """
         val_str = str(raw_value) if raw_value is not None else ""
 
         if definition_type == "single_line_text_field":
@@ -777,7 +854,6 @@ async def set_product_metafields(
         if definition_type == "url":
             return val_str, "url"
 
-        # Unknown — text fallback
         return val_str, "single_line_text_field"
 
     metafields_with_owner = []
@@ -787,7 +863,6 @@ async def set_product_metafields(
 
         value_str, final_type = _adapt_value_and_type(mf["value"], def_type)
 
-        # Empty values skip karo
         if not value_str or value_str == "None":
             continue
 
@@ -803,7 +878,6 @@ async def set_product_metafields(
         logger.info("   No valid metafields to set after adaptation")
         return True
 
-    # ✅ STEP 3: Metafields set karo
     mutation = """
     mutation metafieldsSet($metafields: [MetafieldsSetInput!]!) {
       metafieldsSet(metafields: $metafields) {
@@ -1116,7 +1190,6 @@ async def create_shopify_product_with_variants(
 
     logger.info(f"✅ Product created: {shopify_product.get('title')}")
 
-    # Auto-publish
     if product_id:
         await publish_product_to_channels(
             shop=shop,
@@ -1124,7 +1197,6 @@ async def create_shopify_product_with_variants(
             shopify_product_id=product_id,
         )
 
-    # ✅ All metafields
     if product_id:
         all_mfs = _build_all_metafields(product_data)
         if all_mfs:
@@ -1258,7 +1330,7 @@ async def add_variant_to_existing_product(
 
 
 # ============================================
-# ✅ PRODUCT CREATE (SIMPLE) — SKU + ALL Metafields + PUBLISH
+# ✅ PRODUCT CREATE (SIMPLE)
 # ============================================
 async def create_shopify_product(
     shop: str,
@@ -1274,12 +1346,10 @@ async def create_shopify_product(
     except (ValueError, TypeError):
         price_float = 0.0
 
-    # ASIN for SKU
     asin_value = str(product_data.get("asin", "") or "").strip()
     if not asin_value or asin_value == "None":
         asin_value = "NO-SKU"
 
-    # ✅ ALL metafields (24+ fields)
     metafields_input = _build_all_metafields(product_data)
 
     shopify_tags = _build_shopify_tags(product_data)
@@ -1315,7 +1385,6 @@ async def create_shopify_product(
     if shopify_category_id:
         input_data["category"] = shopify_category_id
 
-    # Variant options
     variant_attrs = product_data.get("variant_attributes") or []
     product_options = []
     variant_values = []
@@ -1391,7 +1460,6 @@ async def create_shopify_product(
 
     logger.info(f"✅ Product created: {shopify_product.get('title')}")
 
-    # Auto-publish
     if product_id:
         await publish_product_to_channels(
             shop=shop,
@@ -1399,7 +1467,6 @@ async def create_shopify_product(
             shopify_product_id=product_id,
         )
 
-    # ✅ ALL metafields (24+)
     if product_id and metafields_input:
         await set_product_metafields(
             shop=shop,
@@ -1408,7 +1475,6 @@ async def create_shopify_product(
             metafields=metafields_input,
         )
 
-    # Variant price + SKU + inventory
     variants_edges = shopify_product.get("variants", {}).get("edges", [])
 
     if variants_edges:
