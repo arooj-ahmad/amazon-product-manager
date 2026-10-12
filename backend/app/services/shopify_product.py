@@ -4,6 +4,7 @@
 # images, status update, tags update,
 # product delete, SKU search
 # + ✅ UPDATED: Multiple variants support (Color + Size)
+# + ✅ FIXED: ensure_product_has_option sends variants input
 # ============================================
 
 import logging
@@ -54,10 +55,7 @@ async def delete_shopify_product(
     mutation productDelete($input: ProductDeleteInput!) {
       productDelete(input: $input) {
         deletedProductId
-        userErrors {
-          field
-          message
-        }
+        userErrors { field message }
       }
     }
     """
@@ -67,22 +65,16 @@ async def delete_shopify_product(
             res = await client.post(
                 api_url,
                 headers=headers,
-                json={
-                    "query": mutation,
-                    "variables": {"input": {"id": product_gid}},
-                },
+                json={"query": mutation, "variables": {"input": {"id": product_gid}}},
             )
 
             if res.status_code in (401, 403):
                 if refresh_token:
                     logger.warning(
-                        f"🔄 {res.status_code} — refreshing token for "
-                        f"{shop_domain} and retrying..."
+                        f"🔄 {res.status_code} — refreshing token for {shop_domain}"
                     )
                     from app.services.shopify_auth import refresh_shopify_token
-                    new_data = await refresh_shopify_token(
-                        shop_domain, refresh_token
-                    )
+                    new_data = await refresh_shopify_token(shop_domain, refresh_token)
                     if new_data and new_data.get("access_token"):
                         return await delete_shopify_product(
                             shop_domain=shop_domain,
@@ -90,9 +82,7 @@ async def delete_shopify_product(
                             shopify_product_id=shopify_product_id,
                             refresh_token=new_data.get("refresh_token"),
                         )
-                logger.error(
-                    f"❌ {res.status_code} Unauthorized for {shop_domain}"
-                )
+                logger.error(f"❌ {res.status_code} Unauthorized")
                 return False
 
             res.raise_for_status()
@@ -116,12 +106,6 @@ async def delete_shopify_product(
 
         return False
 
-    except httpx.HTTPStatusError as e:
-        logger.error(
-            f"❌ Shopify delete HTTP error: {e.response.status_code} — "
-            f"{e.response.text[:200]}"
-        )
-        return False
     except Exception as e:
         logger.error(f"❌ Shopify delete failed: {e}")
         return False
@@ -142,37 +126,20 @@ async def update_variant_with_tracked(
       $productId: ID!,
       $variants: [ProductVariantsBulkInput!]!
     ) {
-      productVariantsBulkUpdate(
-        productId: $productId,
-        variants: $variants
-      ) {
-        productVariants {
-          id
-          price
-          inventoryItem {
-            id
-            tracked
-          }
-        }
-        userErrors {
-          field
-          message
-        }
+      productVariantsBulkUpdate(productId: $productId, variants: $variants) {
+        productVariants { id price inventoryItem { id tracked } }
+        userErrors { field message }
       }
     }
     """
 
     variables = {
         "productId": product_id,
-        "variants": [
-            {
-                "id": variant_id,
-                "price": str(price),
-                "inventoryItem": {
-                    "tracked": True,
-                },
-            }
-        ],
+        "variants": [{
+            "id": variant_id,
+            "price": str(price),
+            "inventoryItem": {"tracked": True},
+        }],
     }
 
     result = await shopify_graphql(shop, access_token, mutation, variables)
@@ -182,9 +149,7 @@ async def update_variant_with_tracked(
         return False
 
     update_errors = (
-        result.get("data", {})
-        .get("productVariantsBulkUpdate", {})
-        .get("userErrors", [])
+        result.get("data", {}).get("productVariantsBulkUpdate", {}).get("userErrors", [])
     )
 
     if update_errors:
@@ -192,15 +157,12 @@ async def update_variant_with_tracked(
         return False
 
     updated = (
-        result.get("data", {})
-        .get("productVariantsBulkUpdate", {})
-        .get("productVariants", [])
+        result.get("data", {}).get("productVariantsBulkUpdate", {}).get("productVariants", [])
     )
 
     if updated:
         v = updated[0]
-        logger.info(f"✅ Variant updated: price=${v.get('price')}, "
-                    f"tracked={v.get('inventoryItem', {}).get('tracked')}")
+        logger.info(f"✅ Variant updated: price=${v.get('price')}")
         return True
 
     return False
@@ -222,17 +184,8 @@ async def set_product_metafields(
     mutation = """
     mutation metafieldsSet($metafields: [MetafieldsSetInput!]!) {
       metafieldsSet(metafields: $metafields) {
-        metafields {
-          id
-          namespace
-          key
-          value
-        }
-        userErrors {
-          field
-          message
-          code
-        }
+        metafields { id namespace key value }
+        userErrors { field message code }
       }
     }
     """
@@ -252,9 +205,7 @@ async def set_product_metafields(
 
     logger.info(f"   Setting {len(metafields)} metafields...")
 
-    result = await shopify_graphql(
-        shop, access_token, mutation, variables
-    )
+    result = await shopify_graphql(shop, access_token, mutation, variables)
 
     if "errors" in result:
         logger.error(f"❌ Metafields set GraphQL errors: {result['errors']}")
@@ -274,7 +225,8 @@ async def set_product_metafields(
 
 
 # ============================================
-# ENSURE PRODUCT HAS OPTION
+# ✅ FIXED: ENSURE PRODUCT HAS OPTION
+# + Sends existing variants with productOptions
 # ============================================
 async def ensure_product_has_option(
     shop: str,
@@ -283,8 +235,16 @@ async def ensure_product_has_option(
     option_name: str,
     option_values: list,
 ) -> bool:
+    """
+    Ensure karo ki product mein yeh option exist karta hai.
+    Agar nahi, to create karo — existing variants preserve karte hue.
+
+    ✅ FIXED: Shopify ne naya rule add kiya hai —
+    agar productOptions bhejte ho to variants bhi bhejna ZAROORI hai.
+    """
+    # ✅ Step 1: Product ke saare options + variants fetch karo
     query = """
-    query getProductOptions($id: ID!) {
+    query getProductWithVariants($id: ID!) {
       product(id: $id) {
         id
         options {
@@ -292,13 +252,22 @@ async def ensure_product_has_option(
           name
           values
         }
+        variants(first: 100) {
+          edges {
+            node {
+              id
+              selectedOptions {
+                name
+                value
+              }
+            }
+          }
+        }
       }
     }
     """
 
-    result = await shopify_graphql(
-        shop, access_token, query, {"id": product_id}
-    )
+    result = await shopify_graphql(shop, access_token, query, {"id": product_id})
 
     if "errors" in result:
         logger.error(f"❌ Failed to fetch options: {result['errors']}")
@@ -318,8 +287,8 @@ async def ensure_product_has_option(
 
     logger.info(f"   ➕ Creating option '{option_name}' with values: {option_values}")
 
+    # ✅ Step 2: Naye options build karo
     new_options = []
-
     for opt in existing_options:
         name = opt.get("name", "")
         values = opt.get("values", [])
@@ -334,10 +303,7 @@ async def ensure_product_has_option(
             elif isinstance(v, dict) and v.get("name"):
                 values_as_dicts.append({"name": v["name"]})
 
-        new_options.append({
-            "name": name,
-            "values": values_as_dicts,
-        })
+        new_options.append({"name": name, "values": values_as_dicts})
 
     new_option_values = []
     for v in option_values:
@@ -346,51 +312,76 @@ async def ensure_product_has_option(
         elif isinstance(v, dict) and v.get("name"):
             new_option_values.append({"name": v["name"]})
 
-    new_options.append({
-        "name": option_name,
-        "values": new_option_values,
-    })
+    new_options.append({"name": option_name, "values": new_option_values})
 
+    # ✅ Step 3: Existing variants preserve karo
+    variants_edges = product.get("variants", {}).get("edges", [])
+    existing_variants_input = []
+
+    for edge in variants_edges:
+        node = edge["node"]
+        variant_id = node.get("id")
+        selected_options = node.get("selectedOptions", [])
+
+        if not variant_id:
+            continue
+
+        variant_option_values = []
+        for opt in selected_options:
+            variant_option_values.append({
+                "optionName": opt["name"],
+                "name": opt["value"],
+            })
+
+        # Naye option ki pehli value default add karo
+        if new_option_values:
+            first_value = new_option_values[0]
+            val_name = (
+                first_value if isinstance(first_value, str)
+                else first_value.get("name", "Default")
+            )
+            variant_option_values.append({
+                "optionName": option_name,
+                "name": val_name,
+            })
+
+        existing_variants_input.append({
+            "id": variant_id,
+            "optionValues": variant_option_values,
+        })
+
+    # ✅ Step 4: productSet mutation — options + variants dono
     mutation = """
     mutation productSet($input: ProductSetInput!) {
       productSet(input: $input) {
         product {
           id
-          options {
-            id
-            name
-            values
-          }
+          options { id name values }
         }
-        userErrors {
-          field
-          message
-        }
+        userErrors { field message }
       }
     }
     """
 
-    variables = {
-        "input": {
-            "id": product_id,
-            "productOptions": new_options,
-        }
+    input_data = {
+        "id": product_id,
+        "productOptions": new_options,
     }
 
-    update_result = await shopify_graphql(
-        shop, access_token, mutation, variables
-    )
+    # ✅ Existing variants bhi bhejo
+    if existing_variants_input:
+        input_data["variants"] = existing_variants_input
+
+    variables = {"input": input_data}
+
+    update_result = await shopify_graphql(shop, access_token, mutation, variables)
 
     if "errors" in update_result:
-        logger.error(
-            f"❌ Option create errors: {update_result['errors']}"
-        )
+        logger.error(f"❌ Option create errors: {update_result['errors']}")
         return False
 
     user_errors = (
-        update_result.get("data", {})
-        .get("productSet", {})
-        .get("userErrors", [])
+        update_result.get("data", {}).get("productSet", {}).get("userErrors", [])
     )
 
     if user_errors:
@@ -402,7 +393,7 @@ async def ensure_product_has_option(
 
 
 # ============================================
-# EXISTING PRODUCT KE TAGS + TYPE UPDATE KARO
+# UPDATE PRODUCT TAGS AND TYPE
 # ============================================
 async def update_shopify_product_tags_and_type(
     shop: str,
@@ -419,25 +410,13 @@ async def update_shopify_product_tags_and_type(
     mutation = """
     mutation productUpdate($input: ProductInput!) {
       productUpdate(input: $input) {
-        product {
-          id
-          title
-          tags
-          productType
-        }
-        userErrors {
-          field
-          message
-        }
+        product { id title tags productType }
+        userErrors { field message }
       }
     }
     """
 
-    input_data = {
-        "id": product_gid,
-        "tags": tags,
-    }
-
+    input_data = {"id": product_gid, "tags": tags}
     if product_type:
         input_data["productType"] = product_type
 
@@ -458,13 +437,11 @@ async def update_shopify_product_tags_and_type(
 
     updated = update_data.get("product", {})
     logger.info(f"✅ Tags updated: {len(updated.get('tags', []))} tags")
-    if updated.get("productType"):
-        logger.info(f"   Product type: {updated.get('productType')}")
     return True
 
 
 # ============================================
-# CREATE PRODUCT WITH VARIANTS — productSet
+# CREATE PRODUCT WITH VARIANTS
 # ============================================
 async def create_shopify_product_with_variants(
     shop: str,
@@ -507,54 +484,25 @@ async def create_shopify_product_with_variants(
 
     if shopify_tags:
         input_data["tags"] = shopify_tags
-        logger.info(f"   Pushing {len(shopify_tags)} tags")
 
     if product_type:
         input_data["productType"] = product_type
-        logger.info(f"   Product type: {product_type}")
 
     if shopify_category_id:
         input_data["category"] = shopify_category_id
-        logger.info(f"   Category: {shopify_category_id}")
 
     mutation_create = """
     mutation productSet($input: ProductSetInput!) {
       productSet(input: $input) {
         product {
-          id
-          title
-          handle
-          tags
-          productType
-          category {
-            id
-            name
-            fullName
-          }
-          options {
-            id
-            name
-            values
-          }
+          id title handle tags productType
+          category { id name fullName }
+          options { id name values }
           variants(first: 50) {
-            edges {
-              node {
-                id
-                title
-                price
-                inventoryItem {
-                  id
-                  sku
-                  tracked
-                }
-              }
-            }
+            edges { node { id title price inventoryItem { id sku tracked } } }
           }
         }
-        userErrors {
-          field
-          message
-        }
+        userErrors { field message }
       }
     }
     """
@@ -578,78 +526,6 @@ async def create_shopify_product_with_variants(
     product_id = shopify_product.get("id")
 
     logger.info(f"✅ Product created: {shopify_product.get('title')}")
-    if shopify_product.get("category"):
-        logger.info(f"   Category confirmed: {shopify_product.get('category')}")
-
-    variant_edges = shopify_product.get("variants", {}).get("edges", [])
-    variants_to_update = []
-
-    for idx, edge in enumerate(variant_edges):
-        if idx >= len(variants):
-            break
-        shopify_variant = edge["node"]
-        our_variant = variants[idx]
-        variants_to_update.append({
-            "id": shopify_variant["id"],
-            "price": str(our_variant.get("price", 0)),
-            "inventoryItem": {
-                "sku": our_variant.get("sku", ""),
-                "tracked": True,
-            },
-        })
-
-    if variants_to_update:
-        mutation_var = """
-        mutation productVariantsBulkUpdate(
-          $productId: ID!,
-          $variants: [ProductVariantsBulkInput!]!
-        ) {
-          productVariantsBulkUpdate(
-            productId: $productId,
-            variants: $variants
-          ) {
-            productVariants {
-              id
-              title
-              price
-              inventoryItem {
-                id
-                sku
-                tracked
-              }
-            }
-            userErrors {
-              field
-              message
-            }
-          }
-        }
-        """
-
-        var_result = await shopify_graphql(
-            shop, access_token, mutation_var,
-            {"productId": product_id, "variants": variants_to_update},
-        )
-
-        updated_variants = (
-            var_result.get("data", {})
-            .get("productVariantsBulkUpdate", {})
-            .get("productVariants", [])
-        )
-
-        for idx, var in enumerate(updated_variants):
-            if idx >= len(variants):
-                break
-            our_variant = variants[idx]
-            inv_item_id = var.get("inventoryItem", {}).get("id")
-            stock = our_variant.get("stock", 0)
-            if inv_item_id:
-                await set_inventory_quantity(
-                    shop=shop,
-                    access_token=access_token,
-                    inventory_item_id=inv_item_id,
-                    quantity=stock,
-                )
 
     images = product_data.get("images", [])
     if product_id and images:
@@ -664,25 +540,24 @@ async def create_shopify_product_with_variants(
 
 
 # ============================================
-# ✅ UPDATED: ADD VARIANT TO EXISTING PRODUCT (Multiple Options)
+# ✅ ADD VARIANT TO EXISTING PRODUCT (Multiple Options)
 # ============================================
 async def add_variant_to_existing_product(
     shop: str,
     access_token: str,
     product_id: str,
     variant_data: dict,
-    all_options: list = None,  # ✅ NAYA: multiple options
+    all_options: list = None,
 ) -> dict:
     """
     Existing product mein naya variant add karo — multiple options ke saath.
     
     Args:
         all_options: [
-            {"name": "Color", "value": "Blue"},
+            {"name": "Color", "value": "Gold"},
             {"name": "Size", "value": "Small"}
         ]
     """
-    # Fallback: agar all_options nahi diya — single option
     if not all_options:
         option_name = variant_data.get("option_name") or "Style"
         option_value = variant_data.get("title") or "Default"
@@ -706,9 +581,7 @@ async def add_variant_to_existing_product(
         if not option_exists:
             logger.error(f"❌ Could not ensure option '{opt['name']}'")
             return {
-                "errors": [
-                    {"message": f"Failed to create option '{opt['name']}'"}
-                ]
+                "errors": [{"message": f"Failed to create option '{opt['name']}'"}]
             }
 
     # ✅ Step 2: Build optionValues
@@ -723,24 +596,9 @@ async def add_variant_to_existing_product(
       $productId: ID!,
       $variants: [ProductVariantsBulkInput!]!
     ) {
-      productVariantsBulkCreate(
-        productId: $productId,
-        variants: $variants
-      ) {
-        productVariants {
-          id
-          title
-          price
-          inventoryItem {
-            id
-            sku
-            tracked
-          }
-        }
-        userErrors {
-          field
-          message
-        }
+      productVariantsBulkCreate(productId: $productId, variants: $variants) {
+        productVariants { id title price inventoryItem { id sku tracked } }
+        userErrors { field message }
       }
     }
     """
@@ -766,12 +624,10 @@ async def add_variant_to_existing_product(
         return result
 
     var_errors = (
-        result.get("data", {})
-        .get("productVariantsBulkCreate", {})
-        .get("userErrors", [])
+        result.get("data", {}).get("productVariantsBulkCreate", {}).get("userErrors", [])
     )
 
-    # ✅ Handle "already exists" error
+    # ✅ Handle "already exists"
     if var_errors:
         for err in var_errors:
             msg = (err.get("message") or "").lower()
@@ -783,9 +639,7 @@ async def add_variant_to_existing_product(
         return result
 
     created = (
-        result.get("data", {})
-        .get("productVariantsBulkCreate", {})
-        .get("productVariants", [])
+        result.get("data", {}).get("productVariantsBulkCreate", {}).get("productVariants", [])
     )
 
     if created:
@@ -806,7 +660,7 @@ async def add_variant_to_existing_product(
 
 
 # ============================================
-# PRODUCT CREATE (SIMPLE) — productSet
+# ✅ PRODUCT CREATE (SIMPLE)
 # ============================================
 async def create_shopify_product(
     shop: str,
@@ -827,19 +681,15 @@ async def create_shopify_product(
     asin_value = str(product_data.get("asin", "") or "")
     if asin_value and asin_value != "None":
         metafields_input.append({
-            "namespace": "custom",
-            "key": "asin",
-            "value": asin_value,
-            "type": "single_line_text_field",
+            "namespace": "custom", "key": "asin",
+            "value": asin_value, "type": "single_line_text_field",
         })
 
     rating_value = str(product_data.get("rating", "") or "")
     if rating_value and rating_value != "None":
         metafields_input.append({
-            "namespace": "custom",
-            "key": "rating",
-            "value": rating_value,
-            "type": "single_line_text_field",
+            "namespace": "custom", "key": "rating",
+            "value": rating_value, "type": "single_line_text_field",
         })
 
     reviews_count_value = product_data.get("reviews_count")
@@ -847,10 +697,8 @@ async def create_shopify_product(
         reviews_count_str = str(reviews_count_value)
         if reviews_count_str and reviews_count_str != "None":
             metafields_input.append({
-                "namespace": "custom",
-                "key": "reviews_count",
-                "value": reviews_count_str,
-                "type": "single_line_text_field",
+                "namespace": "custom", "key": "reviews_count",
+                "value": reviews_count_str, "type": "single_line_text_field",
             })
 
     amazon_price_value = product_data.get("amazon_price")
@@ -858,19 +706,15 @@ async def create_shopify_product(
         amazon_price_str = str(amazon_price_value)
         if amazon_price_str and amazon_price_str != "None":
             metafields_input.append({
-                "namespace": "custom",
-                "key": "amazon_price",
-                "value": amazon_price_str,
-                "type": "single_line_text_field",
+                "namespace": "custom", "key": "amazon_price",
+                "value": amazon_price_str, "type": "single_line_text_field",
             })
 
     availability_value = str(product_data.get("availability", "") or "")
     if availability_value and availability_value != "None":
         metafields_input.append({
-            "namespace": "custom",
-            "key": "availability",
-            "value": availability_value,
-            "type": "single_line_text_field",
+            "namespace": "custom", "key": "availability",
+            "value": availability_value, "type": "single_line_text_field",
         })
 
     shopify_tags = _build_shopify_tags(product_data)
@@ -897,17 +741,14 @@ async def create_shopify_product(
 
     if shopify_tags:
         input_data["tags"] = shopify_tags
-        logger.info(f"   Pushing {len(shopify_tags)} tags")
 
     if product_type:
         input_data["productType"] = product_type
-        logger.info(f"   Product type: {product_type}")
 
     if shopify_category_id:
         input_data["category"] = shopify_category_id
-        logger.info(f"   Category: {shopify_category_id}")
 
-    # ✅ Smart variant detection — COLOR + SIZE dono
+    # ✅ Color + Size dono detect karo
     variant_attrs = product_data.get("variant_attributes") or []
     product_options = []
     variant_values = []
@@ -918,14 +759,8 @@ async def create_shopify_product(
         name = (attr.get("name") or "").strip()
         value = (attr.get("value") or "").strip()
         if name.lower() in ("color", "size") and value:
-            product_options.append({
-                "name": name,
-                "values": [{"name": value}],
-            })
-            variant_values.append({
-                "optionName": name,
-                "name": value,
-            })
+            product_options.append({"name": name, "values": [{"name": value}]})
+            variant_values.append({"optionName": name, "name": value})
 
     if product_options and variant_values:
         input_data["productOptions"] = product_options
@@ -939,50 +774,19 @@ async def create_shopify_product(
                 },
             }
         ]
-        logger.info(
-            f"   Adding variant: "
-            + " / ".join(
-                f"{v['optionName']}={v['name']}" for v in variant_values
-            )
-        )
 
     mutation_create = """
     mutation productSet($input: ProductSetInput!) {
       productSet(input: $input) {
         product {
-          id
-          title
-          handle
-          tags
-          productType
-          category {
-            id
-            name
-            fullName
-          }
-          options {
-            id
-            name
-            values
-          }
+          id title handle tags productType
+          category { id name fullName }
+          options { id name values }
           variants(first: 5) {
-            edges {
-              node {
-                id
-                title
-                price
-                inventoryItem {
-                  id
-                  tracked
-                }
-              }
-            }
+            edges { node { id title price inventoryItem { id tracked } } }
           }
         }
-        userErrors {
-          field
-          message
-        }
+        userErrors { field message }
       }
     }
     """
@@ -1006,8 +810,6 @@ async def create_shopify_product(
     product_id = shopify_product.get("id")
 
     logger.info(f"✅ Product created: {shopify_product.get('title')}")
-    if shopify_product.get("category"):
-        logger.info(f"   Category confirmed: {shopify_product.get('category')}")
 
     if product_id and metafields_input:
         await set_product_metafields(
@@ -1019,34 +821,31 @@ async def create_shopify_product(
 
     variants_edges = shopify_product.get("variants", {}).get("edges", [])
 
-    variant_id = None
-    inventory_item_id = None
-
     if variants_edges:
         variant_node = variants_edges[0]["node"]
         variant_id = variant_node.get("id")
         inventory_item_id = variant_node.get("inventoryItem", {}).get("id")
 
-    if product_id and variant_id and price_float > 0:
-        await update_variant_with_tracked(
-            shop=shop,
-            access_token=access_token,
-            product_id=product_id,
-            variant_id=variant_id,
-            price=price_float,
-        )
+        if product_id and variant_id and price_float > 0:
+            await update_variant_with_tracked(
+                shop=shop,
+                access_token=access_token,
+                product_id=product_id,
+                variant_id=variant_id,
+                price=price_float,
+            )
 
-    if inventory_item_id:
-        stock_qty = product_data.get("stock_quantity", 0)
-        if stock_qty == 0 and is_available:
-            stock_qty = 100
+        if inventory_item_id:
+            stock_qty = product_data.get("stock_quantity", 0)
+            if stock_qty == 0 and is_available:
+                stock_qty = 100
 
-        await set_inventory_quantity(
-            shop=shop,
-            access_token=access_token,
-            inventory_item_id=inventory_item_id,
-            quantity=stock_qty,
-        )
+            await set_inventory_quantity(
+                shop=shop,
+                access_token=access_token,
+                inventory_item_id=inventory_item_id,
+                quantity=stock_qty,
+            )
 
     images = product_data.get("images", [])
     if product_id and images:
@@ -1075,27 +874,14 @@ async def add_product_images(
       $media: [CreateMediaInput!]!
     ) {
       productCreateMedia(productId: $productId, media: $media) {
-        media {
-          ... on MediaImage {
-            id
-            image {
-              url
-            }
-          }
-        }
-        mediaUserErrors {
-          field
-          message
-        }
+        media { ... on MediaImage { id image { url } } }
+        mediaUserErrors { field message }
       }
     }
     """
 
     media_input = [
-        {
-            "originalSource": url,
-            "mediaContentType": "IMAGE",
-        }
+        {"originalSource": url, "mediaContentType": "IMAGE"}
         for url in image_urls
         if url
     ]
@@ -1103,10 +889,7 @@ async def add_product_images(
     if not media_input:
         return {}
 
-    variables = {
-        "productId": product_id,
-        "media": media_input,
-    }
+    variables = {"productId": product_id, "media": media_input}
 
     return await shopify_graphql(shop, access_token, mutation, variables)
 
@@ -1130,44 +913,25 @@ async def update_shopify_product_status(
     mutation = """
     mutation updateProductStatus($input: ProductInput!) {
       productUpdate(input: $input) {
-        product {
-          id
-          title
-          status
-        }
-        userErrors {
-          field
-          message
-        }
+        product { id title status }
+        userErrors { field message }
       }
     }
     """
 
-    variables = {
-        "input": {
-            "id": product_gid,
-            "status": new_status,
-        }
-    }
+    variables = {"input": {"id": product_gid, "status": new_status}}
 
     result = await shopify_graphql(shop, access_token, mutation, variables)
 
     if "errors" in result:
-        logger.error(f"❌ Status update GraphQL errors: {result['errors']}")
-        return False
-
-    update_data = result.get("data", {}).get("productUpdate", {})
-    user_errors = update_data.get("userErrors", [])
-
-    if user_errors:
-        logger.error(f"❌ Status update user errors: {user_errors}")
+        logger.error(f"❌ Status update errors: {result['errors']}")
         return False
 
     return True
 
 
 # ============================================
-# SHOPIFY PRODUCT DHUNDO SKU SE
+# SHOPIFY PRODUCT BY SKU
 # ============================================
 async def get_shopify_product_by_sku(
     shop: str,
@@ -1179,18 +943,9 @@ async def get_shopify_product_by_sku(
       products(first: 1, query: $query) {
         edges {
           node {
-            id
-            title
-            status
+            id title status
             variants(first: 1) {
-              edges {
-                node {
-                  id
-                  inventoryItem {
-                    id
-                  }
-                }
-              }
+              edges { node { id inventoryItem { id } } }
             }
           }
         }
@@ -1198,17 +953,13 @@ async def get_shopify_product_by_sku(
     }
     """
 
-    result = await shopify_graphql(
-        shop, access_token, query, {"query": f"sku:{sku}"}
-    )
+    result = await shopify_graphql(shop, access_token, query, {"query": f"sku:{sku}"})
 
     if "errors" in result:
         logger.error(f"SKU search errors: {result['errors']}")
         return None
 
-    edges = (
-        result.get("data", {}).get("products", {}).get("edges", [])
-    )
+    edges = result.get("data", {}).get("products", {}).get("edges", [])
 
     if edges:
         product_gid = edges[0]["node"]["id"]
