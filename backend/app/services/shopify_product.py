@@ -6,6 +6,7 @@
 # + ✅ UPDATED: Multiple variants support (Color + Size)
 # + ✅ FIXED: ensure_product_has_option sends variants input
 # + ✅ NAYA: SKU (ASIN) always set on variants
+# + ✅ FIXED: variants only when productOptions exist
 # ============================================
 
 import logging
@@ -113,7 +114,7 @@ async def delete_shopify_product(
 
 
 # ============================================
-# ✅ UPDATED: VARIANT UPDATE WITH TRACKED + SKU
+# VARIANT UPDATE WITH TRACKED + SKU
 # ============================================
 async def update_variant_with_tracked(
     shop: str,
@@ -121,7 +122,7 @@ async def update_variant_with_tracked(
     product_id: str,
     variant_id: str,
     price: float,
-    sku: str = "",  # ✅ NAYA: SKU parameter
+    sku: str = "",
 ) -> bool:
     """Variant update karo — price + SKU ke saath."""
     mutation = """
@@ -144,7 +145,6 @@ async def update_variant_with_tracked(
     }
     """
 
-    # ✅ Inventory item — SKU ke saath
     inventory_item_input = {"tracked": True}
     if sku:
         inventory_item_input["sku"] = sku
@@ -291,7 +291,6 @@ async def ensure_product_has_option(
 
     logger.info(f"   ➕ Creating option '{option_name}' with values: {option_values}")
 
-    # Naye options build karo
     new_options = []
     for opt in existing_options:
         name = opt.get("name", "")
@@ -318,7 +317,6 @@ async def ensure_product_has_option(
 
     new_options.append({"name": option_name, "values": new_option_values})
 
-    # Existing variants preserve karo
     variants_edges = product.get("variants", {}).get("edges", [])
     existing_variants_input = []
 
@@ -353,7 +351,6 @@ async def ensure_product_has_option(
             "optionValues": variant_option_values,
         })
 
-    # productSet mutation
     mutation = """
     mutation productSet($input: ProductSetInput!) {
       productSet(input: $input) {
@@ -562,7 +559,6 @@ async def add_variant_to_existing_product(
         + " / ".join(f"{o['name']}={o['value']}" for o in all_options)
     )
 
-    # Ensure saare options exist
     for opt in all_options:
         option_exists = await ensure_product_has_option(
             shop=shop,
@@ -583,7 +579,6 @@ async def add_variant_to_existing_product(
         for opt in all_options
     ]
 
-    # ✅ SKU set karo
     sku_value = variant_data.get("sku", "") or ""
 
     mutation = """
@@ -606,7 +601,6 @@ async def add_variant_to_existing_product(
         },
     }
 
-    # ✅ SKU add karo (agar hai)
     if sku_value:
         variants_input["inventoryItem"]["sku"] = sku_value
 
@@ -661,6 +655,7 @@ async def add_variant_to_existing_product(
 
 # ============================================
 # ✅ PRODUCT CREATE (SIMPLE) — SKU ALWAYS SET
+# ✅ FIXED: variants only when productOptions exist
 # ============================================
 async def create_shopify_product(
     shop: str,
@@ -676,7 +671,7 @@ async def create_shopify_product(
     except (ValueError, TypeError):
         price_float = 0.0
 
-    # ✅ ASIN nikalo — SKU ke liye
+    # ASIN for SKU
     asin_value = str(product_data.get("asin", "") or "").strip()
     if not asin_value or asin_value == "None":
         asin_value = "NO-SKU"
@@ -766,22 +761,27 @@ async def create_shopify_product(
             product_options.append({"name": name, "values": [{"name": value}]})
             variant_values.append({"optionName": name, "name": value})
 
-    if product_options:
+    # ✅ FIXED: SIRF tab variants bhejo jab productOptions hain
+    if product_options and variant_values:
         input_data["productOptions"] = product_options
-
-    # ✅ ✅ ALWAYS bhejo variants — SKU (ASIN) ke saath
-    variant_input = {
-        "price": str(price_float or 0),
-        "inventoryItem": {
-            "sku": asin_value,  # ✅ SKU = ASIN
-            "tracked": True,
-        },
-    }
-
-    if variant_values:
-        variant_input["optionValues"] = variant_values
-
-    input_data["variants"] = [variant_input]
+        input_data["variants"] = [
+            {
+                "optionValues": variant_values,  # ← YE ZAROORI HAI
+                "price": str(price_float or 0),
+                "inventoryItem": {
+                    "sku": asin_value,
+                    "tracked": True,
+                },
+            }
+        ]
+        logger.info(
+            f"   Adding variant: "
+            + " / ".join(f"{v['optionName']}={v['name']}" for v in variant_values)
+        )
+    else:
+        # ✅ Koi options nahi — variants bhi NAHI bhejo
+        # Shopify khud "Default Title" variant bana dega
+        logger.info("   No variant options — Shopify will create default variant")
 
     mutation_create = """
     mutation productSet($input: ProductSetInput!) {
@@ -835,7 +835,7 @@ async def create_shopify_product(
             metafields=metafields_input,
         )
 
-    # ✅ Variant price + SKU + inventory update
+    # ✅ Variant price + SKU + inventory
     variants_edges = shopify_product.get("variants", {}).get("edges", [])
 
     if variants_edges:
@@ -843,7 +843,7 @@ async def create_shopify_product(
         variant_id = variant_node.get("id")
         inventory_item_id = variant_node.get("inventoryItem", {}).get("id")
 
-        # ✅ SKU + price update
+        # SKU + price update
         if product_id and variant_id:
             await update_variant_with_tracked(
                 shop=shop,
@@ -851,7 +851,7 @@ async def create_shopify_product(
                 product_id=product_id,
                 variant_id=variant_id,
                 price=price_float,
-                sku=asin_value,  # ✅ SKU = ASIN
+                sku=asin_value,
             )
 
         # Inventory
