@@ -2,12 +2,13 @@
 # app/services/shopify_product.py
 # Product create (simple + variants), variant add,
 # images, status update, tags update,
-# product delete, SKU search
+# product delete, SKU search, PUBLISH
 # + ✅ UPDATED: Multiple variants support (Color + Size)
 # + ✅ FIXED: ensure_product_has_option sends variants input
 # + ✅ NAYA: SKU (ASIN) always set on variants
 # + ✅ FIXED: variants only when productOptions exist
 # + ✅ NAYA: Metafields in Description HTML (auto-show)
+# + ✅ NAYA: Auto-publish to channels (Online Store, POS)
 # ============================================
 
 import logging
@@ -75,6 +76,122 @@ def _build_description_with_metafields(product_data: dict) -> str:
         )
 
     return description
+
+
+# ============================================
+# ✅ NAYA: PUBLISH PRODUCT TO CHANNELS
+# ============================================
+async def publish_product_to_channels(
+    shop: str,
+    access_token: str,
+    shopify_product_id: str,
+) -> bool:
+    """
+    Product ko saare sales channels pe publish karo.
+    (Online Store, Point of Sale, Shop, etc.)
+    """
+    if not shopify_product_id:
+        return False
+
+    if not shopify_product_id.startswith("gid://"):
+        product_gid = f"gid://shopify/Product/{shopify_product_id}"
+    else:
+        product_gid = shopify_product_id
+
+    # Step 1: Saare publications fetch karo
+    publications_query = """
+    query getPublications {
+      publications(first: 10) {
+        edges {
+          node {
+            id
+            name
+          }
+        }
+      }
+    }
+    """
+
+    result = await shopify_graphql(shop, access_token, publications_query)
+
+    if "errors" in result:
+        logger.error(f"❌ Failed to fetch publications: {result['errors']}")
+        return False
+
+    edges = result.get("data", {}).get("publications", {}).get("edges", [])
+
+    if not edges:
+        logger.warning("⚠️ No publications found")
+        return False
+
+    # Step 2: Har publication ka ID collect karo
+    publication_ids = []
+    for edge in edges:
+        pub = edge["node"]
+        pub_id = pub.get("id")
+        pub_name = pub.get("name", "")
+        if pub_id:
+            publication_ids.append(pub_id)
+            logger.info(f"   📢 Publishing to: {pub_name}")
+
+    if not publication_ids:
+        return False
+
+    # Step 3: publishablePublish mutation
+    mutation = """
+    mutation publishablePublish(
+      $id: ID!
+      $input: [PublicationInput!]!
+    ) {
+      publishablePublish(id: $id, input: $input) {
+        publishable {
+          availablePublicationsCount {
+            count
+          }
+        }
+        userErrors {
+          field
+          message
+        }
+      }
+    }
+    """
+
+    input_data = [{"publicationId": pid} for pid in publication_ids]
+
+    variables = {
+        "id": product_gid,
+        "input": input_data,
+    }
+
+    publish_result = await shopify_graphql(
+        shop, access_token, mutation, variables
+    )
+
+    if "errors" in publish_result:
+        logger.error(f"❌ Publish errors: {publish_result['errors']}")
+        return False
+
+    user_errors = (
+        publish_result.get("data", {})
+        .get("publishablePublish", {})
+        .get("userErrors", [])
+    )
+
+    if user_errors:
+        logger.error(f"❌ Publish user errors: {user_errors}")
+        return False
+
+    count = (
+        publish_result.get("data", {})
+        .get("publishablePublish", {})
+        .get("publishable", {})
+        .get("availablePublicationsCount", {})
+        .get("count", 0)
+    )
+
+    logger.info(f"✅ Product published to {count} channel(s)")
+    return True
 
 
 # ============================================
@@ -580,6 +697,14 @@ async def create_shopify_product_with_variants(
 
     logger.info(f"✅ Product created: {shopify_product.get('title')}")
 
+    # ✅ NAYA: Auto-publish
+    if product_id:
+        await publish_product_to_channels(
+            shop=shop,
+            access_token=access_token,
+            shopify_product_id=product_id,
+        )
+
     images = product_data.get("images", [])
     if product_id and images:
         await add_product_images(
@@ -708,7 +833,7 @@ async def add_variant_to_existing_product(
 
 
 # ============================================
-# ✅ PRODUCT CREATE (SIMPLE) — SKU + Metafields in Description
+# ✅ PRODUCT CREATE (SIMPLE) — SKU + Metafields + PUBLISH
 # ============================================
 async def create_shopify_product(
     shop: str,
@@ -785,12 +910,11 @@ async def create_shopify_product(
             categories=categories,
         )
 
-    # ✅ Description with metafields HTML
     description_html = _build_description_with_metafields(product_data)
 
     input_data = {
         "title": product_data.get("title") or "Untitled Product",
-        "descriptionHtml": description_html,  # ← YEH
+        "descriptionHtml": description_html,
         "vendor": product_data.get("brand", ""),
         "status": status,
     }
@@ -879,6 +1003,14 @@ async def create_shopify_product(
     product_id = shopify_product.get("id")
 
     logger.info(f"✅ Product created: {shopify_product.get('title')}")
+
+    # ✅ NAYA: Auto-publish to channels
+    if product_id:
+        await publish_product_to_channels(
+            shop=shop,
+            access_token=access_token,
+            shopify_product_id=product_id,
+        )
 
     # Metafields
     if product_id and metafields_input:
