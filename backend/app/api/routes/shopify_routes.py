@@ -8,6 +8,7 @@
 # + ✅ NAYA: categories + tags Shopify pe push
 # + ✅ NAYA: Smart markup cap (max $50 fixed, max 500% percent)
 # + ✅ NAYA: Multiple variants support (Color + Size)
+# + ✅ NAYA: App uninstalled cleanup (subscription_staus)
 # ============================================
 
 import logging
@@ -52,40 +53,28 @@ router = APIRouter(prefix="/api/shopify", tags=["Shopify"])
 
 
 # ============================================
-# ✅ NAYA HELPER: EXTRACT ALL VARIATIONS
-# Color + Size dono return karo
+# HELPER: EXTRACT ALL VARIATIONS
 # ============================================
 def extract_all_variations(data: dict) -> list:
-    """
-    Saare variation options nikalo — Color + Size dono.
-    
-    Returns:
-        [
-            {"name": "Color", "value": "Blue"},
-            {"name": "Size", "value": "Small"}
-        ]
-    """
+    """Saare variation options nikalo — Color + Size dono."""
     attrs = data.get("variant_attributes") or []
-    
+
     variations = []
     seen_names = set()
-    
-    # Priority order: Color → Size → Style → Capacity
     priority_order = ["color", "size", "style", "capacity"]
-    
+
     for target in priority_order:
         for attr in attrs:
             if not isinstance(attr, dict):
                 continue
             name = (attr.get("name") or "").strip()
             value = (attr.get("value") or "").strip()
-            
+
             if name.lower() == target and value:
                 variations.append({"name": name, "value": value})
                 seen_names.add(name.lower())
                 break
-    
-    # Fallback: koi bhi attr jo priority mein nahi hai
+
     if not variations:
         for attr in attrs:
             if isinstance(attr, dict):
@@ -94,16 +83,15 @@ def extract_all_variations(data: dict) -> list:
                 if name and value and name.lower() not in seen_names:
                     variations.append({"name": name, "value": value})
                     break
-    
-    # Agar kuch bhi nahi mila
+
     if not variations:
         variations = [{"name": "Style", "value": "Default"}]
-    
+
     return variations
 
 
 # ============================================
-# HELPER: VARIATION TITLE NIKALO (Single - backward compat)
+# HELPER: VARIATION TITLE NIKALO (Single)
 # ============================================
 def extract_variation_info(data: dict) -> tuple:
     """Legacy function — single variation."""
@@ -121,10 +109,7 @@ async def check_variant_exists_in_shopify(
     shopify_product_id: str,
     variation_values: list,
 ) -> bool:
-    """
-    Check karo ki variant (combination of options) already exists kya.
-    variation_values: [{"name": "Color", "value": "Blue"}, {"name": "Size", "value": "Small"}]
-    """
+    """Check karo ki variant already exists kya."""
     try:
         query = """
         query getProductVariants($id: ID!) {
@@ -155,28 +140,26 @@ async def check_variant_exists_in_shopify(
             .get("variants", {})
             .get("edges", [])
         )
-        
-        # Naya variant ke values lower-case mein
+
         new_values = {
             v["name"].lower(): v["value"].lower().strip()
             for v in variation_values
         }
-        
+
         for edge in edges:
             node = edge["node"]
             existing_values = {
                 opt["name"].lower(): opt["value"].lower().strip()
                 for opt in node.get("selectedOptions", [])
             }
-            
-            # ✅ Exact match — saare options same
+
             if existing_values == new_values:
                 return True
-        
+
         return False
 
     except Exception as e:
-        logger.error(f"❌ check_variant_exists_in_shopify error: {e}")
+        logger.error(f"❌ check_variant_exists error: {e}")
         return False
 
 
@@ -189,21 +172,21 @@ def apply_markup_cap(markup: float, markup_type: str) -> float:
         markup = float(markup)
     except (ValueError, TypeError):
         return 2.0
-    
+
     if markup < 0:
         markup = 0.0
-    
+
     if markup_type == "fixed":
         if markup > 50:
-            logger.warning(f"⚠️ Fixed markup ${markup} too high, capping at $50")
+            logger.warning(f"⚠️ Fixed markup ${markup} capped at $50")
             markup = 50.0
     elif markup_type == "percent":
         if markup > 500:
-            logger.warning(f"⚠️ Percent markup {markup}% too high, capping at 500%")
+            logger.warning(f"⚠️ Percent markup {markup}% capped at 500%")
             markup = 500.0
     else:
         markup = min(markup, 50.0)
-    
+
     return markup
 
 
@@ -236,10 +219,7 @@ async def shopify_callback(
 
     if not hmac or not verify_hmac(query_params):
         logger.error(f"❌ HMAC verification failed for {shop}")
-        raise HTTPException(
-            status_code=401,
-            detail="HMAC verification failed. Request may be tampered.",
-        )
+        raise HTTPException(status_code=401, detail="HMAC verification failed")
 
     logger.info(f"✅ HMAC verified for {shop}")
 
@@ -248,14 +228,7 @@ async def shopify_callback(
     if not token_data or not token_data.get("access_token"):
         logger.error(f"❌ Token exchange failed for {shop}")
         return HTMLResponse(
-            content="""
-            <html>
-                <body style="font-family: sans-serif; padding: 40px; text-align: center;">
-                    <h1>❌ Installation Failed</h1>
-                    <p>Could not exchange authorization code for access token.</p>
-                </body>
-            </html>
-            """,
+            content="<h1>❌ Installation Failed</h1>",
             status_code=400,
         )
 
@@ -265,19 +238,15 @@ async def shopify_callback(
     expires_in = token_data.get("expires_in")
     refresh_expires_in = token_data.get("refresh_token_expires_in")
 
-    expires_at = (
-        now + timedelta(seconds=int(expires_in)) if expires_in else None
-    )
+    expires_at = now + timedelta(seconds=int(expires_in)) if expires_in else None
     refresh_token_expires_at = (
         now + timedelta(seconds=int(refresh_expires_in))
         if refresh_expires_in else None
     )
 
-    existing = (
-        db.query(ShopifyStore)
-        .filter(ShopifyStore.shop_domain == shop)
-        .first()
-    )
+    existing = db.query(ShopifyStore).filter(
+        ShopifyStore.shop_domain == shop
+    ).first()
 
     if existing:
         existing.access_token = access_token
@@ -370,7 +339,7 @@ async def push_product_to_shopify(
     product = db.query(Product).filter(Product.id == product_id).first()
 
     if not product:
-        raise HTTPException(status_code=404, detail="Product not found in database")
+        raise HTTPException(status_code=404, detail="Product not found")
 
     store = (
         db.query(ShopifyStore)
@@ -379,7 +348,7 @@ async def push_product_to_shopify(
     )
 
     if not store:
-        raise HTTPException(status_code=404, detail=f"Store {shop_domain} not connected")
+        raise HTTPException(status_code=404, detail=f"Store not connected")
 
     product.shopify_store_id = store.id
     product.shopify_status = "active"
@@ -396,14 +365,12 @@ async def push_product_to_shopify(
             .first()
         )
 
-    # ✅ Saare variations nikalo
     all_variations = extract_all_variations({
         "variant_attributes": product.variant_attributes or [],
         "specifications": product.specifications or {},
     })
 
     if existing_parent and existing_parent.shopify_product_id:
-        # ✅ Check if variant already exists
         variant_exists = await check_variant_exists_in_shopify(
             shop=store.shop_domain,
             access_token=store.access_token,
@@ -412,17 +379,11 @@ async def push_product_to_shopify(
         )
 
         if variant_exists:
-            logger.warning(
-                f"⚠️ Variant {all_variations} already exists — "
-                f"creating new product instead"
-            )
+            logger.warning(f"⚠️ Variant exists — creating new product")
             existing_parent = None
 
     if existing_parent and existing_parent.shopify_product_id:
-        logger.info(
-            f"➕ Adding variant to existing product: "
-            f"{existing_parent.shopify_product_id}"
-        )
+        logger.info(f"➕ Adding variant to existing: {existing_parent.shopify_product_id}")
 
         result = await add_variant_to_existing_product(
             shop=store.shop_domain,
@@ -441,19 +402,14 @@ async def push_product_to_shopify(
             product.shopify_handle = existing_parent.shopify_handle
             db.commit()
 
-            logger.info(f"✅ Variant added: {product.asin}")
-
             return {
                 "success": True,
-                "message": "Variant added to existing product",
+                "message": "Variant added",
                 "shopify_product_id": existing_parent.shopify_product_id,
-                "shopify_handle": existing_parent.shopify_handle,
-                "asin": product.asin,
                 "variations": all_variations,
                 "variant_added": True,
             }
 
-    # Naya product banao
     product_data = {
         "title": product.title,
         "description": product.description or "",
@@ -480,10 +436,7 @@ async def push_product_to_shopify(
     )
 
     if "errors" in result:
-        logger.error(f"❌ Shopify push error: {result['errors']}")
-        raise HTTPException(
-            status_code=400, detail=f"Shopify API error: {result['errors']}"
-        )
+        raise HTTPException(status_code=400, detail=f"Shopify API error")
 
     shopify_product = (
         result.get("data", {}).get("productSet", {}).get("product", {})
@@ -495,10 +448,9 @@ async def push_product_to_shopify(
 
     return {
         "success": True,
-        "message": "Product pushed to Shopify successfully",
+        "message": "Product pushed to Shopify",
         "shopify_product_id": shopify_product.get("id"),
         "shopify_handle": shopify_product.get("handle"),
-        "shopify_title": shopify_product.get("title"),
         "variant_added": False,
     }
 
@@ -515,9 +467,7 @@ async def add_product_from_shopify_app(
     db: Session = Depends(get_db),
 ):
     if not authorization or not authorization.startswith("Bearer "):
-        raise HTTPException(
-            status_code=401, detail="Missing or invalid authorization header"
-        )
+        raise HTTPException(status_code=401, detail="Missing authorization")
 
     token = authorization.replace("Bearer ", "").strip()
     if not token:
@@ -525,7 +475,7 @@ async def add_product_from_shopify_app(
 
     try:
         payload = verify_id_token(token)
-        logger.info("✅ ID token verified successfully")
+        logger.info("✅ ID token verified")
     except ValueError as e:
         logger.error(f"❌ ID token verify fail: {e}")
         raise HTTPException(status_code=401, detail=f"Invalid ID token: {str(e)}")
@@ -534,30 +484,25 @@ async def add_product_from_shopify_app(
     shop_domain = dest.replace("https://", "").split("/")[0]
 
     if not shop_domain:
-        raise HTTPException(status_code=401, detail="Shop domain missing from token")
+        raise HTTPException(status_code=401, detail="Shop domain missing")
 
-    logger.info(f"✅ Verified Shopify request from: {shop_domain}")
+    logger.info(f"✅ Verified request from: {shop_domain}")
 
-    store = (
-        db.query(ShopifyStore)
-        .filter(ShopifyStore.shop_domain == shop_domain)
-        .first()
-    )
+    store = db.query(ShopifyStore).filter(
+        ShopifyStore.shop_domain == shop_domain
+    ).first()
 
     async def refresh_store_token() -> bool:
         nonlocal store
         token_data = await exchange_id_token_for_offline_token(shop_domain, token)
         if not token_data or not token_data.get("access_token"):
-            logger.error(f"❌ refresh_store_token: token_data empty for {shop_domain}")
             return False
 
         now = datetime.now(timezone.utc)
         expires_in = token_data.get("expires_in")
         refresh_expires_in = token_data.get("refresh_token_expires_in")
 
-        expires_at = (
-            now + timedelta(seconds=int(expires_in)) if expires_in else None
-        )
+        expires_at = now + timedelta(seconds=int(expires_in)) if expires_in else None
         refresh_token_expires_at = (
             now + timedelta(seconds=int(refresh_expires_in))
             if refresh_expires_in else None
@@ -590,15 +535,13 @@ async def add_product_from_shopify_app(
         if not store:
             raise HTTPException(
                 status_code=404,
-                detail=f"Store {shop_domain} not connected. Please reinstall the app.",
+                detail=f"Store {shop_domain} not connected",
             )
 
     try:
         data = await fetch_product_from_brightdata(amazon_url)
     except BrightDataError as e:
-        raise HTTPException(
-            status_code=400, detail=f"Bright Data fetch fail: {str(e)}"
-        )
+        raise HTTPException(status_code=400, detail=f"Bright Data fail: {str(e)}")
 
     asin = data["asin"]
     parent_asin = data.get("parent_asin")
@@ -621,10 +564,8 @@ async def add_product_from_shopify_app(
             .first()
         )
 
-    # ✅ Saare variations nikalo
     all_variations = extract_all_variations(data)
 
-    # ✅ Check if variant already exists
     if existing_parent and existing_parent.shopify_product_id:
         variant_exists = await check_variant_exists_in_shopify(
             shop=shop_domain,
@@ -634,20 +575,16 @@ async def add_product_from_shopify_app(
         )
 
         if variant_exists:
-            logger.warning(
-                f"⚠️ Variant {all_variations} already exists — "
-                f"creating new standalone product instead"
-            )
+            logger.warning(f"⚠️ Variant exists — new product")
             existing_parent = None
 
-    # Markup
     user_markup = float(markup) if markup is not None else 2.0
     user_markup_type = (
         markup_type if markup_type in ("fixed", "percent") else "fixed"
     )
     user_markup = apply_markup_cap(user_markup, user_markup_type)
 
-    logger.info(f"💰 Markup: {user_markup} ({user_markup_type}) — Amazon ${data['amazon_price']}")
+    logger.info(f"💰 Markup: {user_markup} ({user_markup_type})")
 
     final_price = calculate_final_price(
         amazon_price=data["amazon_price"],
@@ -688,7 +625,7 @@ async def add_product_from_shopify_app(
     db.commit()
     db.refresh(new_product)
 
-    logger.info(f"✅ Product saved to Supabase: {asin} (store_id={store.id})")
+    logger.info(f"✅ Product saved to Supabase: {asin}")
 
     shopify_pushed = False
     shopify_product_id = None
@@ -708,10 +645,7 @@ async def add_product_from_shopify_app(
             _result = {}
 
             if existing_parent and existing_parent.shopify_product_id:
-                logger.info(
-                    f"➕ Adding variant to existing product: "
-                    f"{existing_parent.shopify_product_id}"
-                )
+                logger.info(f"➕ Adding variant to: {existing_parent.shopify_product_id}")
 
                 _result = await add_variant_to_existing_product(
                     shop=shop_domain,
@@ -722,7 +656,7 @@ async def add_product_from_shopify_app(
                         "sku": asin,
                         "stock": new_product.stock_quantity or 0,
                     },
-                    all_options=all_variations,  # ✅ Saare variations
+                    all_options=all_variations,
                 )
 
                 if "errors" not in _result:
@@ -788,7 +722,7 @@ async def add_product_from_shopify_app(
         shopify_pushed, shopify_product_id, variant_added, first_result = await do_push()
 
         if not shopify_pushed and is_401(first_result):
-            logger.warning(f"🔄 401/403 detected — refreshing token and retrying...")
+            logger.warning(f"🔄 401 — refreshing and retrying...")
             refreshed = await refresh_store_token()
             if refreshed:
                 shopify_pushed, shopify_product_id, variant_added, _ = await do_push()
@@ -800,7 +734,7 @@ async def add_product_from_shopify_app(
         "success": True,
         "message": (
             f"Product added (ASIN: {asin})"
-            + (" + variant added to parent ✅" if variant_added else "")
+            + (" + variant added ✅" if variant_added else "")
             + (" + new product created ✅" if shopify_pushed and not variant_added else "")
         ),
         "product_id": new_product.id,
@@ -810,7 +744,7 @@ async def add_product_from_shopify_app(
         "markup_type": user_markup_type,
         "final_price": final_price,
         "amazon_price": new_product.amazon_price,
-        "variations": all_variations,  # ✅
+        "variations": all_variations,
         "shopify_pushed": shopify_pushed,
         "shopify_product_id": shopify_product_id,
         "variant_added": variant_added,
