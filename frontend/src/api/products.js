@@ -1,6 +1,7 @@
 // ============================================
 // frontend/src/api/products.js
 // Product se related saari API calls
+// + ✅ NAYA: deleteProduct (Shopify + DB delete)
 // ============================================
 import api from './axios'
 
@@ -29,7 +30,6 @@ export const getProductVariants = async (id) => {
   return response.data
 }
 
-// ✅ NAYA — Real-time availability check
 export const getProductAvailability = async (id) => {
   const response = await api.get(`/api/products/${id}/availability`)
   return response.data
@@ -55,15 +55,23 @@ export const adminFetchProduct = async (amazonUrl) => {
   return response.data
 }
 
+// ✅ NAYA: DELETE PRODUCT
+export const deleteProduct = async (productId) => {
+  const response = await api.delete(`/api/admin/products/${productId}`)
+  return response.data
+}
+
+// ✅ UPDATE PRODUCT
+export const updateProduct = async (productId, data) => {
+  const response = await api.put(`/api/admin/products/${productId}`, data)
+  return response.data
+}
 
 
 // ============================================
 // SHOPIFY ENDPOINTS
 // ============================================
 
-/**
- * Product ko Shopify mein push karo
- */
 export const adminPushToShopify = async (productId, shopDomain) => {
   const response = await api.post(`/api/shopify/push-product/${productId}`, {
     shop_domain: shopDomain,
@@ -71,9 +79,6 @@ export const adminPushToShopify = async (productId, shopDomain) => {
   return response.data
 }
 
-/**
- * Connected Shopify stores list karo
- */
 export const getShopifyStores = async () => {
   const response = await api.get('/api/shopify/stores')
   return response.data
