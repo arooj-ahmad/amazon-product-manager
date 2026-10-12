@@ -10,6 +10,7 @@
 # + ✅ NAYA: tags + productType push
 # + ✅ NAYA: Existing product ke tags + productType update karo
 # + ✅ NAYA: Shopify product DELETE function
+# + ✅ FIXED: productOptions ke saath variants bhi bhejo
 # ============================================
 
 import hashlib
@@ -79,7 +80,7 @@ def _get_product_type(product_data: dict) -> str:
 
 
 # ============================================
-# ✅ TAXONOMY SEARCH
+# TAXONOMY SEARCH
 # ============================================
 async def search_shopify_taxonomy(
     shop: str,
@@ -171,7 +172,7 @@ async def search_shopify_taxonomy(
 
 
 # ============================================
-# ✅ BEST CATEGORY — Product Title + Categories
+# BEST CATEGORY — Product Title + Categories
 # ============================================
 async def find_best_category(
     shop: str,
@@ -472,7 +473,7 @@ async def shopify_graphql(
 
 
 # ============================================
-# ✅ NAYA: DELETE SHOPIFY PRODUCT
+# DELETE SHOPIFY PRODUCT
 # ============================================
 async def delete_shopify_product(
     shop_domain: str,
@@ -480,15 +481,11 @@ async def delete_shopify_product(
     shopify_product_id: str,
     refresh_token: Optional[str] = None,
 ) -> bool:
-    """
-    Shopify product delete karo.
-    401/403 pe refresh_token se auto-retry.
-    """
+    """Shopify product delete karo."""
     if not all([shop_domain, access_token, shopify_product_id]):
         logger.warning("Shopify delete skipped: missing config")
         return False
 
-    # GID format
     if not str(shopify_product_id).startswith("gid://"):
         product_gid = f"gid://shopify/Product/{shopify_product_id}"
     else:
@@ -525,7 +522,6 @@ async def delete_shopify_product(
                 },
             )
 
-            # ✅ 401/403 pe auto-refresh
             if res.status_code in (401, 403):
                 if refresh_token:
                     logger.warning(
@@ -1076,7 +1072,7 @@ async def update_shopify_product_tags_and_type(
 
 
 # ============================================
-# ✅ CREATE PRODUCT WITH VARIANTS — productSet
+# CREATE PRODUCT WITH VARIANTS — productSet
 # ============================================
 async def create_shopify_product_with_variants(
     shop: str,
@@ -1390,6 +1386,7 @@ async def add_variant_to_existing_product(
 
 # ============================================
 # ✅ PRODUCT CREATE (SIMPLE) — productSet
+# ✅ FIXED: productOptions ke saath variants bhi bhejo
 # ============================================
 async def create_shopify_product(
     shop: str,
@@ -1490,23 +1487,47 @@ async def create_shopify_product(
         input_data["category"] = shopify_category_id
         logger.info(f"   Category: {shopify_category_id}")
 
+    # ✅ FIXED: Smart variant detection
+    # - Sirf "Size" ya "Color" ke liye variants bhejo
+    # - "Style" ignore karo (usually generic value hoti hai)
     variant_attrs = product_data.get("variant_attributes") or []
     product_options = []
+    variant_values = []
 
     for attr in variant_attrs:
         if not isinstance(attr, dict):
             continue
         name = (attr.get("name") or "").strip()
         value = (attr.get("value") or "").strip()
-        if name.lower() in ("size", "color", "style") and value:
+        if name.lower() in ("size", "color") and value:
             product_options.append({
                 "name": name,
                 "values": [{"name": value}],
             })
-            break
+            variant_values.append({
+                "optionName": name,
+                "name": value,
+            })
+            break  # Ek hi option use karo
 
-    if product_options:
+    # ✅ productOptions + variants DONO bhejo (warna Shopify error dega)
+    if product_options and variant_values:
         input_data["productOptions"] = product_options
+        input_data["variants"] = [
+            {
+                "optionValues": variant_values,
+                "price": str(price_float or 0),
+                "inventoryItem": {
+                    "sku": product_data.get("asin", ""),
+                    "tracked": True,
+                },
+            }
+        ]
+        logger.info(
+            f"   Adding variant: {variant_values[0].get('optionName')}"
+            f"={variant_values[0].get('name')}"
+        )
+    # Warna productOptions bilkul mat bhejo — Shopify default title banayega
 
     mutation_create = """
     mutation productSet($input: ProductSetInput!) {
