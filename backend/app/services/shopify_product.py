@@ -7,6 +7,7 @@
 # + ✅ FIXED: ensure_product_has_option sends variants input
 # + ✅ NAYA: SKU (ASIN) always set on variants
 # + ✅ FIXED: variants only when productOptions exist
+# + ✅ NAYA: Metafields in Description HTML (auto-show)
 # ============================================
 
 import logging
@@ -21,6 +22,59 @@ from app.services.shopify_taxonomy import find_best_category
 from app.services.shopify_inventory import set_inventory_quantity
 
 logger = logging.getLogger(__name__)
+
+
+# ============================================
+# HELPER: Build Description with Metafields
+# ============================================
+def _build_description_with_metafields(product_data: dict) -> str:
+    """
+    Amazon description + metafields HTML build karo.
+    Description ke neeche metafields show honge.
+    """
+    description = product_data.get("description", "") or ""
+
+    metafields_html = []
+
+    rating = product_data.get("rating")
+    if rating:
+        metafields_html.append(
+            f'<p><strong>⭐ Rating:</strong> {rating} out of 5</p>'
+        )
+
+    amazon_price = product_data.get("amazon_price")
+    if amazon_price:
+        metafields_html.append(
+            f'<p><strong>💰 Amazon Price:</strong> ${amazon_price}</p>'
+        )
+
+    asin = product_data.get("asin")
+    if asin and asin != "None":
+        metafields_html.append(
+            f'<p><strong>🔖 ASIN:</strong> {asin}</p>'
+        )
+
+    reviews = product_data.get("reviews_count")
+    if reviews:
+        metafields_html.append(
+            f'<p><strong>💬 Reviews Count:</strong> {reviews}</p>'
+        )
+
+    availability = product_data.get("availability")
+    if availability:
+        metafields_html.append(
+            f'<p><strong>✅ Availability:</strong> {availability}</p>'
+        )
+
+    if metafields_html:
+        description += (
+            '<hr style="margin: 24px 0; border: none; border-top: 1px solid #e1e3e5;">'
+            '<h3 style="font-size: 18px; font-weight: 700; margin-bottom: 12px;">'
+            '📋 Product Details</h3>'
+            + "".join(metafields_html)
+        )
+
+    return description
 
 
 # ============================================
@@ -468,7 +522,7 @@ async def create_shopify_product_with_variants(
 
     input_data = {
         "title": product_data.get("title") or "Untitled Product",
-        "descriptionHtml": product_data.get("description", ""),
+        "descriptionHtml": _build_description_with_metafields(product_data),
         "vendor": product_data.get("brand", ""),
         "status": status,
         "productOptions": [
@@ -654,8 +708,7 @@ async def add_variant_to_existing_product(
 
 
 # ============================================
-# ✅ PRODUCT CREATE (SIMPLE) — SKU ALWAYS SET
-# ✅ FIXED: variants only when productOptions exist
+# ✅ PRODUCT CREATE (SIMPLE) — SKU + Metafields in Description
 # ============================================
 async def create_shopify_product(
     shop: str,
@@ -676,6 +729,7 @@ async def create_shopify_product(
     if not asin_value or asin_value == "None":
         asin_value = "NO-SKU"
 
+    # Metafields for Shopify native
     metafields_input = []
 
     if asin_value and asin_value != "NO-SKU":
@@ -731,9 +785,12 @@ async def create_shopify_product(
             categories=categories,
         )
 
+    # ✅ Description with metafields HTML
+    description_html = _build_description_with_metafields(product_data)
+
     input_data = {
         "title": product_data.get("title") or "Untitled Product",
-        "descriptionHtml": product_data.get("description", ""),
+        "descriptionHtml": description_html,  # ← YEH
         "vendor": product_data.get("brand", ""),
         "status": status,
     }
@@ -747,7 +804,7 @@ async def create_shopify_product(
     if shopify_category_id:
         input_data["category"] = shopify_category_id
 
-    # ✅ Variant options detect karo
+    # Variant options
     variant_attrs = product_data.get("variant_attributes") or []
     product_options = []
     variant_values = []
@@ -761,12 +818,11 @@ async def create_shopify_product(
             product_options.append({"name": name, "values": [{"name": value}]})
             variant_values.append({"optionName": name, "name": value})
 
-    # ✅ FIXED: SIRF tab variants bhejo jab productOptions hain
     if product_options and variant_values:
         input_data["productOptions"] = product_options
         input_data["variants"] = [
             {
-                "optionValues": variant_values,  # ← YE ZAROORI HAI
+                "optionValues": variant_values,
                 "price": str(price_float or 0),
                 "inventoryItem": {
                     "sku": asin_value,
@@ -779,8 +835,6 @@ async def create_shopify_product(
             + " / ".join(f"{v['optionName']}={v['name']}" for v in variant_values)
         )
     else:
-        # ✅ Koi options nahi — variants bhi NAHI bhejo
-        # Shopify khud "Default Title" variant bana dega
         logger.info("   No variant options — Shopify will create default variant")
 
     mutation_create = """
@@ -835,7 +889,7 @@ async def create_shopify_product(
             metafields=metafields_input,
         )
 
-    # ✅ Variant price + SKU + inventory
+    # Variant price + SKU + inventory
     variants_edges = shopify_product.get("variants", {}).get("edges", [])
 
     if variants_edges:
@@ -843,7 +897,6 @@ async def create_shopify_product(
         variant_id = variant_node.get("id")
         inventory_item_id = variant_node.get("inventoryItem", {}).get("id")
 
-        # SKU + price update
         if product_id and variant_id:
             await update_variant_with_tracked(
                 shop=shop,
@@ -854,7 +907,6 @@ async def create_shopify_product(
                 sku=asin_value,
             )
 
-        # Inventory
         if inventory_item_id:
             stock_qty = product_data.get("stock_quantity", 0)
             if stock_qty == 0 and is_available:
