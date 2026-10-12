@@ -148,7 +148,7 @@ function Footer() {
         <div className="border-t border-gray-600 mt-10 pt-8">
           <div className="flex flex-col sm:flex-row items-center justify-center gap-6">
             {/* Logo */}
-            <Link to="/" className="flex items-center gap-2">
+            <Link to="/admin/dashboard" className="flex items-center gap-2">
               <span className="text-3xl">🛒</span>
               <div className="leading-tight">
                 <span className="text-xl font-bold">Amazon</span>

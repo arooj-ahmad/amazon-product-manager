@@ -215,12 +215,6 @@ function Dashboard() {
                 )}
               </p>
             </div>
-            <Link
-              to="/"
-              className="inline-flex items-center gap-2 bg-white/10 hover:bg-white/20 px-4 py-2 rounded text-sm font-medium transition-colors self-start sm:self-auto"
-            >
-              🏠 View Store
-            </Link>
           </div>
         </div>
       </div>

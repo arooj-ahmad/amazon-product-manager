@@ -6,6 +6,7 @@
 # + ✅ FIXED: exchange_code_for_token dict return karta hai
 # + ✅ FIXED: /callback bhi expiring token handle kare
 # + ✅ NAYA: categories + tags Shopify pe push
+# + ✅ NAYA: Smart markup cap (max $50 fixed, max 500% percent)
 # ============================================
 
 import logging
@@ -49,7 +50,7 @@ router = APIRouter(prefix="/api/shopify", tags=["Shopify"])
 
 
 # ============================================
-# ✅ HELPER: VARIATION TITLE NIKALO
+# HELPER: VARIATION TITLE NIKALO
 # ============================================
 def extract_variation_info(data: dict) -> tuple:
     attrs = data.get("variant_attributes") or []
@@ -88,6 +89,43 @@ def extract_variation_info(data: dict) -> tuple:
 
 
 # ============================================
+# ✅ NAYA HELPER: SMART MARKUP CAP
+# ============================================
+def apply_markup_cap(markup: float, markup_type: str) -> float:
+    """
+    Markup ko safe limits mein cap karo.
+    
+    Fixed: max $50, min $0
+    Percent: max 500%, min 0%
+    """
+    try:
+        markup = float(markup)
+    except (ValueError, TypeError):
+        return 2.0
+    
+    if markup < 0:
+        markup = 0.0
+    
+    if markup_type == "fixed":
+        if markup > 50:
+            logger.warning(
+                f"⚠️ Fixed markup ${markup} too high, capping at $50"
+            )
+            markup = 50.0
+    elif markup_type == "percent":
+        if markup > 500:
+            logger.warning(
+                f"⚠️ Percent markup {markup}% too high, capping at 500%"
+            )
+            markup = 500.0
+    else:
+        # Unknown type — default to fixed, cap at $50
+        markup = min(markup, 50.0)
+    
+    return markup
+
+
+# ============================================
 # INSTALL
 # ============================================
 @router.get("/install")
@@ -104,7 +142,6 @@ def shopify_install(
 
 # ============================================
 # CALLBACK (OAuth)
-# ✅ FIXED: expiring token handle karo
 # ============================================
 @router.get("/callback")
 async def shopify_callback(
@@ -144,7 +181,6 @@ async def shopify_callback(
 
     access_token = token_data["access_token"]
 
-    # ✅ Expiring token — expiry calculate karo
     now = datetime.now(timezone.utc)
     expires_in = token_data.get("expires_in")
     refresh_expires_in = token_data.get("refresh_token_expires_in")
@@ -233,7 +269,7 @@ def list_installed_stores(db: Session = Depends(get_db)):
 
 
 # ============================================
-# ✅ SHOP DOMAIN SE STORE ID NIKALO
+# SHOP DOMAIN SE STORE ID NIKALO
 # ============================================
 @router.get("/store-id")
 def get_store_id_by_domain(
@@ -258,7 +294,6 @@ def get_store_id_by_domain(
 
 # ============================================
 # PUSH PRODUCT TO SHOPIFY (Admin Panel Se)
-# ✅ NAYA: categories + tags bhi push
 # ============================================
 @router.post("/push-product/{product_id}")
 async def push_product_to_shopify(
@@ -343,7 +378,6 @@ async def push_product_to_shopify(
                 "variant_added": True,
             }
 
-    # ✅ NAYA: categories + tags bhi pass karo
     product_data = {
         "title": product.title,
         "description": product.description or "",
@@ -365,7 +399,6 @@ async def push_product_to_shopify(
         "asin": product.asin,
         "parent_asin": product.parent_asin,
         "variant_attributes": product.variant_attributes or [],
-        # ✅ NAYA
         "categories": product.categories or [],
         "tags": product.tags or [],
     }
@@ -418,6 +451,7 @@ async def push_product_to_shopify(
 # ADD PRODUCT FROM SHOPIFY APP (Iframe Se)
 # ✅ FIXED: refresh_store_token HAR BAAR + expiring token
 # ✅ NAYA: categories + tags bhi push
+# ✅ NAYA: Smart markup cap
 # ============================================
 @router.post("/app/add-product")
 async def add_product_from_shopify_app(
@@ -470,7 +504,6 @@ async def add_product_from_shopify_app(
             logger.error(f"❌ refresh_store_token: token_data empty for {shop_domain}")
             return False
 
-        # ✅ Expiring token — expiry calculate karo
         now = datetime.now(timezone.utc)
         expires_in = token_data.get("expires_in")
         refresh_expires_in = token_data.get("refresh_token_expires_in")
@@ -554,9 +587,18 @@ async def add_product_from_shopify_app(
             .first()
         )
 
+    # ✅ SMART MARKUP — cap lagao
     user_markup = float(markup) if markup is not None else 2.0
     user_markup_type = (
         markup_type if markup_type in ("fixed", "percent") else "fixed"
+    )
+
+    # ✅ Markup cap karo
+    user_markup = apply_markup_cap(user_markup, user_markup_type)
+
+    logger.info(
+        f"💰 Markup: {user_markup} ({user_markup_type}) "
+        f"— Amazon ${data['amazon_price']}"
     )
 
     final_price = calculate_final_price(
@@ -564,6 +606,8 @@ async def add_product_from_shopify_app(
         markup=user_markup,
         markup_type=user_markup_type,
     )
+
+    logger.info(f"💰 Final price: ${final_price}")
 
     # ✅ NAYA: categories + tags bhi save karo
     new_product = Product(
@@ -587,7 +631,6 @@ async def add_product_from_shopify_app(
         markup_type=user_markup_type,
         is_manual_override=False,
         variant_attributes=data.get("variant_attributes", []),
-        # ✅ NAYA
         categories=data.get("categories", []),
         tags=data.get("tags", []),
         shopify_store_id=store.id,
@@ -649,7 +692,6 @@ async def add_product_from_shopify_app(
                 logger.info("🆕 Creating new product")
                 option_name, variant_title = extract_variation_info(data)
 
-                # ✅ NAYA: categories + tags pass karo
                 _result = await create_shopify_product(
                     shop=shop_domain,
                     access_token=store.access_token,
@@ -674,7 +716,6 @@ async def add_product_from_shopify_app(
                         "asin": new_product.asin,
                         "parent_asin": new_product.parent_asin,
                         "variant_attributes": new_product.variant_attributes or [],
-                        # ✅ NAYA
                         "categories": new_product.categories or [],
                         "tags": new_product.tags or [],
                     },
@@ -684,7 +725,7 @@ async def add_product_from_shopify_app(
                     _pushed = True
                     _pid = (
                         _result.get("data", {})
-                        .get("productCreate", {})
+                        .get("productSet", {})   # ✅ FIXED: productSet
                         .get("product", {})
                         .get("id")
                     )
@@ -692,7 +733,7 @@ async def add_product_from_shopify_app(
                         new_product.shopify_product_id = _pid
                         new_product.shopify_handle = (
                             _result.get("data", {})
-                            .get("productCreate", {})
+                            .get("productSet", {})
                             .get("product", {})
                             .get("handle")
                         )

@@ -35,7 +35,7 @@ function Login() {
       <div className="max-w-md mx-auto">
         {/* Amazon Logo */}
         <div className="text-center mb-6">
-          <Link to="/" className="inline-flex items-center gap-2">
+          <Link to="/admin/login" className="inline-flex items-center gap-2">
             <span className="text-4xl">🛒</span>
             <div className="leading-tight text-left">
               <span className="text-2xl font-bold text-white">Amazon</span>
@@ -101,16 +101,6 @@ function Login() {
               {isSubmitting ? 'Signing in...' : 'Sign In'}
             </button>
           </form>
-
-          {/* Divider */}
-          <div className="mt-6 border-t border-gray-200 pt-4">
-            <Link
-              to="/"
-              className="text-sm text-[#007185] hover:text-[#c7511f] hover:underline"
-            >
-              ← Back to store
-            </Link>
-          </div>
         </div>
 
         {/* Footer note */}

@@ -3,13 +3,12 @@
 // Final routes — user + admin + Footer
 // ============================================
 
-import { BrowserRouter, Routes, Route, useLocation } from 'react-router-dom'
+import { BrowserRouter, Routes, Route, useLocation, Navigate, Link } from 'react-router-dom'
 import Navbar from './components/Navbar'
 import Footer from './components/Footer'
 import ProtectedRoute from './components/ProtectedRoute'
 
 // User pages
-import Home from './pages/Home'
 import ProductDetail from './pages/ProductDetail'
 
 // Admin pages
@@ -23,7 +22,7 @@ import MarkupSettings from './pages/MarkupSettings'
 import PrivacyPolicy from './pages/PrivacyPolicy'
 import TermsOfService from './pages/TermsOfService'
 
-// ✅ NAYA — Layout wrapper jo decide kare Navbar/Footer dikhaye ya nahi
+// ✅ Layout wrapper jo decide kare Navbar/Footer dikhaye ya nahi
 function Layout({ children }) {
   const location = useLocation()
 
@@ -54,7 +53,7 @@ function App() {
       <Layout>
         <Routes>
           {/* USER ROUTES */}
-          <Route path="/" element={<Home />} />
+          <Route path="/" element={<Navigate to="/admin/dashboard" replace />} />
 
           {/* MARKUP SETTINGS — full screen */}
           <Route path="/markup-settings" element={<MarkupSettings />} />
@@ -106,12 +105,12 @@ function App() {
                   <p className="text-gray-600 mb-6">
                     Jo page aap dhundh rahe hain woh exist nahi karta.
                   </p>
-                  <a
-                    href="/"
+                  <Link
+                    to="/admin/dashboard"
                     className="inline-block bg-[#ff9900] hover:bg-[#e88b00] text-[#0f1111] font-medium px-6 py-3 rounded-lg transition-colors"
                   >
-                    ← Back to Home
-                  </a>
+                    ← Back to Dashboard
+                  </Link>
                 </div>
               </div>
             }
