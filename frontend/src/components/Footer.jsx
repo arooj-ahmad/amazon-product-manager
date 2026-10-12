@@ -114,8 +114,8 @@ function Footer() {
             <h3 className="text-base font-bold mb-4">Let Us Help You</h3>
             <ul className="space-y-2 text-sm text-gray-300">
               <li>
-                <Link to="/admin/login" className="hover:underline hover:text-white transition-colors">
-                  Your Account
+                <Link to="/shopify-app" className="hover:underline hover:text-white transition-colors">
+                  App Home
                 </Link>
               </li>
               <li>
@@ -148,7 +148,7 @@ function Footer() {
         <div className="border-t border-gray-600 mt-10 pt-8">
           <div className="flex flex-col sm:flex-row items-center justify-center gap-6">
             {/* Logo */}
-            <Link to="/admin/dashboard" className="flex items-center gap-2">
+            <Link to="/shopify-app" className="flex items-center gap-2">
               <span className="text-3xl">🛒</span>
               <div className="leading-tight">
                 <span className="text-xl font-bold">Amazon</span>

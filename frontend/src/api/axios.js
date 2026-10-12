@@ -46,12 +46,6 @@ api.interceptors.request.use(
 api.interceptors.response.use(
   (response) => response,
   (error) => {
-    if (error.response?.status === 401) {
-      localStorage.removeItem('admin_token')
-      if (window.location.pathname.startsWith('/admin')) {
-        window.location.href = '/admin/login'
-      }
-    }
     return Promise.reject(error)
   }
 )

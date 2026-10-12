@@ -55,15 +55,6 @@ export const adminFetchProduct = async (amazonUrl) => {
   return response.data
 }
 
-export const adminUpdateProduct = async (id, updates) => {
-  const response = await api.put(`/api/admin/products/${id}`, updates)
-  return response.data
-}
-
-export const adminDeleteProduct = async (id) => {
-  const response = await api.delete(`/api/admin/products/${id}`)
-  return response.data
-}
 
 
 // ============================================

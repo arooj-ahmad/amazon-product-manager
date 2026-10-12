@@ -6,15 +6,9 @@
 import { BrowserRouter, Routes, Route, useLocation, Navigate, Link } from 'react-router-dom'
 import Navbar from './components/Navbar'
 import Footer from './components/Footer'
-import ProtectedRoute from './components/ProtectedRoute'
 
 // User pages
 import ProductDetail from './pages/ProductDetail'
-
-// Admin pages
-import Login from './pages/admin/Login'
-import Dashboard from './pages/admin/Dashboard'
-import ProductEdit from './pages/admin/ProductEdit'
 
 import ShopifyApp from './pages/ShopifyApp'
 import MarkupSettings from './pages/MarkupSettings'
@@ -53,7 +47,7 @@ function App() {
       <Layout>
         <Routes>
           {/* USER ROUTES */}
-          <Route path="/" element={<Navigate to="/admin/dashboard" replace />} />
+          <Route path="/" element={<Navigate to="/shopify-app" replace />} />
 
           {/* MARKUP SETTINGS — full screen */}
           <Route path="/markup-settings" element={<MarkupSettings />} />
@@ -64,30 +58,12 @@ function App() {
           {/* Product by ID (fallback) */}
           <Route path="/product/id/:id" element={<ProductDetail />} />
 
-          {/* ADMIN ROUTES */}
-          <Route path="/admin/login" element={<Login />} />
+          {/* APP ROUTES */}
           <Route path="/shopify-app" element={<ShopifyApp />} />
-
-          <Route
-            path="/admin/dashboard"
-            element={
-              <ProtectedRoute>
-                <Dashboard />
-              </ProtectedRoute>
-            }
-          />
+          <Route path="/admin/dashboard" element={<Navigate to="/shopify-app" replace />} />
 
           <Route path="/shopify-app/privacy" element={<PrivacyPolicy />} />
-<Route path="/shopify-app/terms" element={<TermsOfService />} />
-
-          <Route
-            path="/admin/edit/:id"
-            element={
-              <ProtectedRoute>
-                <ProductEdit />
-              </ProtectedRoute>
-            }
-          />
+          <Route path="/shopify-app/terms" element={<TermsOfService />} />
 
           <Route path="/privacy" element={<PrivacyPolicy />} />
           <Route path="/terms" element={<TermsOfService />} />
@@ -106,10 +82,10 @@ function App() {
                     Jo page aap dhundh rahe hain woh exist nahi karta.
                   </p>
                   <Link
-                    to="/admin/dashboard"
+                    to="/shopify-app"
                     className="inline-block bg-[#ff9900] hover:bg-[#e88b00] text-[#0f1111] font-medium px-6 py-3 rounded-lg transition-colors"
                   >
-                    ← Back to Dashboard
+                    ← Back to App
                   </Link>
                 </div>
               </div>

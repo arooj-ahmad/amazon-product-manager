@@ -123,10 +123,10 @@ function ProductDetail() {
           {error || 'Product not found'}
         </h2>
         <Link
-          to="/admin/dashboard"
+          to="/shopify-app"
           className="inline-block bg-[#ff9900] hover:bg-[#e88b00] text-[#0f1111] font-medium px-6 py-3 rounded-lg transition-colors"
         >
-          ← Back to Dashboard
+          ← Back to App
         </Link>
       </div>
     )
@@ -153,8 +153,8 @@ function ProductDetail() {
       {/* Breadcrumbs */}
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-3">
         <nav className="flex items-center gap-2 text-xs text-gray-600">
-          <Link to="/admin/dashboard" className="hover:text-[#c7511f] hover:underline">
-            Dashboard
+          <Link to="/shopify-app" className="hover:text-[#c7511f] hover:underline">
+            App
           </Link>
           <span>›</span>
           {product.brand && (
