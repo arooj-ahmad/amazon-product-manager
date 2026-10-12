@@ -9,6 +9,7 @@
 # + ✅ NAYA: Smart markup cap (max $50 fixed, max 500% percent)
 # + ✅ NAYA: Multiple variants support (Color + Size)
 # + ✅ NAYA: App uninstalled cleanup (subscription_staus)
+# + ✅ NAYA: All standard metafields passed to shopify_product
 # ============================================
 
 import logging
@@ -50,6 +51,96 @@ from app.services.shopify import (
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/shopify", tags=["Shopify"])
+
+
+# ============================================
+# ✅ NAYA HELPER: Build product_data with metafields
+# ============================================
+def _build_product_data_for_shopify(data: dict, product=None) -> dict:
+    """
+    Bright Data data + product data → Shopify product_data.
+    Saare standard metafields fields pass karo.
+    """
+    # Base data — from `data` (Bright Data response)
+    if product:
+        base = {
+            "title": product.title,
+            "description": product.description or "",
+            "brand": product.brand or "",
+            "images": product.images or (
+                [product.image_url] if product.image_url else []
+            ),
+            "price": str(product.price) if product.price else "0.00",
+            "stock_quantity": product.stock_quantity or 0,
+            "is_available": (
+                product.is_available
+                if product.is_available is not None
+                else True
+            ),
+            "availability": product.availability or "In Stock",
+            "rating": product.rating,
+            "reviews_count": product.reviews_count,
+            "amazon_price": product.amazon_price,
+            "asin": product.asin,
+            "parent_asin": product.parent_asin,
+            "variant_attributes": product.variant_attributes or [],
+            "categories": product.categories or [],
+            "tags": product.tags or [],
+            # Standard fields — DB se
+            "manufacturer": None,  # DB mein nahi hai
+            "department": None,
+            "country_of_origin": None,
+        }
+    else:
+        # Base — from Bright Data `data`
+        base = {
+            "title": data.get("title"),
+            "description": data.get("description") or "",
+            "brand": data.get("brand") or "",
+            "images": data.get("images") or (
+                [data["image_url"]] if data.get("image_url") else []
+            ),
+            "price": str(data.get("price", 0) or 0),
+            "stock_quantity": data.get("stock_quantity", 0) or 0,
+            "is_available": data.get("is_available", True),
+            "availability": data.get("availability", "In Stock"),
+            "rating": data.get("rating"),
+            "reviews_count": data.get("reviews_count"),
+            "amazon_price": data.get("amazon_price"),
+            "asin": data.get("asin"),
+            "parent_asin": data.get("parent_asin"),
+            "variant_attributes": data.get("variant_attributes", []),
+            "categories": data.get("categories", []),
+            "tags": data.get("tags", []),
+        }
+
+    # ✅ Standard metafields fields — from Bright Data `data`
+    standard_fields = [
+        "model_number", "item_model_number", "model_name",
+        "part_number", "upc", "ean", "isbn",
+        "manufacturer", "department", "country_of_origin",
+        "item_dimensions", "item_weight", "package_dimensions",
+        "size", "color", "material_type", "style_name", "theme",
+        "date_first_available", "best_sellers_rank",
+        "language", "reading_age", "unit_count", "number_of_pieces",
+        "care_instructions", "closure_type", "fabric_type",
+        "number_of_players", "educational_objective",
+        "power_source", "battery_types", "operation_mode",
+        "specific_uses", "special_features",
+        "connectivity", "processor", "ram_technology", "memory",
+        "screen_size", "resolution", "operating_system",
+        "hard_disk", "graphics_coprocessor", "warranty",
+    ]
+
+    for field in standard_fields:
+        val = data.get(field) if not product else None
+        if val is not None and str(val).strip() and str(val).strip() != "None":
+            base[field] = str(val).strip()
+
+    # ✅ Raw product_details — auto-mapping ke liye
+    base["product_details"] = data.get("product_details") or []
+
+    return base
 
 
 # ============================================
@@ -410,24 +501,10 @@ async def push_product_to_shopify(
                 "variant_added": True,
             }
 
-    product_data = {
-        "title": product.title,
-        "description": product.description or "",
-        "brand": product.brand or "",
-        "images": product.images or ([product.image_url] if product.image_url else []),
-        "price": str(product.price) if product.price else "0.00",
-        "stock_quantity": product.stock_quantity or 0,
-        "is_available": product.is_available if product.is_available is not None else True,
-        "availability": product.availability or "In Stock",
-        "rating": product.rating,
-        "reviews_count": product.reviews_count,
-        "amazon_price": product.amazon_price,
-        "asin": product.asin,
-        "parent_asin": product.parent_asin,
-        "variant_attributes": product.variant_attributes or [],
-        "categories": product.categories or [],
-        "tags": product.tags or [],
-    }
+    # ✅ Build product_data with all metafields
+    product_data = _build_product_data_for_shopify(
+        data={}, product=product
+    )
 
     result = await create_shopify_product(
         shop=store.shop_domain,
@@ -670,33 +747,15 @@ async def add_product_from_shopify_app(
             else:
                 logger.info("🆕 Creating new product")
 
+                # ✅ Build product_data with all metafields
+                product_data = _build_product_data_for_shopify(
+                    data=data, product=None
+                )
+
                 _result = await create_shopify_product(
                     shop=shop_domain,
                     access_token=store.access_token,
-                    product_data={
-                        "title": new_product.title,
-                        "description": new_product.description or "",
-                        "brand": new_product.brand or "",
-                        "images": new_product.images or (
-                            [new_product.image_url] if new_product.image_url else []
-                        ),
-                        "price": str(new_product.price),
-                        "stock_quantity": new_product.stock_quantity or 0,
-                        "is_available": (
-                            new_product.is_available
-                            if new_product.is_available is not None
-                            else True
-                        ),
-                        "availability": new_product.availability or "In Stock",
-                        "rating": new_product.rating,
-                        "reviews_count": new_product.reviews_count,
-                        "amazon_price": new_product.amazon_price,
-                        "asin": new_product.asin,
-                        "parent_asin": new_product.parent_asin,
-                        "variant_attributes": new_product.variant_attributes or [],
-                        "categories": new_product.categories or [],
-                        "tags": new_product.tags or [],
-                    },
+                    product_data=product_data,
                 )
 
                 if "errors" not in _result:

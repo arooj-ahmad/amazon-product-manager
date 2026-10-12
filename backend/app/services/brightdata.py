@@ -8,6 +8,7 @@
 # + Variations + Variant Attributes (for Shopify grouping)
 # + ✅ NAYA: Availability check with fallback
 # + ✅ NAYA: Categories (Collections) + Tags (Features/Specs)
+# + ✅ NAYA: Standard metafields fields (model, dimensions, etc.)
 # ============================================
 
 import logging
@@ -32,9 +33,7 @@ class BrightDataError(Exception):
 # AMAZON URL SE ASIN NIKALEIN
 # ============================================
 def extract_asin_from_url(url: str) -> Optional[str]:
-    """
-    Amazon URL se ASIN nikalta hai.
-    """
+    """Amazon URL se ASIN nikalta hai."""
     import re
 
     patterns = [
@@ -56,10 +55,7 @@ def extract_asin_from_url(url: str) -> Optional[str]:
 # PRICE PARSE HELPER
 # ============================================
 def parse_price(value) -> Optional[float]:
-    """
-    Price ko float mein parse karta hai.
-    "$49.99", "49.99", "1,299.00" sab handle karega.
-    """
+    """Price ko float mein parse karta hai."""
     if value is None:
         return None
     try:
@@ -77,10 +73,7 @@ def parse_price(value) -> Optional[float]:
 # PARENT ASIN VALIDATION
 # ============================================
 def validate_parent_asin(parent_asin, asin: str) -> Optional[str]:
-    """
-    Parent ASIN validate karta hai.
-    Returns valid parent_asin ya None.
-    """
+    """Parent ASIN validate karta hai."""
     if not parent_asin or parent_asin == "None" or parent_asin == "":
         return None
 
@@ -109,29 +102,22 @@ def validate_parent_asin(parent_asin, asin: str) -> Optional[str]:
 
 
 # ============================================
-# ✅ NAYA HELPER: AVAILABILITY CHECK
+# AVAILABILITY CHECK
 # ============================================
 def check_availability(raw: dict) -> tuple[bool, str, str]:
-    """
-    Availability check karta hai multiple fields se.
-    Returns: (is_available, availability_text, source)
-    """
-    # ── Priority 1: add_to_cart_available (bool) ──
+    """Availability check karta hai multiple fields se."""
     add_to_cart = raw.get("add_to_cart_available")
     if isinstance(add_to_cart, bool):
         return add_to_cart, "In Stock" if add_to_cart else "Out of Stock", "add_to_cart_available"
 
-    # ── Priority 2: buybox_available (bool) ──
     buybox = raw.get("buybox_available")
     if isinstance(buybox, bool):
         return buybox, "In Stock" if buybox else "Out of Stock", "buybox_available"
 
-    # ── Priority 3: in_stock (bool) ──
     in_stock = raw.get("in_stock")
     if isinstance(in_stock, bool):
         return in_stock, "In Stock" if in_stock else "Out of Stock", "in_stock"
 
-    # ── Priority 4: availability text ──
     availability_text = (
         raw.get("availability")
         or raw.get("availabilityText")
@@ -145,55 +131,34 @@ def check_availability(raw: dict) -> tuple[bool, str, str]:
         avail_lower = availability_text.lower().strip()
 
         out_of_stock_keywords = [
-            "out of stock",
-            "unavailable",
-            "currently unavailable",
-            "not available",
-            "sold out",
-            "temporarily out",
-            "no disponible",
-            "temporarily unavailable",
-            "back order",
-            "backorder",
+            "out of stock", "unavailable", "currently unavailable",
+            "not available", "sold out", "temporarily out",
+            "no disponible", "temporarily unavailable",
+            "back order", "backorder",
         ]
 
         in_stock_keywords = [
-            "in stock",
-            "only",
-            "usually ships",
-            "ships within",
-            "available",
-            "in stock soon",
-            "add to cart",
+            "in stock", "only", "usually ships", "ships within",
+            "available", "in stock soon", "add to cart",
         ]
 
         if any(kw in avail_lower for kw in out_of_stock_keywords):
             return False, availability_text, "availability_text (out)"
-
         elif any(kw in avail_lower for kw in in_stock_keywords):
             return True, availability_text, "availability_text (in)"
-
         else:
             return True, availability_text, "availability_text (unknown)"
 
-    # ── Priority 5: Default — AVAILABLE ──
     return True, "In Stock", "default"
 
 
 # ============================================
-# ✅ NAYA HELPER: CATEGORIES PARSE
+# CATEGORIES PARSE
 # ============================================
 def parse_categories(raw: dict) -> list[str]:
-    """
-    Amazon response se categories (collections) nikalta hai.
-    Multiple sources try karta hai:
-      1. category_tree (best — hierarchy)
-      2. categories (list)
-      3. root_bs_category + bs_category (fallback)
-    """
+    """Amazon response se categories nikalta hai."""
     categories: list[str] = []
 
-    # ── Source 1: category_tree (hierarchy) ──
     category_tree = raw.get("category_tree") or []
     if isinstance(category_tree, list):
         for cat in category_tree:
@@ -204,7 +169,6 @@ def parse_categories(raw: dict) -> list[str]:
             elif isinstance(cat, str):
                 categories.append(cat.strip())
 
-    # ── Source 2: categories list ──
     if not categories:
         raw_cats = raw.get("categories") or []
         if isinstance(raw_cats, list):
@@ -214,7 +178,6 @@ def parse_categories(raw: dict) -> list[str]:
                 elif isinstance(c, dict) and c.get("name"):
                     categories.append(c["name"].strip())
 
-    # ── Source 3: root_bs_category + bs_category (fallback) ──
     if not categories:
         root = raw.get("root_bs_category")
         sub = raw.get("bs_category")
@@ -223,7 +186,6 @@ def parse_categories(raw: dict) -> list[str]:
         if sub and isinstance(sub, str) and sub != root:
             categories.append(sub.strip())
 
-    # Clean + deduplicate
     categories = [
         c for c in dict.fromkeys(categories)
         if c and len(c) < 100
@@ -234,16 +196,139 @@ def parse_categories(raw: dict) -> list[str]:
 
 
 # ============================================
-# ✅ NAYA HELPER: TAGS PARSE
+# ✅ NAYA HELPER: STANDARD METAFIELDS FIELDS
+# ============================================
+def parse_standard_fields(raw: dict) -> dict:
+    """
+    Amazon response se saare standard metafield fields nikalta hai.
+    Yeh fields HAR product mein hote hain (95%+).
+    """
+    fields = {}
+
+    # ── Identification ──
+    fields["model_number"] = raw.get("model_number")
+    fields["manufacturer"] = raw.get("manufacturer")
+    fields["part_number"] = raw.get("part_number")
+
+    # ── Department / Category ──
+    fields["department"] = raw.get("department")
+    fields["country_of_origin"] = raw.get("country_of_origin")
+    fields["date_first_available"] = raw.get("date_first_available")
+
+    # ── Product Details se specific fields ──
+    product_details = raw.get("product_details") or []
+    if isinstance(product_details, list):
+        for item in product_details:
+            if not isinstance(item, dict):
+                continue
+            field_type = (item.get("type") or "").strip().lower()
+            field_value = item.get("value")
+            if not field_value:
+                continue
+
+            value_str = str(field_value).strip()
+
+            # Map Amazon field types to our keys
+            if field_type in ("item dimensions", "item dimensions l x w x h", "product dimensions"):
+                fields["item_dimensions"] = value_str
+            elif field_type in ("item weight", "item weight", "shipping weight"):
+                fields["item_weight"] = value_str
+            elif field_type == "package dimensions":
+                fields["package_dimensions"] = value_str
+            elif field_type in ("material", "material type", "fabric type"):
+                fields["material_type"] = value_str
+            elif field_type == "color":
+                fields["color"] = value_str
+            elif field_type == "size":
+                fields["size"] = value_str
+            elif field_type == "theme":
+                fields["theme"] = value_str
+            elif field_type == "power source":
+                fields["power_source"] = value_str
+            elif field_type in ("battery type", "supported battery types", "batteries required"):
+                fields["battery_types"] = value_str
+            elif field_type == "operation mode":
+                fields["operation_mode"] = value_str
+            elif field_type in ("number of players", "players"):
+                fields["number_of_players"] = value_str
+            elif field_type == "educational objective":
+                fields["educational_objective"] = value_str
+            elif field_type in ("warranty description", "warranty"):
+                fields["warranty"] = value_str
+            elif field_type == "best sellers rank":
+                fields["best_sellers_rank"] = value_str
+            elif field_type == "isbn-13":
+                fields["isbn"] = value_str
+            elif field_type == "language":
+                fields["language"] = value_str
+            elif field_type in ("reading age", "manufacturer recommended age"):
+                fields["reading_age"] = value_str
+            elif field_type == "number of pieces":
+                fields["number_of_pieces"] = value_str
+            elif field_type in ("unit count", "item package quantity"):
+                fields["unit_count"] = value_str
+            elif field_type in ("style name", "style"):
+                fields["style_name"] = value_str
+            elif field_type == "specific uses for product":
+                fields["specific_uses"] = value_str
+            elif field_type == "special feature":
+                fields["special_features"] = value_str
+            elif field_type in ("hardware interface", "connectivity technology"):
+                fields["connectivity"] = value_str
+            elif field_type in ("processor brand", "processor type"):
+                fields["processor"] = value_str
+            elif field_type in ("ram memory technology", "memory technology"):
+                fields["ram_technology"] = value_str
+            elif field_type in ("memory storage capacity", "ram memory installed size"):
+                fields["memory"] = value_str
+            elif field_type in ("screen size", "display size"):
+                fields["screen_size"] = value_str
+            elif field_type == "resolution":
+                fields["resolution"] = value_str
+            elif field_type in ("operating system", "os"):
+                fields["operating_system"] = value_str
+            elif field_type in ("hard disk description", "hard drive"):
+                fields["hard_disk"] = value_str
+            elif field_type == "graphics coprocessor":
+                fields["graphics_coprocessor"] = value_str
+            elif field_type in ("country of origin", "origin"):
+                fields["country_of_origin"] = value_str
+            elif field_type == "department":
+                fields["department"] = value_str
+            elif field_type == "brand":
+                fields["brand"] = value_str
+            elif field_type == "care instructions":
+                fields["care_instructions"] = value_str
+            elif field_type == "closure type":
+                fields["closure_type"] = value_str
+            elif field_type == "fabric type":
+                fields["fabric_type"] = value_str
+            elif field_type == "item model number":
+                fields["item_model_number"] = value_str
+            elif field_type == "model name":
+                fields["model_name"] = value_str
+            elif field_type == "upc":
+                fields["upc"] = value_str
+            elif field_type == "ean":
+                fields["ean"] = value_str
+
+    # Clean — remove None / empty / "None"
+    fields = {
+        k: v for k, v in fields.items()
+        if v is not None and str(v).strip() and str(v).strip() != "None"
+    }
+
+    logger.info(f"✅ Parsed standard fields: {list(fields.keys())}")
+    return fields
+
+
+# ============================================
+# TAGS PARSE
 # ============================================
 def parse_tags(raw: dict, categories: list[str]) -> list[str]:
-    """
-    Amazon response se tags (features, specs, details) nikalta hai.
-    Shopify tags ke liye — automated collections ke liye bhi use hoga.
-    """
+    """Amazon response se tags nikalta hai."""
     tags: list[str] = []
 
-    # ── 1. Features (short one-liners) ──
     features = raw.get("features") or []
     if isinstance(features, list):
         for f in features:
@@ -252,7 +337,6 @@ def parse_tags(raw: dict, categories: list[str]) -> list[str]:
                 if 3 < len(clean) < 80:
                     tags.append(clean)
 
-    # ── 2. Product Details (key: value) ──
     product_details = raw.get("product_details") or []
     if isinstance(product_details, list):
         for item in product_details:
@@ -271,7 +355,6 @@ def parse_tags(raw: dict, categories: list[str]) -> list[str]:
             if 0 < len(val_str) < 80:
                 tags.append(f"{key}: {val_str}")
 
-    # ── 3. Additional metadata ──
     for field, label in [
         ("department", "Department"),
         ("country_of_origin", "Country"),
@@ -282,17 +365,14 @@ def parse_tags(raw: dict, categories: list[str]) -> list[str]:
         if val and isinstance(val, str) and len(val) < 50:
             tags.append(f"{label}: {val.strip()}")
 
-    # ── 4. Category names ko bhi tags mein daalo ──
-    # Shopify automated collections category name se match karein
     for cat in categories:
         if cat and cat not in tags and len(cat) < 50:
             tags.append(cat)
 
-    # Clean + deduplicate + limit
     tags = [
         t for t in dict.fromkeys(tags)
         if t and len(t) < 100
-    ][:20]  # Max 20 tags
+    ][:20]
 
     logger.info(f"✅ Parsed tags ({len(tags)}): {tags}")
     return tags
@@ -302,9 +382,7 @@ def parse_tags(raw: dict, categories: list[str]) -> list[str]:
 # BRIGHT DATA API CALL
 # ============================================
 async def fetch_product_from_brightdata(amazon_url: str) -> dict:
-    """
-    Bright Data API se product data fetch karta hai.
-    """
+    """Bright Data API se product data fetch karta hai."""
     api_url = (
         f"{settings.BRIGHT_DATA_API_URL}"
         f"?dataset_id={settings.BRIGHT_DATA_DATASET_ID}"
@@ -354,9 +432,7 @@ async def fetch_product_from_brightdata(amazon_url: str) -> dict:
         logger.error(f"Bright Data error in response: {raw['error']}")
         raise BrightDataError(f"Bright Data error: {raw['error']}")
 
-    # ========================================
-    # ✅ DEBUG LOGS — Yeh zaroor dekho
-    # ========================================
+    # DEBUG LOGS
     logger.info("=" * 60)
     logger.info("=== BRIGHT DATA RAW RESPONSE ===")
     logger.info(f"ALL KEYS: {list(raw.keys())}")
@@ -365,22 +441,16 @@ async def fetch_product_from_brightdata(amazon_url: str) -> dict:
     logger.info(f"buybox_available: {raw.get('buybox_available')}")
     logger.info(f"in_stock: {raw.get('in_stock')}")
     logger.info(f"availability: {raw.get('availability')}")
-    logger.info(f"availabilityText: {raw.get('availabilityText')}")
-    logger.info(f"availability_text: {raw.get('availability_text')}")
-    logger.info(f"stock_status: {raw.get('stock_status')}")
-    logger.info(f"stockStatus: {raw.get('stockStatus')}")
     logger.info(f"--- PRICE FIELDS ---")
     logger.info(f"final_price: {raw.get('final_price')}")
-    logger.info(f"price: {raw.get('price')}")
     logger.info(f"list_price: {raw.get('list_price')}")
     logger.info(f"--- CATEGORY FIELDS ---")
     logger.info(f"category_tree: {raw.get('category_tree')}")
-    logger.info(f"categories: {raw.get('categories')}")
-    logger.info(f"root_bs_category: {raw.get('root_bs_category')}")
-    logger.info(f"bs_category: {raw.get('bs_category')}")
-    logger.info(f"--- TAG FIELDS ---")
-    logger.info(f"features: {raw.get('features')}")
-    logger.info(f"product_details: {raw.get('product_details')}")
+    logger.info(f"--- STANDARD FIELDS ---")
+    logger.info(f"model_number: {raw.get('model_number')}")
+    logger.info(f"manufacturer: {raw.get('manufacturer')}")
+    logger.info(f"department: {raw.get('department')}")
+    logger.info(f"country_of_origin: {raw.get('country_of_origin')}")
     logger.info("=" * 60)
 
     # Extract fields
@@ -388,24 +458,14 @@ async def fetch_product_from_brightdata(amazon_url: str) -> dict:
     if not asin:
         raise BrightDataError("ASIN nahi mila - na response mein, na URL mein")
 
-    # ========================================
-    # ✅ PARENT ASIN VALIDATION
-    # ========================================
+    # Parent ASIN
     parent_asin_raw = raw.get("parent_asin") or None
     parent_asin = validate_parent_asin(parent_asin_raw, asin)
     is_variation = bool(parent_asin)
 
-    if parent_asin:
-        logger.info(f"✅ Parent ASIN accepted: {parent_asin}")
-    else:
-        logger.info(f"ℹ️ No valid parent ASIN → standalone product")
-
-    # ========================================
-    # ✅ VARIANT ATTRIBUTES
-    # ========================================
+    # Variant attributes
     variant_attrs_raw = raw.get("variant_attributes") or []
     variant_attributes = []
-
     if isinstance(variant_attrs_raw, list):
         for attr in variant_attrs_raw:
             if isinstance(attr, dict):
@@ -417,12 +477,9 @@ async def fetch_product_from_brightdata(amazon_url: str) -> dict:
                         "value": str(value).strip(),
                     })
 
-    # ========================================
-    # ✅ VARIATIONS
-    # ========================================
+    # Variations
     variations_raw = raw.get("variations") or []
     variations = []
-
     if isinstance(variations_raw, list):
         for v in variations_raw:
             if isinstance(v, dict):
@@ -434,9 +491,7 @@ async def fetch_product_from_brightdata(amazon_url: str) -> dict:
                         "value": str(v_value).strip(),
                     })
 
-    # ========================================
-    # ✅ PRICE EXTRACTION
-    # ========================================
+    # Price
     amazon_price_raw = (
         raw.get("final_price")
         or raw.get("price")
@@ -452,9 +507,7 @@ async def fetch_product_from_brightdata(amazon_url: str) -> dict:
     )
     list_price = parse_price(list_price_raw)
 
-    # ========================================
-    # ✅ RATING EXTRACT
-    # ========================================
+    # Rating
     rating_raw = (
         raw.get("rating")
         or raw.get("average_rating")
@@ -479,9 +532,7 @@ async def fetch_product_from_brightdata(amazon_url: str) -> dict:
         except (ValueError, TypeError):
             rating_value = None
 
-    # ========================================
-    # ✅ REVIEWS COUNT EXTRACT
-    # ========================================
+    # Reviews
     reviews_raw = (
         raw.get("reviews_count")
         or raw.get("review_count")
@@ -503,9 +554,7 @@ async def fetch_product_from_brightdata(amazon_url: str) -> dict:
         except (ValueError, TypeError):
             reviews_count = None
 
-    # ========================================
     # Images
-    # ========================================
     images_list = raw.get("images") or []
     if not isinstance(images_list, list):
         images_list = []
@@ -523,18 +572,13 @@ async def fetch_product_from_brightdata(amazon_url: str) -> dict:
     if not main_image and unique_images:
         main_image = unique_images[0]
 
-    # ========================================
-    # ✅ IMPROVED: AVAILABILITY CHECK
-    # ========================================
+    # Availability
     is_available, availability_text, source = check_availability(raw)
     logger.info(
-        f"✅ Availability check: is_available={is_available}, "
-        f"text='{availability_text}', source={source}"
+        f"✅ Availability: is_available={is_available}, text='{availability_text}'"
     )
 
-    # ========================================
-    # Stock quantity
-    # ========================================
+    # Stock
     stock_quantity = raw.get("stock_quantity") or raw.get("stock") or 0
     try:
         stock_quantity = int(stock_quantity) if stock_quantity else 0
@@ -546,11 +590,8 @@ async def fetch_product_from_brightdata(amazon_url: str) -> dict:
     elif stock_quantity == 0:
         stock_quantity = 100
 
-    # ========================================
     # Specifications
-    # ========================================
     specs = {}
-
     product_details = raw.get("product_details") or []
     if isinstance(product_details, list):
         for item in product_details:
@@ -562,15 +603,10 @@ async def fetch_product_from_brightdata(amazon_url: str) -> dict:
                         specs[key] = str(value).strip()
 
     extra_fields = {
-        "Rating": rating_value if rating_value is not None else raw.get("rating"),
-        "Reviews": reviews_count if reviews_count is not None else raw.get("reviews_count"),
+        "Rating": rating_value,
+        "Reviews": reviews_count,
         "Availability": availability_text,
         "Seller": raw.get("seller_name") or raw.get("buybox_seller"),
-        "Category": (
-            raw.get("categories", [None])[-1]
-            if raw.get("categories")
-            else None
-        ),
     }
 
     for key, value in extra_fields.items():
@@ -579,21 +615,16 @@ async def fetch_product_from_brightdata(amazon_url: str) -> dict:
 
     final_availability = str(availability_text) if availability_text else "In Stock"
 
-    # ========================================
-    # ✅ NAYA: CATEGORIES + TAGS PARSE
-    # ========================================
+    # ✅ Categories + Tags + Standard Fields
     categories = parse_categories(raw)
     tags = parse_tags(raw, categories)
+    standard_fields = parse_standard_fields(raw)
 
     logger.info(
         f"Parsed product: ASIN={asin}, ParentASIN={parent_asin}, "
-        f"AmazonPrice=${amazon_price}, ListPrice=${list_price}, "
-        f"Rating={rating_value}, Reviews={reviews_count}, "
-        f"Variations={len(variations)}, VarAttrs={len(variant_attributes)}, "
-        f"Images={len(unique_images)}, Specs={len(specs)}, "
-        f"Categories={len(categories)}, Tags={len(tags)}, "
-        f"Availability='{final_availability}', Available={is_available}, "
-        f"Stock={stock_quantity}"
+        f"AmazonPrice=${amazon_price}, Rating={rating_value}, "
+        f"Reviews={reviews_count}, Categories={len(categories)}, "
+        f"Tags={len(tags)}, StandardFields={len(standard_fields)}"
     )
 
     return {
@@ -615,9 +646,12 @@ async def fetch_product_from_brightdata(amazon_url: str) -> dict:
         "stock_quantity": stock_quantity,
         "variations": variations,
         "variant_attributes": variant_attributes,
-        # ✅ NAYA
         "categories": categories,
         "tags": tags,
+        # ✅ NAYA: Standard metafields
+        **standard_fields,
+        # ✅ Raw product_details — auto-mapping ke liye
+        "product_details": raw.get("product_details") or [],
     }
 
 
@@ -631,9 +665,7 @@ def calculate_final_price(
     admin_price: Optional[float] = None,
     is_manual_override: bool = False,
 ) -> Optional[float]:
-    """
-    Final website price calculate karta hai.
-    """
+    """Final website price calculate karta hai."""
     if amazon_price is None:
         return admin_price
 
@@ -641,7 +673,7 @@ def calculate_final_price(
 
     if markup_type == "percent":
         auto_price = amazon_price * (1 + markup / 100.0)
-    else:  # fixed
+    else:
         auto_price = amazon_price + markup
 
     if is_manual_override and admin_price is not None:

@@ -2,13 +2,14 @@
 # app/services/shopify_product.py
 # Product create (simple + variants), variant add,
 # images, status update, tags update,
-# product delete, SKU search, PUBLISH
+# product delete, SKU search, PUBLISH, METAFIELDS
 # + ✅ UPDATED: Multiple variants support (Color + Size)
 # + ✅ FIXED: ensure_product_has_option sends variants input
 # + ✅ NAYA: SKU (ASIN) always set on variants
 # + ✅ FIXED: variants only when productOptions exist
 # + ✅ NAYA: Metafields in Description HTML (auto-show)
 # + ✅ NAYA: Auto-publish to channels (Online Store, POS)
+# + ✅ NAYA: All standard metafields (model, dimensions, material, etc.)
 # ============================================
 
 import logging
@@ -26,13 +27,188 @@ logger = logging.getLogger(__name__)
 
 
 # ============================================
+# HELPER: Slugify key
+# ============================================
+def _slugify_key(name: str) -> str:
+    """Field name → snake_case key."""
+    return (
+        name.lower()
+        .strip()
+        .replace(" ", "_")
+        .replace("&", "and")
+        .replace("-", "_")
+        .replace("/", "_")
+        .replace("(", "")
+        .replace(")", "")
+        .replace(".", "")
+        .strip("_")
+        [:50]
+    )
+
+
+# ============================================
+# HELPER: Build ALL Metafields (Standard + Product Details)
+# ============================================
+def _build_all_metafields(product_data: dict) -> list:
+    """
+    Amazon product data se SAARE standard metafields build karo.
+    Yeh 24+ fields try karega — jo product_data mein hain.
+    """
+    metafields = []
+    seen_keys = set()
+
+    def _add(key: str, value, mf_type: str = "single_line_text_field"):
+        """Helper — add metafield if not empty and not duplicate."""
+        if key in seen_keys:
+            return
+        if value is None:
+            return
+        val_str = str(value).strip()
+        if not val_str or val_str == "None":
+            return
+        if len(val_str) > 5000:
+            val_str = val_str[:5000]
+        metafields.append({
+            "namespace": "custom",
+            "key": key,
+            "value": val_str,
+            "type": mf_type,
+        })
+        seen_keys.add(key)
+
+    # ═══════════════════════════════════════════
+    # 1. CORE FIELDS (HAR PRODUCT MEIN)
+    # ═══════════════════════════════════════════
+    _add("asin", product_data.get("asin"))
+    _add("brand", product_data.get("brand"))
+    _add("manufacturer", product_data.get("manufacturer"))
+
+    rating = product_data.get("rating")
+    if rating is not None:
+        try:
+            _add("rating", str(float(rating)), "number_decimal")
+        except (ValueError, TypeError):
+            pass
+
+    reviews = product_data.get("reviews_count")
+    if reviews is not None:
+        try:
+            _add("reviews_count", str(int(reviews)), "number_integer")
+        except (ValueError, TypeError):
+            pass
+
+    amazon_price = product_data.get("amazon_price")
+    if amazon_price is not None:
+        try:
+            _add("amazon_price", str(float(amazon_price)), "number_decimal")
+        except (ValueError, TypeError):
+            pass
+
+    _add("availability", product_data.get("availability"))
+
+    # ═══════════════════════════════════════════
+    # 2. IDENTIFICATION
+    # ═══════════════════════════════════════════
+    _add("model_number", product_data.get("model_number"))
+    _add("item_model_number", product_data.get("item_model_number"))
+    _add("model_name", product_data.get("model_name"))
+    _add("part_number", product_data.get("part_number"))
+    _add("upc", product_data.get("upc"))
+    _add("ean", product_data.get("ean"))
+    _add("isbn", product_data.get("isbn"))
+
+    # ═══════════════════════════════════════════
+    # 3. DIMENSIONS & PHYSICAL
+    # ═══════════════════════════════════════════
+    _add("item_dimensions", product_data.get("item_dimensions"))
+    _add("item_weight", product_data.get("item_weight"))
+    _add("package_dimensions", product_data.get("package_dimensions"))
+    _add("size", product_data.get("size"))
+    _add("color", product_data.get("color"))
+    _add("material_type", product_data.get("material_type"))
+    _add("style_name", product_data.get("style_name"))
+    _add("theme", product_data.get("theme"))
+
+    # ═══════════════════════════════════════════
+    # 4. DETAILS
+    # ═══════════════════════════════════════════
+    _add("department", product_data.get("department"))
+    _add("country_of_origin", product_data.get("country_of_origin"))
+    _add("date_first_available", product_data.get("date_first_available"))
+    _add("best_sellers_rank", product_data.get("best_sellers_rank"))
+    _add("language", product_data.get("language"))
+    _add("reading_age", product_data.get("reading_age"))
+    _add("unit_count", product_data.get("unit_count"))
+    _add("number_of_pieces", product_data.get("number_of_pieces"))
+    _add("care_instructions", product_data.get("care_instructions"))
+    _add("closure_type", product_data.get("closure_type"))
+    _add("fabric_type", product_data.get("fabric_type"))
+
+    # ═══════════════════════════════════════════
+    # 5. CATEGORY-SPECIFIC (Toys, Electronics, etc.)
+    # ═══════════════════════════════════════════
+    _add("number_of_players", product_data.get("number_of_players"))
+    _add("educational_objective", product_data.get("educational_objective"))
+    _add("power_source", product_data.get("power_source"))
+    _add("battery_types", product_data.get("battery_types"))
+    _add("operation_mode", product_data.get("operation_mode"))
+    _add("specific_uses", product_data.get("specific_uses"))
+    _add("special_features", product_data.get("special_features"))
+
+    # Electronics
+    _add("connectivity", product_data.get("connectivity"))
+    _add("processor", product_data.get("processor"))
+    _add("ram_technology", product_data.get("ram_technology"))
+    _add("memory", product_data.get("memory"))
+    _add("screen_size", product_data.get("screen_size"))
+    _add("resolution", product_data.get("resolution"))
+    _add("operating_system", product_data.get("operating_system"))
+    _add("hard_disk", product_data.get("hard_disk"))
+    _add("graphics_coprocessor", product_data.get("graphics_coprocessor"))
+
+    # Warranty
+    _add("warranty", product_data.get("warranty"), "multi_line_text_field")
+
+    # ═══════════════════════════════════════════
+    # 6. AUTO-MAP: product_details (raw array)
+    # ═══════════════════════════════════════════
+    product_details = product_data.get("product_details") or []
+    if isinstance(product_details, list):
+        for item in product_details:
+            if not isinstance(item, dict):
+                continue
+            field_type = item.get("type") or ""
+            field_value = item.get("value")
+            if not field_type or field_value is None:
+                continue
+
+            key = _slugify_key(field_type)
+            if not key or len(key) < 3:
+                continue
+
+            val_str = str(field_value).strip()
+            if not val_str or val_str == "None":
+                continue
+
+            # Type detect
+            if len(val_str) > 100:
+                mf_type = "multi_line_text_field"
+            elif val_str.replace(".", "").replace("-", "").isdigit():
+                mf_type = "number_decimal" if "." in val_str else "number_integer"
+            else:
+                mf_type = "single_line_text_field"
+
+            _add(key, val_str, mf_type)
+
+    logger.info(f"   Built {len(metafields)} metafields")
+    return metafields
+
+
+# ============================================
 # HELPER: Build Description with Metafields
 # ============================================
 def _build_description_with_metafields(product_data: dict) -> str:
-    """
-    Amazon description + metafields HTML build karo.
-    Description ke neeche metafields show honge.
-    """
+    """Amazon description + metafields HTML build karo."""
     description = product_data.get("description", "") or ""
 
     metafields_html = []
@@ -79,17 +255,14 @@ def _build_description_with_metafields(product_data: dict) -> str:
 
 
 # ============================================
-# ✅ NAYA: PUBLISH PRODUCT TO CHANNELS
+# ✅ PUBLISH PRODUCT TO CHANNELS
 # ============================================
 async def publish_product_to_channels(
     shop: str,
     access_token: str,
     shopify_product_id: str,
 ) -> bool:
-    """
-    Product ko saare sales channels pe publish karo.
-    (Online Store, Point of Sale, Shop, etc.)
-    """
+    """Product ko saare sales channels pe publish karo."""
     if not shopify_product_id:
         return False
 
@@ -98,15 +271,11 @@ async def publish_product_to_channels(
     else:
         product_gid = shopify_product_id
 
-    # Step 1: Saare publications fetch karo
     publications_query = """
     query getPublications {
       publications(first: 10) {
         edges {
-          node {
-            id
-            name
-          }
+          node { id name }
         }
       }
     }
@@ -124,7 +293,6 @@ async def publish_product_to_channels(
         logger.warning("⚠️ No publications found")
         return False
 
-    # Step 2: Har publication ka ID collect karo
     publication_ids = []
     for edge in edges:
         pub = edge["node"]
@@ -137,7 +305,6 @@ async def publish_product_to_channels(
     if not publication_ids:
         return False
 
-    # Step 3: publishablePublish mutation
     mutation = """
     mutation publishablePublish(
       $id: ID!
@@ -145,28 +312,18 @@ async def publish_product_to_channels(
     ) {
       publishablePublish(id: $id, input: $input) {
         publishable {
-          availablePublicationsCount {
-            count
-          }
+          availablePublicationsCount { count }
         }
-        userErrors {
-          field
-          message
-        }
+        userErrors { field message }
       }
     }
     """
 
     input_data = [{"publicationId": pid} for pid in publication_ids]
 
-    variables = {
-        "id": product_gid,
-        "input": input_data,
-    }
+    variables = {"id": product_gid, "input": input_data}
 
-    publish_result = await shopify_graphql(
-        shop, access_token, mutation, variables
-    )
+    publish_result = await shopify_graphql(shop, access_token, mutation, variables)
 
     if "errors" in publish_result:
         logger.error(f"❌ Publish errors: {publish_result['errors']}")
@@ -243,9 +400,7 @@ async def delete_shopify_product(
 
             if res.status_code in (401, 403):
                 if refresh_token:
-                    logger.warning(
-                        f"🔄 {res.status_code} — refreshing token for {shop_domain}"
-                    )
+                    logger.warning(f"🔄 {res.status_code} — refreshing token")
                     from app.services.shopify_auth import refresh_shopify_token
                     new_data = await refresh_shopify_token(shop_domain, refresh_token)
                     if new_data and new_data.get("access_token"):
@@ -305,11 +460,7 @@ async def update_variant_with_tracked(
         productVariants {
           id
           price
-          inventoryItem {
-            id
-            sku
-            tracked
-          }
+          inventoryItem { id sku tracked }
         }
         userErrors { field message }
       }
@@ -525,10 +676,7 @@ async def ensure_product_has_option(
     mutation = """
     mutation productSet($input: ProductSetInput!) {
       productSet(input: $input) {
-        product {
-          id
-          options { id name values }
-        }
+        product { id options { id name values } }
         userErrors { field message }
       }
     }
@@ -697,13 +845,24 @@ async def create_shopify_product_with_variants(
 
     logger.info(f"✅ Product created: {shopify_product.get('title')}")
 
-    # ✅ NAYA: Auto-publish
+    # Auto-publish
     if product_id:
         await publish_product_to_channels(
             shop=shop,
             access_token=access_token,
             shopify_product_id=product_id,
         )
+
+    # ✅ All metafields
+    if product_id:
+        all_mfs = _build_all_metafields(product_data)
+        if all_mfs:
+            await set_product_metafields(
+                shop=shop,
+                access_token=access_token,
+                product_id=product_id,
+                metafields=all_mfs,
+            )
 
     images = product_data.get("images", [])
     if product_id and images:
@@ -727,7 +886,7 @@ async def add_variant_to_existing_product(
     variant_data: dict,
     all_options: list = None,
 ) -> dict:
-    """Existing product mein naya variant add karo — multiple options ke saath."""
+    """Existing product mein naya variant add karo."""
     if not all_options:
         option_name = variant_data.get("option_name") or "Style"
         option_value = variant_data.get("title") or "Default"
@@ -775,18 +934,13 @@ async def add_variant_to_existing_product(
     variants_input = {
         "optionValues": option_values,
         "price": str(variant_data.get("price", 0)),
-        "inventoryItem": {
-            "tracked": True,
-        },
+        "inventoryItem": {"tracked": True},
     }
 
     if sku_value:
         variants_input["inventoryItem"]["sku"] = sku_value
 
-    variables = {
-        "productId": product_id,
-        "variants": [variants_input],
-    }
+    variables = {"productId": product_id, "variants": [variants_input]}
 
     result = await shopify_graphql(shop, access_token, mutation, variables)
 
@@ -833,7 +987,7 @@ async def add_variant_to_existing_product(
 
 
 # ============================================
-# ✅ PRODUCT CREATE (SIMPLE) — SKU + Metafields + PUBLISH
+# ✅ PRODUCT CREATE (SIMPLE) — SKU + ALL Metafields + PUBLISH
 # ============================================
 async def create_shopify_product(
     shop: str,
@@ -854,46 +1008,8 @@ async def create_shopify_product(
     if not asin_value or asin_value == "None":
         asin_value = "NO-SKU"
 
-    # Metafields for Shopify native
-    metafields_input = []
-
-    if asin_value and asin_value != "NO-SKU":
-        metafields_input.append({
-            "namespace": "custom", "key": "asin",
-            "value": asin_value, "type": "single_line_text_field",
-        })
-
-    rating_value = str(product_data.get("rating", "") or "")
-    if rating_value and rating_value != "None":
-        metafields_input.append({
-            "namespace": "custom", "key": "rating",
-            "value": rating_value, "type": "single_line_text_field",
-        })
-
-    reviews_count_value = product_data.get("reviews_count")
-    if reviews_count_value is not None:
-        reviews_count_str = str(reviews_count_value)
-        if reviews_count_str and reviews_count_str != "None":
-            metafields_input.append({
-                "namespace": "custom", "key": "reviews_count",
-                "value": reviews_count_str, "type": "single_line_text_field",
-            })
-
-    amazon_price_value = product_data.get("amazon_price")
-    if amazon_price_value is not None:
-        amazon_price_str = str(amazon_price_value)
-        if amazon_price_str and amazon_price_str != "None":
-            metafields_input.append({
-                "namespace": "custom", "key": "amazon_price",
-                "value": amazon_price_str, "type": "single_line_text_field",
-            })
-
-    availability_value = str(product_data.get("availability", "") or "")
-    if availability_value and availability_value != "None":
-        metafields_input.append({
-            "namespace": "custom", "key": "availability",
-            "value": availability_value, "type": "single_line_text_field",
-        })
+    # ✅ ALL metafields (24+ fields)
+    metafields_input = _build_all_metafields(product_data)
 
     shopify_tags = _build_shopify_tags(product_data)
     product_type = _get_product_type(product_data)
@@ -1004,7 +1120,7 @@ async def create_shopify_product(
 
     logger.info(f"✅ Product created: {shopify_product.get('title')}")
 
-    # ✅ NAYA: Auto-publish to channels
+    # Auto-publish
     if product_id:
         await publish_product_to_channels(
             shop=shop,
@@ -1012,7 +1128,7 @@ async def create_shopify_product(
             shopify_product_id=product_id,
         )
 
-    # Metafields
+    # ✅ ALL metafields (24+)
     if product_id and metafields_input:
         await set_product_metafields(
             shop=shop,
