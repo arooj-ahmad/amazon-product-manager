@@ -1,7 +1,12 @@
 // src/components/Header.jsx
 import { theme } from '../styles/theme'
 
-export default function Header({ shopifyReady, shopDomain, subscription }) {
+export default function Header({
+  shopifyReady,
+  shopDomain,
+  subscription,
+  onOpenMarkupSettings,   // ✅ NAYA: Markup Settings button ke liye
+}) {
   return (
     <div style={styles.wrapper}>
       {/* Logo + Title */}
@@ -62,6 +67,25 @@ export default function Header({ shopifyReady, shopDomain, subscription }) {
             {subscription.subscription?.name || 'Active'}
           </div>
         )}
+
+        {/* ✅ NAYA: Markup Settings button */}
+        {onOpenMarkupSettings && (
+          <button
+            type="button"
+            onClick={onOpenMarkupSettings}
+            style={styles.markupBtn}
+            onMouseEnter={(e) => {
+              e.currentTarget.style.transform = 'translateY(-1px)'
+              e.currentTarget.style.boxShadow = '0 2px 8px rgba(59, 130, 246, 0.2)'
+            }}
+            onMouseLeave={(e) => {
+              e.currentTarget.style.transform = 'translateY(0)'
+              e.currentTarget.style.boxShadow = 'none'
+            }}
+          >
+            ⚙️ Markup Settings
+          </button>
+        )}
       </div>
     </div>
   )
@@ -107,6 +131,7 @@ const styles = {
     display: 'flex',
     flexWrap: 'wrap',
     gap: '8px',
+    alignItems: 'center',
   },
   pill: {
     display: 'inline-flex',
@@ -150,5 +175,22 @@ const styles = {
   },
   pillIcon: {
     fontSize: '12px',
+  },
+
+  // ✅ NAYA: Markup Settings button
+  markupBtn: {
+    display: 'inline-flex',
+    alignItems: 'center',
+    gap: '6px',
+    padding: '6px 14px',
+    borderRadius: theme.radii.full,
+    fontSize: '12px',
+    fontWeight: '600',
+    background: 'linear-gradient(135deg, #e0f2fe 0%, #bae6fd 100%)',
+    color: '#0369a1',
+    border: '1px solid #7dd3fc',
+    cursor: 'pointer',
+    transition: theme.transitions.fast,
+    marginLeft: 'auto',
   },
 }

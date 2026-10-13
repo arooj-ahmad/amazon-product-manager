@@ -1,12 +1,14 @@
 // src/pages/ShopifyApp.jsx
+import { useState } from 'react'   // ✅ NAYA
 import { useShopifyApp } from '../hooks/useShopifyApp'
 import { styles, theme } from '../styles/theme'
 import Header from '../components/Header'
 import AddProductForm from '../components/AddProductForm'
 import CollectionsSelector from '../components/CollectionsSelector'
-import CronRunner from '../components/CronRunner'   // ✅ NAYA
+import CronRunner from '../components/CronRunner'
 import InfoBox from '../components/InfoBox'
 import PlanCard from '../components/PlanCard'
+import MarkupSettings from './MarkupSettings'   // ✅ NAYA
 
 export default function ShopifyApp() {
   const {
@@ -23,6 +25,20 @@ export default function ShopifyApp() {
 
     cronRunning, cronMessage, handleRunCron,
   } = useShopifyApp()
+
+  // ✅ NAYA: Markup Settings page toggle
+  const [showMarkupSettings, setShowMarkupSettings] = useState(false)
+
+  // ========================================
+  // ✅ NAYA: Markup Settings Page (Full Page)
+  // ========================================
+  if (showMarkupSettings) {
+    return (
+      <MarkupSettings
+        onBack={() => setShowMarkupSettings(false)}
+      />
+    )
+  }
 
   // Loading
   if (checkingSub) {
@@ -77,7 +93,12 @@ export default function ShopifyApp() {
   return (
     <div style={styles.page}>
       <div style={styles.container}>
-        <Header shopifyReady={shopifyReady} shopDomain={shopDomain} subscription={subscription} />
+        <Header
+          shopifyReady={shopifyReady}
+          shopDomain={shopDomain}
+          subscription={subscription}
+          onOpenMarkupSettings={() => setShowMarkupSettings(true)}   // ✅ NAYA
+        />
 
         <AddProductForm
           amazonUrl={amazonUrl}
