@@ -5,6 +5,9 @@ const API_URL =
   (import.meta.env.VITE_API_URL || '').trim() ||
   'https://amazon-product-manager-production.up.railway.app'
 
+// ✅ Hardcoded fallback domain (testing ke liye)
+const FALLBACK_SHOP_DOMAIN = 'test-store-ispfraip.myshopify.com'
+
 // ============================================
 // App Bridge helper — v3 & v4 dono support
 // ============================================
@@ -52,6 +55,24 @@ async function safeFetch(url, options = {}) {
 }
 
 // ============================================
+// Helper: Domain determine karo (multiple fallbacks)
+// ============================================
+function resolveShopDomain(currentDomain) {
+  // 1. Current state
+  if (currentDomain) return currentDomain
+
+  // 2. URL params
+  if (typeof window !== 'undefined') {
+    const params = new URLSearchParams(window.location.search)
+    const urlShop = params.get('shop')
+    if (urlShop) return urlShop
+  }
+
+  // 3. Hardcoded fallback
+  return FALLBACK_SHOP_DOMAIN
+}
+
+// ============================================
 // Main Hook
 // ============================================
 export function useShopifyApp() {
@@ -69,7 +90,7 @@ export function useShopifyApp() {
   const [plans, setPlans] = useState([])
   const [checkingSub, setCheckingSub] = useState(true)
 
-  // ✅ NAYA: Collections state
+  // ✅ Collections state
   const [collections, setCollections] = useState([])
   const [selectedCollections, setSelectedCollections] = useState(new Set())
   const [collectionsLoading, setCollectionsLoading] = useState(false)
@@ -77,7 +98,7 @@ export function useShopifyApp() {
   const bridgeCheckRef = useRef(null)
 
   // ========================================
-  // 1. Load billing data (plans + subscription)
+  // 1. Load billing data
   // ========================================
   const loadBillingData = useCallback(async () => {
     setCheckingSub(true)
@@ -164,15 +185,18 @@ export function useShopifyApp() {
   }, [loadBillingData])
 
   // ========================================
-  // ✅ NAYA: Load Collections
+  // ✅ FIXED: Load Collections (with domain fallback)
   // ========================================
   const loadCollections = useCallback(async (domain) => {
-    if (!domain) return
+    // ✅ Multiple fallbacks
+    const actualDomain = resolveShopDomain(domain)
+
+    console.log('📁 Fetching collections for:', actualDomain)
 
     setCollectionsLoading(true)
     try {
       const res = await safeFetch(
-        `${API_URL}/api/shopify/collections?shop_domain=${encodeURIComponent(domain)}`
+        `${API_URL}/api/shopify/collections?shop_domain=${encodeURIComponent(actualDomain)}`
       )
 
       if (!res.ok) {
@@ -195,16 +219,20 @@ export function useShopifyApp() {
   }, [])
 
   // ========================================
-  // ✅ NAYA: Auto-load collections when shopDomain + subscription ready
+  // ✅ FIXED: Auto-load collections (with fallback)
   // ========================================
   useEffect(() => {
-    if (shopDomain && subscription?.active) {
-      loadCollections(shopDomain)
+    // ✅ Domain resolve karo (multiple sources)
+    const domain = resolveShopDomain(shopDomain)
+
+    if (domain && subscription?.active) {
+      console.log('📁 Auto-loading collections for:', domain)
+      loadCollections(domain)
     }
   }, [shopDomain, subscription?.active, loadCollections])
 
   // ========================================
-  // ✅ NAYA: Toggle Collection Selection
+  // ✅ Toggle Collection Selection
   // ========================================
   const toggleCollection = useCallback((collectionId) => {
     setSelectedCollections((prev) => {
@@ -219,11 +247,19 @@ export function useShopifyApp() {
   }, [])
 
   // ========================================
-  // ✅ NAYA: Clear All Selections
+  // ✅ Clear All Selections
   // ========================================
   const clearCollections = useCallback(() => {
     setSelectedCollections(new Set())
   }, [])
+
+  // ========================================
+  // ✅ Manual Refresh Collections
+  // ========================================
+  const refreshCollections = useCallback(() => {
+    const domain = resolveShopDomain(shopDomain)
+    return loadCollections(domain)
+  }, [shopDomain, loadCollections])
 
   // ========================================
   // 3. Subscribe handler
@@ -281,13 +317,13 @@ export function useShopifyApp() {
   }
 
   // ========================================
-  // Auto-redirect to Shopify Admin after billing success
+  // Auto-redirect after billing success
   // ========================================
   useEffect(() => {
     const params = new URLSearchParams(window.location.search)
     const isSuccess = params.get('subscription') === 'success'
     const queryShop =
-      params.get('shop') || shopDomain || 'amazon-product-manager.myshopify.com'
+      params.get('shop') || shopDomain || FALLBACK_SHOP_DOMAIN
 
     if (
       isSuccess &&
@@ -313,7 +349,7 @@ export function useShopifyApp() {
   const handleTestActivate = async () => {
     setIsSubscribing(true)
     try {
-      const targetShop = shopDomain || 'amazon-product-manager.myshopify.com'
+      const targetShop = resolveShopDomain(shopDomain)
       const res = await safeFetch(`${API_URL}/api/billing/activate-test`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -330,7 +366,7 @@ export function useShopifyApp() {
         })
         showToast('Active Test Mode enabled!')
 
-        // ✅ NAYA: Test activate ke baad collections load karo
+        // ✅ Test activate ke baad collections load karo
         if (targetShop) {
           loadCollections(targetShop)
         }
@@ -345,7 +381,7 @@ export function useShopifyApp() {
   }
 
   // ========================================
-  // 4. Add product handler — collection_ids bhi bhejo
+  // 4. Add product handler
   // ========================================
   const handleAddProduct = async (e) => {
     e.preventDefault()
@@ -357,7 +393,6 @@ export function useShopifyApp() {
     try {
       const idToken = await getIdToken()
 
-      // ✅ Collections array banao
       const collectionIdsArray = Array.from(selectedCollections)
 
       console.log('📤 Sending product with collections:', collectionIdsArray)
@@ -374,7 +409,7 @@ export function useShopifyApp() {
             amazon_url: amazonUrl.trim(),
             markup: parseFloat(markup) || 2.0,
             markup_type: markupType,
-            collection_ids: collectionIdsArray,   // ✅ NAYA
+            collection_ids: collectionIdsArray,
           }),
         }
       )
@@ -403,7 +438,6 @@ export function useShopifyApp() {
         throw new Error(res.data.detail || 'Failed to add product')
       }
 
-      // ✅ Success message with collections count
       const collectionsAdded = res.data.collections_added || 0
       const successMsg = res.data.message || 'Product added successfully!'
 
@@ -412,10 +446,9 @@ export function useShopifyApp() {
         text: `✅ ${successMsg}${collectionsAdded > 0 ? ` (+${collectionsAdded} collections)` : ''}`,
       })
 
-      // Reset form
       setAmazonUrl('')
       setMarkup('2.00')
-      clearCollections()   // ✅ NAYA: Clear collection selections
+      clearCollections()
 
       showToast('Product added!')
     } catch (err) {
@@ -446,12 +479,13 @@ export function useShopifyApp() {
     handleSubscribe,
     handleTestActivate,
 
-    // ✅ NAYA: Collections
+    // ✅ Collections
     collections,
     selectedCollections,
     collectionsLoading,
     toggleCollection,
     clearCollections,
-    loadCollections,   // (optional — manual reload ke liye)
+    loadCollections,
+    refreshCollections,   // ✅ NAYA — manual refresh ke liye
   }
 }

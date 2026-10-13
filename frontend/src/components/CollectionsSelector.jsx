@@ -8,6 +8,7 @@ export default function CollectionsSelector({
   loading = false,
   onToggle,
   onClear,
+  onRefresh,   // ✅ NAYA
 }) {
   const [searchQuery, setSearchQuery] = useState('')
 
@@ -49,6 +50,13 @@ export default function CollectionsSelector({
             Create collections in Shopify Admin first.
           </small>
         </div>
+        {onRefresh && (
+          <div style={styles.actions}>
+            <button type="button" onClick={onRefresh} style={styles.actionBtn}>
+              🔄 Refresh Collections
+            </button>
+          </div>
+        )}
       </div>
     )
   }
@@ -112,6 +120,11 @@ export default function CollectionsSelector({
         <button type="button" onClick={handleClearAll} style={styles.actionBtn}>
           Clear All
         </button>
+        {onRefresh && (   // ✅ NAYA
+          <button type="button" onClick={onRefresh} style={styles.actionBtn}>
+            🔄 Refresh
+          </button>
+        )}
       </div>
     </div>
   )
