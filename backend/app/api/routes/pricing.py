@@ -2,6 +2,7 @@
 # app/api/routes/pricing.py
 # Pricing API Routes
 # + ✅ NAYA: Shopify par bhi price update karo
+# + ✅ NAYA: extra_percent support (Fixed + Percent)
 # ============================================
 
 import logging
@@ -51,6 +52,7 @@ async def update_pricing(
             markup_type=data.markup_type,
             markup_value=data.markup_value,
             tax_rate=data.tax_rate,
+            extra_percent=getattr(data, "extra_percent", 0.0),   # ✅ NAYA
         )
 
         # ✅ NAYA: Shopify par bhi update karo
@@ -60,10 +62,11 @@ async def update_pricing(
             if store and store.access_token:
                 try:
                     await sync_update_shopify_price(
-                        shop=store.shop_domain,
+                        shop_domain=store.shop_domain,
                         access_token=store.access_token,
                         shopify_product_id=product.shopify_product_id,
                         new_price=product.price,
+                        refresh_token=store.refresh_token,
                     )
                     logger.info(f"✅ Shopify updated: {product.asin} → ${product.price}")
                 except Exception as e:
@@ -88,6 +91,7 @@ async def bulk_update(
             markup_type=data.markup_type,
             markup_value=data.markup_value,
             tax_rate=data.tax_rate,
+            extra_percent=getattr(data, "extra_percent", 0.0),   # ✅ NAYA
         )
 
         # ✅ NAYA: Shopify par bhi update karo
@@ -101,10 +105,11 @@ async def bulk_update(
             for product in products:
                 try:
                     await sync_update_shopify_price(
-                        shop=store.shop_domain,
+                        shop_domain=store.shop_domain,
                         access_token=store.access_token,
                         shopify_product_id=product.shopify_product_id,
                         new_price=product.price,
+                        refresh_token=store.refresh_token,
                     )
                     shopify_updated += 1
                 except Exception as e:
