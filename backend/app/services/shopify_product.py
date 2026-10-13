@@ -11,6 +11,7 @@
 # + ✅ FIXED v2: Metafield TYPE mismatch (INVALID_TYPE)
 # + ✅ UPGRADED: Description mein SAARE metafields HTML table
 # + ✅ FIXED v3: Chunked metafields (25 per call) + Pinned limit handle
+# + ✅ NEW: Auto compare_at_price (price × 1.2)
 # ============================================
 
 import logging
@@ -757,7 +758,7 @@ async def delete_shopify_product(
 
 
 # ============================================
-# VARIANT UPDATE WITH TRACKED + SKU
+# ✅ VARIANT UPDATE (with COMPARE AT PRICE)
 # ============================================
 async def update_variant_with_tracked(
     shop: str,
@@ -766,8 +767,9 @@ async def update_variant_with_tracked(
     variant_id: str,
     price: float,
     sku: str = "",
+    compare_at_price: float = None,   # ✅ NAYA PARAM
 ) -> bool:
-    """Variant update karo — price + SKU ke saath."""
+    """Variant update karo — price + SKU + compare_at_price ke saath."""
     mutation = """
     mutation productVariantsBulkUpdate(
       $productId: ID!,
@@ -777,6 +779,7 @@ async def update_variant_with_tracked(
         productVariants {
           id
           price
+          compareAtPrice
           inventoryItem { id sku tracked }
         }
         userErrors { field message }
@@ -788,13 +791,24 @@ async def update_variant_with_tracked(
     if sku:
         inventory_item_input["sku"] = sku
 
+    variant_input = {
+        "id": variant_id,
+        "price": str(price),
+        "inventoryItem": inventory_item_input,
+    }
+
+    # ✅ Compare at price add karo agar diya hai aur price se zyada hai
+    if compare_at_price is not None:
+        try:
+            cap = float(compare_at_price)
+            if cap > float(price):
+                variant_input["compareAtPrice"] = f"{cap:.2f}"
+        except (ValueError, TypeError):
+            pass
+
     variables = {
         "productId": product_id,
-        "variants": [{
-            "id": variant_id,
-            "price": str(price),
-            "inventoryItem": inventory_item_input,
-        }],
+        "variants": [variant_input],
     }
 
     result = await shopify_graphql(shop, access_token, mutation, variables)
@@ -819,6 +833,7 @@ async def update_variant_with_tracked(
         v = updated[0]
         logger.info(
             f"✅ Variant updated: price=${v.get('price')}, "
+            f"compare_at=${v.get('compareAtPrice')}, "
             f"sku={v.get('inventoryItem', {}).get('sku', 'N/A')}"
         )
         return True
@@ -1369,7 +1384,7 @@ async def add_variant_to_existing_product(
 
 
 # ============================================
-# ✅ PRODUCT CREATE (SIMPLE)
+# ✅ PRODUCT CREATE (SIMPLE) — with COMPARE AT PRICE
 # ============================================
 async def create_shopify_product(
     shop: str,
@@ -1522,6 +1537,11 @@ async def create_shopify_product(
         inventory_item_id = variant_node.get("inventoryItem", {}).get("id")
 
         if product_id and variant_id:
+            # ✅ Compare at price calculate karo (price se 20% zyada)
+            compare_price = None
+            if price_float and price_float > 0:
+                compare_price = round(price_float * 1.2, 2)
+
             await update_variant_with_tracked(
                 shop=shop,
                 access_token=access_token,
@@ -1529,6 +1549,7 @@ async def create_shopify_product(
                 variant_id=variant_id,
                 price=price_float,
                 sku=asin_value,
+                compare_at_price=compare_price,   # ✅ YEH ADD KAREIN
             )
 
         if inventory_item_id:
@@ -1600,7 +1621,7 @@ async def update_shopify_product_status(
     is_available: bool,
 ) -> bool:
     if not shopify_product_id.startswith("gid://"):
-        product_gid = f"gid://shopify/Product/{shopify_product_id}"
+        product_gid = f"gid://Shopify/Product/{shopify_product_id}"
     else:
         product_gid = shopify_product_id
 
