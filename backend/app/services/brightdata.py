@@ -11,6 +11,7 @@
 # + ✅ NAYA: Standard metafields fields (model, dimensions, etc.)
 # + ✅ FIXED: Tags — CLEAN & PROFESSIONAL (no duplicates, no garbage)
 # + ✅ FIXED: Description — clean (no "> See more product details")
+# + ✅ NAYA: Markup type "both" — Fixed + Percent
 # ============================================
 
 import logging
@@ -198,12 +199,11 @@ def parse_categories(raw: dict) -> list[str]:
 
 
 # ============================================
-# ✅ NAYA HELPER: STANDARD METAFIELDS FIELDS
+# ✅ STANDARD METAFIELDS FIELDS
 # ============================================
 def parse_standard_fields(raw: dict) -> dict:
     """
     Amazon response se saare standard metafield fields nikalta hai.
-    Yeh fields HAR product mein hote hain (95%+).
     """
     fields = {}
 
@@ -230,7 +230,6 @@ def parse_standard_fields(raw: dict) -> dict:
 
             value_str = str(field_value).strip()
 
-            # Map Amazon field types to our keys
             if field_type in ("item dimensions", "item dimensions l x w x h", "product dimensions"):
                 fields["item_dimensions"] = value_str
             elif field_type in ("item weight", "item weight", "shipping weight"):
@@ -314,7 +313,6 @@ def parse_standard_fields(raw: dict) -> dict:
             elif field_type == "ean":
                 fields["ean"] = value_str
 
-    # Clean — remove None / empty / "None"
     fields = {
         k: v for k, v in fields.items()
         if v is not None and str(v).strip() and str(v).strip() != "None"
@@ -325,12 +323,10 @@ def parse_standard_fields(raw: dict) -> dict:
 
 
 # ============================================
-# ✅ IMPROVED: TAGS PARSE — Clean & Professional
+# ✅ TAGS PARSE — Clean & Professional
 # ============================================
 def parse_tags(raw: dict, categories: list[str]) -> list[str]:
-    """
-    Amazon response se CLEAN aur USEFUL tags nikalta hai.
-    """
+    """Amazon response se CLEAN aur USEFUL tags nikalta hai."""
     import re
 
     tags: list[str] = []
@@ -352,7 +348,6 @@ def parse_tags(raw: dict, categories: list[str]) -> list[str]:
         seen_lower.add(low)
         tags.append(tag)
 
-    # 1. COLORS
     COLOR_KEYWORDS = {
         "red", "blue", "green", "yellow", "black", "white",
         "orange", "purple", "pink", "brown", "gray", "grey",
@@ -391,7 +386,6 @@ def parse_tags(raw: dict, categories: list[str]) -> list[str]:
                     _add(f"Color: {color.title()}")
                     break
 
-    # 2. BRAND / MANUFACTURER
     brand = raw.get("brand")
     if brand and isinstance(brand, str) and brand.strip():
         _add(f"Brand: {brand.strip()}")
@@ -401,7 +395,6 @@ def parse_tags(raw: dict, categories: list[str]) -> list[str]:
         if manufacturer.strip().lower() != (brand or "").strip().lower():
             _add(f"Manufacturer: {manufacturer.strip()}")
 
-    # 3. RATING
     rating = raw.get("rating")
     if rating is not None:
         try:
@@ -411,12 +404,10 @@ def parse_tags(raw: dict, categories: list[str]) -> list[str]:
         except (ValueError, TypeError):
             pass
 
-    # 4. CATEGORIES
     for cat in categories:
         if cat and len(cat) < 60:
             _add(cat)
 
-    # 5. KEY SPECS
     SPEC_LABELS = {
         "material": "Material", "material type": "Material",
         "fabric type": "Fabric", "style": "Style", "style name": "Style",
@@ -469,12 +460,10 @@ def parse_tags(raw: dict, categories: list[str]) -> list[str]:
 
             _add(f"{label}: {value}")
 
-    # 6. ASIN
     asin = raw.get("asin")
     if asin and isinstance(asin, str):
         _add(f"ASIN: {asin.strip()}")
 
-    # 7. UNIT COUNT
     unit_count = raw.get("unit_count")
     if unit_count:
         uc = str(unit_count).strip()
@@ -489,7 +478,7 @@ def parse_tags(raw: dict, categories: list[str]) -> list[str]:
 
 
 # ============================================
-# ✅ NAYA: CLEAN DESCRIPTION — Amazon UI garbage remove
+# ✅ CLEAN DESCRIPTION — Amazon UI garbage remove
 # ============================================
 def clean_description(description: str) -> str:
     """
@@ -501,7 +490,6 @@ def clean_description(description: str) -> str:
 
     import re
 
-    # Remove karne wale patterns
     garbage_patterns = [
         r"[>›»]\s*See\s+more\s+product\s+details\.?",
         r"[>›»]\s*See\s+more\.?",
@@ -522,16 +510,13 @@ def clean_description(description: str) -> str:
     for pattern in garbage_patterns:
         description = re.sub(pattern, "", description, flags=re.IGNORECASE)
 
-    # Standalone ">" / "›" characters hatao
     description = re.sub(r"^\s*[>›»]\s*", "", description)
     description = re.sub(r"\s+[>›»]\s+", " ", description)
 
-    # Multiple spaces/newlines clean karo
     description = re.sub(r"\s+", " ", description)
     description = re.sub(r"\s+([.,!?;:])", r"\1", description)
     description = description.strip()
 
-    # Agar description bahut chhoti hai toh empty return
     if len(description) < 20:
         return ""
 
@@ -618,12 +603,10 @@ async def fetch_product_from_brightdata(amazon_url: str) -> dict:
     if not asin:
         raise BrightDataError("ASIN nahi mila - na response mein, na URL mein")
 
-    # Parent ASIN
     parent_asin_raw = raw.get("parent_asin") or None
     parent_asin = validate_parent_asin(parent_asin_raw, asin)
     is_variation = bool(parent_asin)
 
-    # Variant attributes
     variant_attrs_raw = raw.get("variant_attributes") or []
     variant_attributes = []
     if isinstance(variant_attrs_raw, list):
@@ -637,7 +620,6 @@ async def fetch_product_from_brightdata(amazon_url: str) -> dict:
                         "value": str(value).strip(),
                     })
 
-    # Variations
     variations_raw = raw.get("variations") or []
     variations = []
     if isinstance(variations_raw, list):
@@ -651,7 +633,6 @@ async def fetch_product_from_brightdata(amazon_url: str) -> dict:
                         "value": str(v_value).strip(),
                     })
 
-    # Price
     amazon_price_raw = (
         raw.get("final_price")
         or raw.get("price")
@@ -667,7 +648,6 @@ async def fetch_product_from_brightdata(amazon_url: str) -> dict:
     )
     list_price = parse_price(list_price_raw)
 
-    # Rating
     rating_raw = (
         raw.get("rating")
         or raw.get("average_rating")
@@ -692,7 +672,6 @@ async def fetch_product_from_brightdata(amazon_url: str) -> dict:
         except (ValueError, TypeError):
             rating_value = None
 
-    # Reviews
     reviews_raw = (
         raw.get("reviews_count")
         or raw.get("review_count")
@@ -714,7 +693,6 @@ async def fetch_product_from_brightdata(amazon_url: str) -> dict:
         except (ValueError, TypeError):
             reviews_count = None
 
-    # Images
     images_list = raw.get("images") or []
     if not isinstance(images_list, list):
         images_list = []
@@ -732,13 +710,11 @@ async def fetch_product_from_brightdata(amazon_url: str) -> dict:
     if not main_image and unique_images:
         main_image = unique_images[0]
 
-    # Availability
     is_available, availability_text, source = check_availability(raw)
     logger.info(
         f"✅ Availability: is_available={is_available}, text='{availability_text}'"
     )
 
-    # Stock
     stock_quantity = raw.get("stock_quantity") or raw.get("stock") or 0
     try:
         stock_quantity = int(stock_quantity) if stock_quantity else 0
@@ -750,7 +726,6 @@ async def fetch_product_from_brightdata(amazon_url: str) -> dict:
     elif stock_quantity == 0:
         stock_quantity = 100
 
-    # Specifications
     specs = {}
     product_details = raw.get("product_details") or []
     if isinstance(product_details, list):
@@ -775,12 +750,10 @@ async def fetch_product_from_brightdata(amazon_url: str) -> dict:
 
     final_availability = str(availability_text) if availability_text else "In Stock"
 
-    # ✅ Categories + Tags + Standard Fields
     categories = parse_categories(raw)
     tags = parse_tags(raw, categories)
     standard_fields = parse_standard_fields(raw)
 
-    # ✅ Clean description
     cleaned_description = clean_description(raw.get("description"))
 
     logger.info(
@@ -802,7 +775,7 @@ async def fetch_product_from_brightdata(amazon_url: str) -> dict:
         "image_url": main_image,
         "images": unique_images,
         "specifications": specs,
-        "description": cleaned_description,   # ✅ CLEANED
+        "description": cleaned_description,
         "rating": rating_value,
         "reviews_count": reviews_count,
         "availability": final_availability,
@@ -812,15 +785,14 @@ async def fetch_product_from_brightdata(amazon_url: str) -> dict:
         "variant_attributes": variant_attributes,
         "categories": categories,
         "tags": tags,
-        # ✅ NAYA: Standard metafields
         **standard_fields,
-        # ✅ Raw product_details — auto-mapping ke liye
         "product_details": raw.get("product_details") or [],
     }
 
 
 # ============================================
-# CALCULATE FINAL PRICE
+# ✅ FIXED v2: CALCULATE FINAL PRICE
+# + ✅ NAYA: "both" markup type support
 # ============================================
 def calculate_final_price(
     amazon_price: Optional[float],
@@ -828,16 +800,30 @@ def calculate_final_price(
     markup_type: str = "fixed",
     admin_price: Optional[float] = None,
     is_manual_override: bool = False,
+    extra_percent: float = 0.0,   # ✅ NAYA: fixed + percent ke liye
 ) -> Optional[float]:
-    """Final website price calculate karta hai."""
+    """
+    Final website price calculate karta hai.
+
+    Types:
+    - fixed:    amazon + markup
+    - percent:  amazon * (1 + markup/100)
+    - both:     (amazon + markup) * (1 + extra_percent/100)
+    """
     if amazon_price is None:
         return admin_price
 
     markup = markup or 0.0
+    extra_percent = extra_percent or 0.0
 
     if markup_type == "percent":
         auto_price = amazon_price * (1 + markup / 100.0)
+    elif markup_type == "both":
+        # ✅ Fixed add karo, phir percent apply karo
+        base_price = amazon_price + markup
+        auto_price = base_price * (1 + extra_percent / 100.0)
     else:
+        # default: fixed
         auto_price = amazon_price + markup
 
     if is_manual_override and admin_price is not None:

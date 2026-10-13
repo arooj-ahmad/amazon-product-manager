@@ -3,6 +3,7 @@
 // Markup Settings Page — Country + Tax support
 // + ✅ NAYA: Store ID database se aati hai (koi hardcode nahi)
 // + ✅ NAYA: Bulk update par store_id bhejo
+// + ✅ NAYA: "both" markup type — Fixed + Percent
 // ============================================
 
 import { useState, useEffect } from 'react'
@@ -10,7 +11,7 @@ import {
   getCountries,
   updatePricing,
   bulkUpdatePricing,
-  getStoreIdByDomain,   // ✅ NAYA
+  getStoreIdByDomain,
 } from '../api/pricing'
 
 const API_URL =
@@ -18,10 +19,9 @@ const API_URL =
   'https://amazon-product-manager-production.up.railway.app'
 
 // ============================================
-// ✅ NAYA: Shop domain nikaalo (iframe ya Admin URL se)
+// Shop domain nikaalo (iframe ya Admin URL se)
 // ============================================
 function getShopDomain() {
-  // ── Method 1: Shopify iframe se "shop" query parameter ──
   const params = new URLSearchParams(window.location.search)
   const shop = params.get('shop')
   if (shop) {
@@ -29,17 +29,14 @@ function getShopDomain() {
     return shop
   }
 
-  // ── Method 2: Shopify Admin URL se store name ──
-  // URL: admin.shopify.com/store/test-store-ispfraip/apps/...
   const pathMatch = window.location.pathname.match(/\/store\/([^/]+)/)
   if (pathMatch) {
-    const storeName = pathMatch[1]  // "test-store-ispfraip"
+    const storeName = pathMatch[1]
     const shopDomain = `${storeName}.myshopify.com`
     console.log(`✅ Shop domain from admin URL: ${shopDomain}`)
     return shopDomain
   }
 
-  // ── Nahi mila ──
   console.warn('⚠️ Shop domain detect nahi ho saka')
   return null
 }
@@ -75,7 +72,7 @@ function formatCurrency(amount, country) {
 // ============================================
 // Main Component
 // ============================================
-export default function MarkupSettings() {
+export default function MarkupSettings({ onBack }) {   // ✅ NAYA: onBack prop
   const [products, setProducts] = useState([])
   const [countries, setCountries] = useState([])
   const [loading, setLoading] = useState(true)
@@ -87,6 +84,7 @@ export default function MarkupSettings() {
     country_id: '',
     markup_type: 'fixed',
     markup_value: '2.00',
+    extra_percent: '10',        // ✅ NAYA
     tax_rate: '0',
   })
   const [bulkLoading, setBulkLoading] = useState(false)
@@ -98,7 +96,6 @@ export default function MarkupSettings() {
   const init = async () => {
     setLoading(true)
     try {
-      // ✅ Store ID database se nikaalo
       const shopDomain = getShopDomain()
       if (!shopDomain) {
         throw new Error(
@@ -110,11 +107,9 @@ export default function MarkupSettings() {
       console.log(`✅ Store ID from database: ${sid}`)
       setStoreId(sid)
 
-      // Countries load karo
       const countriesData = await getCountries()
       setCountries(countriesData || [])
 
-      // Products load karo
       let url = `${API_URL}/api/markup/products?store_id=${sid}`
       const productsRes = await safeFetch(url)
       if (!productsRes.ok) {
@@ -156,6 +151,7 @@ export default function MarkupSettings() {
         store_id: storeId,
         markup_type: bulkData.markup_type,
         markup_value: parseFloat(bulkData.markup_value),
+        extra_percent: parseFloat(bulkData.extra_percent) || 0,   // ✅ NAYA
         tax_rate: parseFloat(bulkData.tax_rate),
       })
       setMessage({
@@ -180,6 +176,25 @@ export default function MarkupSettings() {
   return (
     <div style={styles.page}>
       <div style={styles.container}>
+        {/* ✅ NAYA: Back button */}
+        {onBack && (
+          <button
+            type="button"
+            onClick={onBack}
+            style={styles.backBtn}
+            onMouseEnter={(e) => {
+              e.currentTarget.style.background = '#f6f6f7'
+              e.currentTarget.style.transform = 'translateX(-2px)'
+            }}
+            onMouseLeave={(e) => {
+              e.currentTarget.style.background = 'white'
+              e.currentTarget.style.transform = 'translateX(0)'
+            }}
+          >
+            ← Back to Dashboard
+          </button>
+        )}
+
         <h1 style={styles.h1}>⚙️ Markup Settings</h1>
         <p style={styles.subtitle}>
           Har product ka markup, country aur tax set karein. Default $2 hai.
@@ -223,6 +238,7 @@ export default function MarkupSettings() {
           >
             <option value="fixed">$ Fixed</option>
             <option value="percent">% Percent</option>
+            <option value="both">$ + % (Both)</option>   {/* ✅ NAYA */}
           </select>
 
           <input
@@ -233,7 +249,23 @@ export default function MarkupSettings() {
             onChange={(e) => setBulkData({ ...bulkData, markup_value: e.target.value })}
             style={styles.bulkInput}
             disabled={bulkLoading}
+            placeholder={bulkData.markup_type === 'percent' ? '%' : '$'}
           />
+
+          {/* ✅ NAYA: extra_percent input — sirf "both" ke liye */}
+          {bulkData.markup_type === 'both' && (
+            <input
+              type="number"
+              step="0.01"
+              min="0"
+              max="500"
+              value={bulkData.extra_percent}
+              onChange={(e) => setBulkData({ ...bulkData, extra_percent: e.target.value })}
+              style={styles.bulkInput}
+              disabled={bulkLoading}
+              placeholder="Extra %"
+            />
+          )}
 
           <input
             type="number"
@@ -287,6 +319,7 @@ export default function MarkupSettings() {
                   <th style={styles.th}>Country</th>
                   <th style={styles.th}>Type</th>
                   <th style={styles.th}>Markup</th>
+                  <th style={styles.th}>Extra %</th>   {/* ✅ NAYA */}
                   <th style={styles.th}>Tax %</th>
                   <th style={styles.th}>Tax Amt</th>
                   <th style={styles.th}>Final Price</th>
@@ -322,18 +355,25 @@ function ProductRow({ product, countries, storeId, saving, onSaveStart, onSaveEn
   const [countryId, setCountryId] = useState('')
   const [markup, setMarkup] = useState(String(product.markup ?? 2))
   const [type, setType] = useState(product.markup_type || 'fixed')
+  const [extraPercent, setExtraPercent] = useState(String(product.extra_percent ?? 0))   // ✅ NAYA
   const [taxRate, setTaxRate] = useState('0')
 
   const selectedCountry = countries.find((c) => c.id === parseInt(countryId))
 
+  // ✅ NAYA: "both" calculation
   const calc = (() => {
     const amazon = parseFloat(product.amazon_price) || 0
     const m = parseFloat(markup) || 0
+    const extra = parseFloat(extraPercent) || 0
     const tax = parseFloat(taxRate) || 0
 
     let subtotal
     if (type === 'percent') {
       subtotal = amazon * (1 + m / 100)
+    } else if (type === 'both') {
+      // ✅ Fixed add karo, phir percent apply karo
+      const base = amazon + m
+      subtotal = base * (1 + extra / 100)
     } else {
       subtotal = amazon + m
     }
@@ -371,6 +411,7 @@ function ProductRow({ product, countries, storeId, saving, onSaveStart, onSaveEn
         store_id: storeId,
         markup_type: type,
         markup_value: parseFloat(markup),
+        extra_percent: parseFloat(extraPercent) || 0,   // ✅ NAYA
         tax_rate: parseFloat(taxRate),
       })
       onMessage({ type: 'success', text: '✅ Pricing save ho gayi! (Shopify bhi update)' })
@@ -423,6 +464,7 @@ function ProductRow({ product, countries, storeId, saving, onSaveStart, onSaveEn
         >
           <option value="fixed">$ Fixed</option>
           <option value="percent">% Percent</option>
+          <option value="both">$ + % (Both)</option>   {/* ✅ NAYA */}
         </select>
       </td>
 
@@ -435,6 +477,24 @@ function ProductRow({ product, countries, storeId, saving, onSaveStart, onSaveEn
           onChange={(e) => setMarkup(e.target.value)}
           style={styles.rowInput}
           disabled={saving}
+        />
+      </td>
+
+      {/* ✅ NAYA: Extra % column — sirf "both" ke liye enable */}
+      <td style={styles.td}>
+        <input
+          type="number"
+          step="0.01"
+          min="0"
+          max="500"
+          value={extraPercent}
+          onChange={(e) => setExtraPercent(e.target.value)}
+          style={{
+            ...styles.rowInput,
+            opacity: type === 'both' ? 1 : 0.4,
+          }}
+          disabled={saving || type !== 'both'}
+          placeholder="0"
         />
       </td>
 
@@ -492,6 +552,23 @@ const styles = {
   centerBox: { padding: '60px 20px', textAlign: 'center' },
   h1: { fontSize: '24px', fontWeight: '700', color: '#202223', marginBottom: '4px' },
   subtitle: { color: '#637381', fontSize: '14px', marginBottom: '20px' },
+
+  // ✅ NAYA: Back button
+  backBtn: {
+    display: 'inline-flex',
+    alignItems: 'center',
+    gap: '6px',
+    padding: '8px 16px',
+    marginBottom: '16px',
+    background: 'white',
+    color: '#202223',
+    border: '1px solid #e1e3e5',
+    borderRadius: '8px',
+    fontSize: '13px',
+    fontWeight: '600',
+    cursor: 'pointer',
+    transition: 'all 0.15s ease',
+  },
 
   bulkBox: {
     background: '#f6f6f7',

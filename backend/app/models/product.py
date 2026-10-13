@@ -6,6 +6,7 @@
 # + Shopify status tracking (active/draft)
 # + ✅ NAYA: shopify_store_id (multi-store support)
 # + ✅ NAYA: categories (Collections) + tags (Shopify tags)
+# + ✅ NAYA: extra_percent (Fixed + Percent markup type)
 # ============================================
 
 from sqlalchemy import (
@@ -77,7 +78,7 @@ class Product(Base):
     variant_attributes = Column(JSON, default=list)
 
     # ----------------------------------------
-    # ✅ NAYA: Shopify Store Link (multi-store support)
+    # ✅ Shopify Store Link (multi-store support)
     # Kis store ki product hai
     # ----------------------------------------
     shopify_store_id = Column(
@@ -104,6 +105,9 @@ class Product(Base):
     price = Column(Float, nullable=True)
     markup = Column(Float, default=2.0)
     markup_type = Column(String(20), default="fixed")
+    # ✅ NAYA: "both" (Fixed + Percent) type ke liye
+    # Example: markup=2.0, extra_percent=10 → (amazon + 2) × 1.10
+    extra_percent = Column(Float, default=0.0)
 
     # ----------------------------------------
     # Manual Override

@@ -1,5 +1,5 @@
 # app/services/shopify_product.py
-# Backward compatibility — saara code shopify/ folder mein hai
+
 
 from app.services.shopify import *  # noqa: F401, F403
 

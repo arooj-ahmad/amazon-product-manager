@@ -18,6 +18,7 @@
 # + ✅ FIXED: is_available filter HATA DIYA — saare products process hote hain
 # + ✅ FIXED: set_inventory_quantity ka result check hota hai
 # + ✅ FIXED: Inventory error par warning log hoti hai
+# + ✅ NAYA: Markup type "both" — Fixed + Percent
 # ============================================
 
 import logging
@@ -137,7 +138,6 @@ async def find_shopify_product_by_title(
 
 # ============================================
 # ✅ HELPER: SHOPIFY STATUS + INVENTORY SYNC
-# ✅ FIXED: set_inventory_quantity ka result check hota hai
 # ============================================
 async def sync_shopify_product(
     product: Product,
@@ -240,7 +240,6 @@ async def sync_shopify_product(
             shop, access_token, query, {"id": shopify_id}
         )
 
-        # ✅ Check GraphQL error
         if "errors" in result:
             logger.error(
                 f"❌ Inventory query error for ASIN={product.asin}: "
@@ -261,7 +260,6 @@ async def sync_shopify_product(
             )
             return
 
-        # ✅ Har variant ka inventory update karo
         for edge in edges:
             inventory_item_id = (
                 edge.get("node", {})
@@ -420,7 +418,6 @@ async def sync_shopify_price(product: Product, new_price: float, db: Session):
 
 # ============================================
 # JOB: UPDATE ALL PRICES
-# ✅ FIXED: is_available filter HATA DIYA
 # ============================================
 async def update_all_prices():
     """SAARE products ke prices update karta hai (24h)."""
@@ -431,8 +428,6 @@ async def update_all_prices():
     db: Session = SessionLocal()
 
     try:
-        # ✅ FIXED: Saare products process karo (draft/out-of-stock bhi)
-        # Isse wapas stock aane pe is_available = true ho jayega
         products = db.query(Product).all()
         logger.info(f"Total products: {len(products)}")
 
@@ -496,10 +491,12 @@ async def update_all_prices():
                 old_amazon = product.amazon_price or 0
                 old_price = product.price
 
+                # ✅ FIXED: "both" markup type support
                 new_final_price = calculate_final_price(
                     amazon_price=new_amazon_price,
                     markup=product.markup or 2.0,
                     markup_type=getattr(product, "markup_type", "fixed") or "fixed",
+                    extra_percent=getattr(product, "extra_percent", 0.0) or 0.0,   # ✅ NAYA
                 )
 
                 product.amazon_price = new_amazon_price

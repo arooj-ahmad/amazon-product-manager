@@ -1,5 +1,5 @@
 // src/pages/ShopifyApp.jsx
-import { useState } from 'react'   // ✅ NAYA
+import { useState } from 'react'
 import { useShopifyApp } from '../hooks/useShopifyApp'
 import { styles, theme } from '../styles/theme'
 import Header from '../components/Header'
@@ -8,13 +8,14 @@ import CollectionsSelector from '../components/CollectionsSelector'
 import CronRunner from '../components/CronRunner'
 import InfoBox from '../components/InfoBox'
 import PlanCard from '../components/PlanCard'
-import MarkupSettings from './MarkupSettings'   // ✅ NAYA
+import MarkupSettings from './MarkupSettings'
 
 export default function ShopifyApp() {
   const {
     amazonUrl, setAmazonUrl,
     markup, setMarkup,
     markupType, setMarkupType,
+    extraPercent, setExtraPercent,
     isLoading, isSubscribing, message,
     shopifyReady, shopDomain,
     subscription, plans, checkingSub,
@@ -26,11 +27,11 @@ export default function ShopifyApp() {
     cronRunning, cronMessage, handleRunCron,
   } = useShopifyApp()
 
-  // ✅ NAYA: Markup Settings page toggle
+  // Markup Settings page toggle
   const [showMarkupSettings, setShowMarkupSettings] = useState(false)
 
   // ========================================
-  // ✅ NAYA: Markup Settings Page (Full Page)
+  // Markup Settings Page (Full Page)
   // ========================================
   if (showMarkupSettings) {
     return (
@@ -97,7 +98,7 @@ export default function ShopifyApp() {
           shopifyReady={shopifyReady}
           shopDomain={shopDomain}
           subscription={subscription}
-          onOpenMarkupSettings={() => setShowMarkupSettings(true)}   // ✅ NAYA
+          onOpenMarkupSettings={() => setShowMarkupSettings(true)}
         />
 
         <AddProductForm
@@ -107,6 +108,8 @@ export default function ShopifyApp() {
           setMarkup={setMarkup}
           markupType={markupType}
           setMarkupType={setMarkupType}
+          extraPercent={extraPercent}
+          setExtraPercent={setExtraPercent}
           isLoading={isLoading}
           message={message}
           onSubmit={handleAddProduct}

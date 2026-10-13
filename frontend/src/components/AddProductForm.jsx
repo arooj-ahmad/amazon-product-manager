@@ -8,10 +8,26 @@ export default function AddProductForm({
   setMarkup,
   markupType,
   setMarkupType,
+  extraPercent,          // ✅ NAYA
+  setExtraPercent,       // ✅ NAYA
   isLoading,
   message,
   onSubmit,
 }) {
+  // ✅ NAYA: Final price hint dynamically banao
+  const getPriceHint = () => {
+    const m = parseFloat(markup) || 0
+    const e = parseFloat(extraPercent) || 0
+
+    if (markupType === 'percent') {
+      return `💡 Final price = Amazon price × (1 + ${m}%)`
+    }
+    if (markupType === 'both') {
+      return `💡 Final price = (Amazon price + $${m}) × (1 + ${e}%)`
+    }
+    return `💡 Final price = Amazon price + $${m}`
+  }
+
   return (
     <div style={styles.card}>
       {/* Header */}
@@ -59,21 +75,35 @@ export default function AddProductForm({
             >
               <option value="fixed">$ Fixed</option>
               <option value="percent">% Percent</option>
+              <option value="both">$ + % (Both)</option>   {/* ✅ NAYA */}
             </select>
             <input
               type="number"
               value={markup}
               onChange={(e) => setMarkup(e.target.value)}
-              placeholder="2.00"
+              placeholder={markupType === 'percent' ? '10' : '2.00'}
               step="0.01"
               min="0"
               style={styles.inputSmall}
               disabled={isLoading}
             />
+
+            {/* ✅ NAYA: Extra % input — sirf "both" ke liye */}
+            {markupType === 'both' && (
+              <input
+                type="number"
+                value={extraPercent}
+                onChange={(e) => setExtraPercent(e.target.value)}
+                placeholder="Extra %"
+                step="0.01"
+                min="0"
+                max="500"
+                style={styles.inputSmall}
+                disabled={isLoading}
+              />
+            )}
           </div>
-          <p style={styles.hint}>
-            💡 Final price = Amazon price + ${markup || 0}
-          </p>
+          <p style={styles.hint}>{getPriceHint()}</p>
         </div>
 
         {/* Submit */}
@@ -138,6 +168,9 @@ export default function AddProductForm({
   )
 }
 
+// ============================================
+// Styles — SAME AS BEFORE
+// ============================================
 const styles = {
   card: {
     background: theme.colors.bgCard,
@@ -236,6 +269,7 @@ const styles = {
     boxSizing: 'border-box',
     background: theme.colors.bgSubtle,
     color: theme.colors.text,
+    minWidth: '80px',
   },
   hint: {
     fontSize: '12px',

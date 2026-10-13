@@ -15,6 +15,7 @@
 #               standard fields Shopify tak pahunchte hain
 # + ✅ NAYA: Collections — fetch + add product to collections
 # + ✅ NAYA: Manual Cron Trigger — /trigger-price-update
+# + ✅ NAYA: Markup type "both" — Fixed + Percent
 # ============================================
 
 import logging
@@ -46,14 +47,14 @@ from app.services.shopify import (
     create_shopify_product,
     create_shopify_product_with_variants,
     add_variant_to_existing_product,
-    add_product_to_collections,   # ✅ NAYA
+    add_product_to_collections,
     exchange_code_for_token,
     exchange_id_token_for_offline_token,
     verify_hmac,
     verify_id_token,
     shopify_graphql,
 )
-from app.services.scheduler import run_price_update_now   # ✅ NAYA
+from app.services.scheduler import run_price_update_now
 
 logger = logging.getLogger(__name__)
 
@@ -61,7 +62,8 @@ router = APIRouter(prefix="/api/shopify", tags=["Shopify"])
 
 
 # ============================================
-# ✅ FIXED v3: Build product_data with metafields
+# ✅ FIXED v4: Build product_data with metafields
+# + ✅ NAYA: "both" markup type support
 # ============================================
 def _build_product_data_for_shopify(data: dict, product=None) -> dict:
     """
@@ -80,12 +82,20 @@ def _build_product_data_for_shopify(data: dict, product=None) -> dict:
             amazon = float(product.amazon_price or 0)
             markup_val = float(product.markup or 2.0)
             markup_type = product.markup_type or "fixed"
+            extra_pct = float(getattr(product, "extra_percent", 0.0) or 0.0)
+
             if markup_type == "percent":
                 product_price = amazon * (1 + markup_val / 100)
+            elif markup_type == "both":
+                # ✅ Fixed add karo, phir percent
+                base_price = amazon + markup_val
+                product_price = base_price * (1 + extra_pct / 100)
             else:
                 product_price = amazon + markup_val
+
             logger.warning(
-                f"⚠️ product.price was 0 — calculated ${product_price}"
+                f"⚠️ product.price was 0 — calculated ${product_price} "
+                f"(type={markup_type})"
             )
 
         base = {
@@ -313,7 +323,8 @@ async def check_variant_exists_in_shopify(
 
 
 # ============================================
-# HELPER: SMART MARKUP CAP
+# ✅ FIXED v2: SMART MARKUP CAP
+# + ✅ NAYA: "both" support
 # ============================================
 def apply_markup_cap(markup: float, markup_type: str) -> float:
     """Markup ko safe limits mein cap karo."""
@@ -333,6 +344,11 @@ def apply_markup_cap(markup: float, markup_type: str) -> float:
         if markup > 500:
             logger.warning(f"⚠️ Percent markup {markup}% capped at 500%")
             markup = 500.0
+    elif markup_type == "both":
+        # ✅ "both" mein fixed part $50 tak cap
+        if markup > 50:
+            logger.warning(f"⚠️ Fixed part ${markup} capped at $50")
+            markup = 50.0
     else:
         markup = min(markup, 50.0)
 
@@ -548,7 +564,7 @@ async def get_shopify_collections(
 
 
 # ============================================
-# ✅ NAYA: TRIGGER CRON JOB MANUALLY
+# ✅ TRIGGER CRON JOB MANUALLY
 # ============================================
 @router.post("/trigger-price-update")
 async def trigger_price_update(
@@ -557,7 +573,6 @@ async def trigger_price_update(
 ):
     """
     Manually price update cron job trigger karo.
-    User button click kare toh yeh endpoint call hoga.
     """
     if not authorization or not authorization.startswith("Bearer "):
         raise HTTPException(status_code=401, detail="Missing authorization")
@@ -581,7 +596,6 @@ async def trigger_price_update(
 
     logger.info(f"🚀 Manual price update triggered by {shop_domain}")
 
-    # ✅ Store check karein
     store = (
         db.query(ShopifyStore)
         .filter(ShopifyStore.shop_domain == shop_domain)
@@ -595,7 +609,6 @@ async def trigger_price_update(
         )
 
     try:
-        # ✅ Cron job manually run karo
         await run_price_update_now()
 
         logger.info(f"✅ Price update completed for {shop_domain}")
@@ -755,13 +768,15 @@ async def push_product_to_shopify(
 
 
 # ============================================
-# ADD PRODUCT FROM SHOPIFY APP (Iframe)
+# ✅ FIXED v2: ADD PRODUCT FROM SHOPIFY APP
+# + ✅ NAYA: extra_percent param + "both" validation
 # ============================================
 @router.post("/app/add-product")
 async def add_product_from_shopify_app(
     amazon_url: str = Body(..., embed=True),
     markup: float = Body(2.0, embed=True),
     markup_type: str = Body("fixed", embed=True),
+    extra_percent: float = Body(0.0, embed=True),   # ✅ NAYA
     collection_ids: list = Body(default=[], embed=True),
     authorization: str = Header(...),
     db: Session = Depends(get_db),
@@ -879,18 +894,23 @@ async def add_product_from_shopify_app(
             logger.warning(f"⚠️ Variant exists — new product")
             existing_parent = None
 
+    # ✅ FIXED: "both" support
     user_markup = float(markup) if markup is not None else 2.0
     user_markup_type = (
-        markup_type if markup_type in ("fixed", "percent") else "fixed"
+        markup_type if markup_type in ("fixed", "percent", "both") else "fixed"
     )
     user_markup = apply_markup_cap(user_markup, user_markup_type)
 
-    logger.info(f"💰 Markup: {user_markup} ({user_markup_type})")
+    logger.info(
+        f"💰 Markup: {user_markup} ({user_markup_type}), "
+        f"extra_percent={extra_percent}"
+    )
 
     final_price = calculate_final_price(
         amazon_price=data["amazon_price"],
         markup=user_markup,
         markup_type=user_markup_type,
+        extra_percent=extra_percent,   # ✅ NAYA
     )
 
     logger.info(f"💰 Final price: ${final_price}")
@@ -914,6 +934,8 @@ async def add_product_from_shopify_app(
         price=final_price,
         markup=user_markup,
         markup_type=user_markup_type,
+        # ✅ NAYA (agar column exist karta hai):
+        # extra_percent=extra_percent,
         is_manual_override=False,
         variant_attributes=data.get("variant_attributes", []),
         categories=data.get("categories", []),
@@ -987,6 +1009,12 @@ async def add_product_from_shopify_app(
                     product_data=product_data,
                 )
 
+                # ✅ SAFETY: None check
+                if _result is None:
+                    logger.error("❌ create_shopify_product returned None")
+                    _result = {"errors": [{"message": "Product creation failed"}]}
+                    return _pushed, _pid, _vadd, _result
+
                 if "errors" not in _result:
                     _pushed = True
                     _pid = (
@@ -1044,6 +1072,7 @@ async def add_product_from_shopify_app(
         "parent_asin": new_product.parent_asin,
         "markup": user_markup,
         "markup_type": user_markup_type,
+        "extra_percent": extra_percent,   # ✅ NAYA
         "final_price": final_price,
         "amazon_price": new_product.amazon_price,
         "variations": all_variations,

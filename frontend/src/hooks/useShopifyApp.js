@@ -76,6 +76,7 @@ export function useShopifyApp() {
   const [amazonUrl, setAmazonUrl] = useState('')
   const [markup, setMarkup] = useState('2.00')
   const [markupType, setMarkupType] = useState('fixed')
+  const [extraPercent, setExtraPercent] = useState('10')   // ✅ NAYA — "both" ke liye
   const [isLoading, setIsLoading] = useState(false)
   const [isSubscribing, setIsSubscribing] = useState(false)
   const [message, setMessage] = useState(null)
@@ -186,7 +187,7 @@ export function useShopifyApp() {
   }, [loadBillingData])
 
   // ========================================
-  // ✅ FIXED: Load Collections (with domain fallback)
+  // ✅ Load Collections (with domain fallback)
   // ========================================
   const loadCollections = useCallback(async (domain) => {
     const actualDomain = resolveShopDomain(domain)
@@ -219,7 +220,7 @@ export function useShopifyApp() {
   }, [])
 
   // ========================================
-  // ✅ FIXED: Auto-load collections (with fallback)
+  // ✅ Auto-load collections
   // ========================================
   useEffect(() => {
     const domain = resolveShopDomain(shopDomain)
@@ -261,7 +262,7 @@ export function useShopifyApp() {
   }, [shopDomain, loadCollections])
 
   // ========================================
-  // ✅ NAYA: Trigger Cron Job Manually
+  // ✅ Trigger Cron Job Manually
   // ========================================
   const handleRunCron = useCallback(async () => {
     if (cronRunning) return
@@ -298,7 +299,6 @@ export function useShopifyApp() {
 
       showToast('Price update completed!')
 
-      // Auto-hide after 5 seconds
       setTimeout(() => setCronMessage(null), 5000)
 
     } catch (err) {
@@ -435,6 +435,7 @@ export function useShopifyApp() {
 
   // ========================================
   // 4. Add product handler
+  // + ✅ NAYA: extra_percent bhejo
   // ========================================
   const handleAddProduct = async (e) => {
     e.preventDefault()
@@ -449,6 +450,7 @@ export function useShopifyApp() {
       const collectionIdsArray = Array.from(selectedCollections)
 
       console.log('📤 Sending product with collections:', collectionIdsArray)
+      console.log('📤 Markup:', markup, markupType, 'extra:', extraPercent)
 
       const res = await safeFetch(
         `${API_URL}/api/shopify/app/add-product`,
@@ -462,6 +464,7 @@ export function useShopifyApp() {
             amazon_url: amazonUrl.trim(),
             markup: parseFloat(markup) || 2.0,
             markup_type: markupType,
+            extra_percent: parseFloat(extraPercent) || 0,   // ✅ NAYA
             collection_ids: collectionIdsArray,
           }),
         }
@@ -501,6 +504,7 @@ export function useShopifyApp() {
 
       setAmazonUrl('')
       setMarkup('2.00')
+      setExtraPercent('10')   // ✅ NAYA
       clearCollections()
 
       showToast('Product added!')
@@ -515,6 +519,7 @@ export function useShopifyApp() {
     amazonUrl,
     markup,
     markupType,
+    extraPercent,        // ✅ NAYA
     isLoading,
     isSubscribing,
     message,
@@ -527,6 +532,7 @@ export function useShopifyApp() {
     setAmazonUrl,
     setMarkup,
     setMarkupType,
+    setExtraPercent,     // ✅ NAYA
 
     handleAddProduct,
     handleSubscribe,
