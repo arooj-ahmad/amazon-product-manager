@@ -58,17 +58,14 @@ async function safeFetch(url, options = {}) {
 // Helper: Domain determine karo (multiple fallbacks)
 // ============================================
 function resolveShopDomain(currentDomain) {
-  // 1. Current state
   if (currentDomain) return currentDomain
 
-  // 2. URL params
   if (typeof window !== 'undefined') {
     const params = new URLSearchParams(window.location.search)
     const urlShop = params.get('shop')
     if (urlShop) return urlShop
   }
 
-  // 3. Hardcoded fallback
   return FALLBACK_SHOP_DOMAIN
 }
 
@@ -94,6 +91,10 @@ export function useShopifyApp() {
   const [collections, setCollections] = useState([])
   const [selectedCollections, setSelectedCollections] = useState(new Set())
   const [collectionsLoading, setCollectionsLoading] = useState(false)
+
+  // ✅ NAYA: Cron job state
+  const [cronRunning, setCronRunning] = useState(false)
+  const [cronMessage, setCronMessage] = useState(null)
 
   const bridgeCheckRef = useRef(null)
 
@@ -188,7 +189,6 @@ export function useShopifyApp() {
   // ✅ FIXED: Load Collections (with domain fallback)
   // ========================================
   const loadCollections = useCallback(async (domain) => {
-    // ✅ Multiple fallbacks
     const actualDomain = resolveShopDomain(domain)
 
     console.log('📁 Fetching collections for:', actualDomain)
@@ -222,7 +222,6 @@ export function useShopifyApp() {
   // ✅ FIXED: Auto-load collections (with fallback)
   // ========================================
   useEffect(() => {
-    // ✅ Domain resolve karo (multiple sources)
     const domain = resolveShopDomain(shopDomain)
 
     if (domain && subscription?.active) {
@@ -260,6 +259,61 @@ export function useShopifyApp() {
     const domain = resolveShopDomain(shopDomain)
     return loadCollections(domain)
   }, [shopDomain, loadCollections])
+
+  // ========================================
+  // ✅ NAYA: Trigger Cron Job Manually
+  // ========================================
+  const handleRunCron = useCallback(async () => {
+    if (cronRunning) return
+
+    setCronRunning(true)
+    setCronMessage(null)
+
+    try {
+      const idToken = await getIdToken()
+
+      console.log('🚀 Triggering price update cron...')
+
+      const res = await safeFetch(
+        `${API_URL}/api/shopify/trigger-price-update`,
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${idToken}`,
+          },
+        }
+      )
+
+      if (!res.ok) {
+        throw new Error(res.data.detail || `HTTP ${res.status}`)
+      }
+
+      console.log('✅ Cron job completed:', res.data)
+
+      setCronMessage({
+        type: 'success',
+        text: `✅ ${res.data.message || 'Price update completed!'}`,
+      })
+
+      showToast('Price update completed!')
+
+      // Auto-hide after 5 seconds
+      setTimeout(() => setCronMessage(null), 5000)
+
+    } catch (err) {
+      console.error('❌ Cron trigger failed:', err)
+
+      setCronMessage({
+        type: 'error',
+        text: `❌ ${err.message}`,
+      })
+
+      showToast('Price update failed!', true)
+    } finally {
+      setCronRunning(false)
+    }
+  }, [cronRunning])
 
   // ========================================
   // 3. Subscribe handler
@@ -366,7 +420,6 @@ export function useShopifyApp() {
         })
         showToast('Active Test Mode enabled!')
 
-        // ✅ Test activate ke baad collections load karo
         if (targetShop) {
           loadCollections(targetShop)
         }
@@ -486,6 +539,11 @@ export function useShopifyApp() {
     toggleCollection,
     clearCollections,
     loadCollections,
-    refreshCollections,   // ✅ NAYA — manual refresh ke liye
+    refreshCollections,
+
+    // ✅ NAYA: Cron job
+    cronRunning,
+    cronMessage,
+    handleRunCron,
   }
 }

@@ -3,7 +3,7 @@ import { useShopifyApp } from '../hooks/useShopifyApp'
 import { styles, theme } from '../styles/theme'
 import Header from '../components/Header'
 import AddProductForm from '../components/AddProductForm'
-import CollectionsSelector from '../components/CollectionsSelector'   // ✅ NAYA
+import CollectionsSelector from '../components/CollectionsSelector'
 import InfoBox from '../components/InfoBox'
 import PlanCard from '../components/PlanCard'
 
@@ -27,12 +27,18 @@ export default function ShopifyApp() {
     handleSubscribe,
     handleTestActivate,
 
-    // ✅ NAYA: Collections
+    // ✅ Collections
     collections,
     selectedCollections,
     collectionsLoading,
     toggleCollection,
     clearCollections,
+    refreshCollections,
+
+    // ✅ NAYA: Cron job
+    cronRunning,
+    cronMessage,
+    handleRunCron,
   } = useShopifyApp()
 
   // ========================================
@@ -144,14 +150,102 @@ export default function ShopifyApp() {
           onSubmit={handleAddProduct}
         />
 
-        {/* ✅ NAYA: Collections Selector */}
+        {/* ✅ Collections Selector */}
         <CollectionsSelector
           collections={collections}
           selectedCollections={selectedCollections}
           loading={collectionsLoading}
           onToggle={toggleCollection}
           onClear={clearCollections}
+          onRefresh={refreshCollections}
         />
+
+        {/* ✅ NAYA: Manual Price Update */}
+        <div
+          style={{
+            marginTop: '20px',
+            marginBottom: '20px',
+            padding: '20px',
+            border: '1px solid #e1e3e5',
+            borderRadius: '8px',
+            background: '#fafbfc',
+          }}
+        >
+          <div
+            style={{
+              display: 'flex',
+              justifyContent: 'space-between',
+              alignItems: 'center',
+              marginBottom: '8px',
+            }}
+          >
+            <span
+              style={{
+                fontSize: '14px',
+                fontWeight: '600',
+                color: '#202223',
+              }}
+            >
+              ⚡ Manual Price Update
+            </span>
+          </div>
+
+          <p
+            style={{
+              fontSize: '13px',
+              color: '#6d7175',
+              marginBottom: '16px',
+              lineHeight: '1.5',
+            }}
+          >
+            Trigger the price update cron job manually. It will fetch the
+            latest Amazon prices and update your Shopify products.
+          </p>
+
+          <button
+            type="button"
+            onClick={handleRunCron}
+            disabled={cronRunning}
+            style={{
+              width: '100%',
+              padding: '12px 20px',
+              background: cronRunning ? '#b5b5b5' : '#008060',
+              color: 'white',
+              border: 'none',
+              borderRadius: '6px',
+              fontSize: '14px',
+              fontWeight: '600',
+              cursor: cronRunning ? 'not-allowed' : 'pointer',
+              opacity: cronRunning ? 0.7 : 1,
+              transition: 'background 0.15s',
+            }}
+          >
+            {cronRunning
+              ? '⏳ Running Price Update...'
+              : '🚀 Run Price Update Now'}
+          </button>
+
+          {cronMessage && (
+            <div
+              style={{
+                marginTop: '12px',
+                padding: '12px 16px',
+                borderRadius: '6px',
+                fontSize: '13px',
+                fontWeight: '500',
+                background:
+                  cronMessage.type === 'success' ? '#eefbf4' : '#fff4f4',
+                color:
+                  cronMessage.type === 'success' ? '#008060' : '#d32f2f',
+                border: `1px solid ${
+                  cronMessage.type === 'success' ? '#aee9d1' : '#ffd6d6'
+                }`,
+              }}
+            >
+              {cronMessage.text}
+            </div>
+          )}
+        </div>
 
         <InfoBox />
       </div>

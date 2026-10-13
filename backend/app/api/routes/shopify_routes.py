@@ -14,6 +14,7 @@
 # + ✅ FIXED v3: DATA + PRODUCT MERGE — Bright Data ke saare
 #               standard fields Shopify tak pahunchte hain
 # + ✅ NAYA: Collections — fetch + add product to collections
+# + ✅ NAYA: Manual Cron Trigger — /trigger-price-update
 # ============================================
 
 import logging
@@ -52,6 +53,7 @@ from app.services.shopify import (
     verify_id_token,
     shopify_graphql,
 )
+from app.services.scheduler import run_price_update_now   # ✅ NAYA
 
 logger = logging.getLogger(__name__)
 
@@ -474,7 +476,7 @@ def get_store_id_by_domain(
 
 
 # ============================================
-# ✅ NAYA: FETCH SHOPIFY COLLECTIONS
+# ✅ FETCH SHOPIFY COLLECTIONS
 # ============================================
 @router.get("/collections")
 async def get_shopify_collections(
@@ -546,13 +548,80 @@ async def get_shopify_collections(
 
 
 # ============================================
+# ✅ NAYA: TRIGGER CRON JOB MANUALLY
+# ============================================
+@router.post("/trigger-price-update")
+async def trigger_price_update(
+    authorization: str = Header(...),
+    db: Session = Depends(get_db),
+):
+    """
+    Manually price update cron job trigger karo.
+    User button click kare toh yeh endpoint call hoga.
+    """
+    if not authorization or not authorization.startswith("Bearer "):
+        raise HTTPException(status_code=401, detail="Missing authorization")
+
+    token = authorization.replace("Bearer ", "").strip()
+    if not token:
+        raise HTTPException(status_code=401, detail="Empty ID token")
+
+    try:
+        payload = verify_id_token(token)
+        logger.info("✅ ID token verified for cron trigger")
+    except ValueError as e:
+        logger.error(f"❌ ID token verify fail: {e}")
+        raise HTTPException(status_code=401, detail=f"Invalid ID token: {str(e)}")
+
+    dest = payload.get("dest", "")
+    shop_domain = dest.replace("https://", "").split("/")[0]
+
+    if not shop_domain:
+        raise HTTPException(status_code=401, detail="Shop domain missing")
+
+    logger.info(f"🚀 Manual price update triggered by {shop_domain}")
+
+    # ✅ Store check karein
+    store = (
+        db.query(ShopifyStore)
+        .filter(ShopifyStore.shop_domain == shop_domain)
+        .first()
+    )
+
+    if not store:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Store {shop_domain} not connected",
+        )
+
+    try:
+        # ✅ Cron job manually run karo
+        await run_price_update_now()
+
+        logger.info(f"✅ Price update completed for {shop_domain}")
+
+        return {
+            "success": True,
+            "message": "Price update completed successfully",
+            "shop_domain": shop_domain,
+        }
+
+    except Exception as e:
+        logger.error(f"❌ Price update failed: {e}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Price update failed: {str(e)}",
+        )
+
+
+# ============================================
 # PUSH PRODUCT TO SHOPIFY (Admin Panel Se)
 # ============================================
 @router.post("/push-product/{product_id}")
 async def push_product_to_shopify(
     product_id: int,
     shop_domain: str = Body(..., embed=True),
-    collection_ids: list = Body(default=[], embed=True),   # ✅ NAYA
+    collection_ids: list = Body(default=[], embed=True),
     db: Session = Depends(get_db),
     current_admin: Admin = Depends(get_current_admin),
 ):
@@ -622,7 +691,6 @@ async def push_product_to_shopify(
             product.shopify_handle = existing_parent.shopify_handle
             db.commit()
 
-            # ✅ NAYA: Collections mein add karo
             if collection_ids:
                 await add_product_to_collections(
                     shop=store.shop_domain,
@@ -640,7 +708,6 @@ async def push_product_to_shopify(
                 "collections_added": len(collection_ids),
             }
 
-    # ✅ Build product_data — product se
     product_data = _build_product_data_for_shopify(
         data={}, product=product
     )
@@ -669,7 +736,6 @@ async def push_product_to_shopify(
     product.shopify_handle = shopify_product.get("handle")
     db.commit()
 
-    # ✅ NAYA: Collections mein add karo
     if new_pid and collection_ids:
         await add_product_to_collections(
             shop=store.shop_domain,
@@ -696,7 +762,7 @@ async def add_product_from_shopify_app(
     amazon_url: str = Body(..., embed=True),
     markup: float = Body(2.0, embed=True),
     markup_type: str = Body("fixed", embed=True),
-    collection_ids: list = Body(default=[], embed=True),   # ✅ NAYA
+    collection_ids: list = Body(default=[], embed=True),
     authorization: str = Header(...),
     db: Session = Depends(get_db),
 ):
@@ -949,7 +1015,6 @@ async def add_product_from_shopify_app(
             if refreshed:
                 shopify_pushed, shopify_product_id, variant_added, _ = await do_push()
 
-        # ✅ NAYA: Collections mein add karo (push success ke baad)
         if shopify_pushed and shopify_product_id and collection_ids:
             logger.info(
                 f"📁 Adding product to {len(collection_ids)} collection(s)..."
@@ -985,7 +1050,7 @@ async def add_product_from_shopify_app(
         "shopify_pushed": shopify_pushed,
         "shopify_product_id": shopify_product_id,
         "variant_added": variant_added,
-        "collections_added": collections_added,   # ✅ NAYA
+        "collections_added": collections_added,
         "shop_domain": shop_domain,
         "store_id": store.id,
     }
