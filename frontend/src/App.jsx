@@ -1,38 +1,72 @@
 // ============================================
 // frontend/src/App.jsx
 // Final routes — user + admin + Footer
-// + ✅ FIXED: HashRouter (Shopify iframe compatible)
+// + HashRouter (Shopify iframe compatible)
+// + ✅ FIX: External hash change listener (sidebar navigation)
 // ============================================
 
-import { HashRouter, Routes, Route, useLocation, Navigate, Link } from 'react-router-dom'
+import { HashRouter, Routes, Route, useLocation, Navigate, Link, useNavigate } from 'react-router-dom'
+import { useEffect } from 'react'
 import Navbar from './components/Navbar'
 import Footer from './components/Footer'
 
-// User pages
 import ProductDetail from './pages/ProductDetail'
-
 import ShopifyApp from './pages/ShopifyApp'
 import MarkupSettings from './pages/MarkupSettings'
-
 import PrivacyPolicy from './pages/PrivacyPolicy'
 import TermsOfService from './pages/TermsOfService'
 
-// ✅ Layout wrapper jo decide kare Navbar/Footer dikhaye ya nahi
+// ============================================
+// ✅ NAYA: External hash change sun-ne wala component
+// Shopify sidebar se click hone par hash badalta hai,
+// lekin HashRouter khud detect nahi karta — isliye manual sync.
+// ============================================
+function HashChangeListener() {
+  const navigate = useNavigate()
+  const location = useLocation()
+
+  useEffect(() => {
+    const syncFromHash = () => {
+      const rawHash = window.location.hash.replace(/^#/, '') || '/shopify-app'
+      const currentPath = location.pathname
+
+      if (rawHash !== currentPath) {
+        console.log(`🔄 External hash change detected: ${rawHash}`)
+        navigate(rawHash)
+      }
+    }
+
+    // Initial sync (page load pe)
+    syncFromHash()
+
+    // Listen for changes
+    window.addEventListener('hashchange', syncFromHash)
+    window.addEventListener('popstate', syncFromHash)
+
+    return () => {
+      window.removeEventListener('hashchange', syncFromHash)
+      window.removeEventListener('popstate', syncFromHash)
+    }
+  }, [navigate, location.pathname])
+
+  return null
+}
+
+// ============================================
+// Layout wrapper — full screen vs normal
+// ============================================
 function Layout({ children }) {
   const location = useLocation()
 
-  // Yeh routes pe Navbar/Footer NAHI dikhayenge (full-screen)
   const FULL_SCREEN_ROUTES = ['/markup-settings', '/shopify-app']
   const isFullScreen = FULL_SCREEN_ROUTES.some((path) =>
     location.pathname.startsWith(path)
   )
 
   if (isFullScreen) {
-    // Full screen — sirf content, no navbar/footer
     return <>{children}</>
   }
 
-  // Normal layout — Navbar + Footer
   return (
     <div className="flex flex-col min-h-screen">
       <Navbar />
@@ -45,6 +79,7 @@ function Layout({ children }) {
 function App() {
   return (
     <HashRouter>
+      <HashChangeListener />   {/* ✅ Ye add karo */}
       <Layout>
         <Routes>
           {/* USER ROUTES */}

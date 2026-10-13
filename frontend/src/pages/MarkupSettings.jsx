@@ -1,15 +1,15 @@
 // ============================================
 // frontend/src/pages/MarkupSettings.jsx
 // Markup Settings Page — Country + Tax support
-// + ✅ NAYA: Store ID database se aati hai (koi hardcode nahi)
-// + ✅ NAYA: Bulk update par store_id bhejo
-// + ✅ NAYA: "both" markup type — Fixed + Percent
-// + ✅ FIXED: markup_value blank (user khud set karega)
-// + ✅ FIXED: useNavigate (sidebar navigation ke liye)
+// + Store ID database se aati hai (koi hardcode nahi)
+// + Bulk update par store_id bhejo
+// + "both" markup type — Fixed + Percent
+// + markup_value blank (user khud set karega)
+// + useNavigate (sidebar navigation ke liye)
 // ============================================
 
 import { useState, useEffect } from 'react'
-import { useNavigate } from 'react-router-dom'   // ✅ NAYA
+import { useNavigate } from 'react-router-dom'
 import {
   getCountries,
   updatePricing,
@@ -75,8 +75,8 @@ function formatCurrency(amount, country) {
 // ============================================
 // Main Component
 // ============================================
-export default function MarkupSettings() {   // ✅ onBack prop HATAO
-  const navigate = useNavigate()              // ✅ NAYA
+export default function MarkupSettings() {
+  const navigate = useNavigate()
 
   const [products, setProducts] = useState([])
   const [countries, setCountries] = useState([])
@@ -85,7 +85,6 @@ export default function MarkupSettings() {   // ✅ onBack prop HATAO
   const [message, setMessage] = useState(null)
   const [storeId, setStoreId] = useState(null)
 
-  // ✅ markup_value aur extra_percent blank
   const [bulkData, setBulkData] = useState({
     country_id: '',
     markup_type: 'fixed',
@@ -97,6 +96,7 @@ export default function MarkupSettings() {   // ✅ onBack prop HATAO
 
   useEffect(() => {
     init()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
   const init = async () => {
@@ -116,7 +116,7 @@ export default function MarkupSettings() {   // ✅ onBack prop HATAO
       const countriesData = await getCountries()
       setCountries(countriesData || [])
 
-      let url = `${API_URL}/api/markup/products?store_id=${sid}`
+      const url = `${API_URL}/api/markup/products?store_id=${sid}`
       const productsRes = await safeFetch(url)
       if (!productsRes.ok) {
         throw new Error(productsRes.data.detail || 'Failed to load products')
@@ -143,7 +143,6 @@ export default function MarkupSettings() {   // ✅ onBack prop HATAO
       setMessage({ type: 'error', text: '❌ Please select a country' })
       return
     }
-    // ✅ markup_value required
     if (!bulkData.markup_value || parseFloat(bulkData.markup_value) <= 0) {
       setMessage({ type: 'error', text: '❌ Please enter a markup value' })
       return
@@ -187,7 +186,6 @@ export default function MarkupSettings() {   // ✅ onBack prop HATAO
   return (
     <div style={styles.page}>
       <div style={styles.container}>
-        {/* ✅ Back button — useNavigate use karo */}
         <button
           type="button"
           onClick={() => navigate('/')}
@@ -218,7 +216,8 @@ export default function MarkupSettings() {   // ✅ onBack prop HATAO
               border: '1px solid #fedf89',
             }}
           >
-            ⚠️ Store ID detect nahi ho saka. URL mein <code>?shop=</code> ya <code>/store/...</code> hona chahiye.
+            ⚠️ Store ID detect nahi ho saka. URL mein <code>?shop=</code> ya{' '}
+            <code>/store/...</code> hona chahiye.
           </div>
         )}
 
@@ -241,7 +240,9 @@ export default function MarkupSettings() {   // ✅ onBack prop HATAO
 
           <select
             value={bulkData.markup_type}
-            onChange={(e) => setBulkData({ ...bulkData, markup_type: e.target.value })}
+            onChange={(e) =>
+              setBulkData({ ...bulkData, markup_type: e.target.value })
+            }
             style={styles.bulkSelect}
             disabled={bulkLoading}
           >
@@ -255,13 +256,16 @@ export default function MarkupSettings() {   // ✅ onBack prop HATAO
             step="0.01"
             min="0"
             value={bulkData.markup_value}
-            onChange={(e) => setBulkData({ ...bulkData, markup_value: e.target.value })}
+            onChange={(e) =>
+              setBulkData({ ...bulkData, markup_value: e.target.value })
+            }
             style={styles.bulkInput}
             disabled={bulkLoading}
-            placeholder={bulkData.markup_type === 'percent' ? 'e.g. 10' : 'e.g. 2.00'}
+            placeholder={
+              bulkData.markup_type === 'percent' ? 'e.g. 10' : 'e.g. 2.00'
+            }
           />
 
-          {/* Extra % input — sirf "both" ke liye */}
           {bulkData.markup_type === 'both' && (
             <input
               type="number"
@@ -269,7 +273,9 @@ export default function MarkupSettings() {   // ✅ onBack prop HATAO
               min="0"
               max="500"
               value={bulkData.extra_percent}
-              onChange={(e) => setBulkData({ ...bulkData, extra_percent: e.target.value })}
+              onChange={(e) =>
+                setBulkData({ ...bulkData, extra_percent: e.target.value })
+              }
               style={styles.bulkInput}
               disabled={bulkLoading}
               placeholder="e.g. 10"
@@ -283,12 +289,15 @@ export default function MarkupSettings() {   // ✅ onBack prop HATAO
             max="100"
             placeholder="Tax %"
             value={bulkData.tax_rate}
-            onChange={(e) => setBulkData({ ...bulkData, tax_rate: e.target.value })}
+            onChange={(e) =>
+              setBulkData({ ...bulkData, tax_rate: e.target.value })
+            }
             style={styles.bulkInput}
             disabled={bulkLoading}
           />
 
           <button
+            type="button"
             onClick={handleBulkUpdate}
             disabled={
               bulkLoading ||
@@ -318,7 +327,9 @@ export default function MarkupSettings() {   // ✅ onBack prop HATAO
               ...styles.messageBox,
               background: message.type === 'success' ? '#e4f5e4' : '#fbeae5',
               color: message.type === 'success' ? '#008060' : '#d72c0d',
-              border: `1px solid ${message.type === 'success' ? '#aee9ae' : '#febcb3'}`,
+              border: `1px solid ${
+                message.type === 'success' ? '#aee9ae' : '#febcb3'
+              }`,
             }}
           >
             {message.text}
@@ -371,19 +382,23 @@ export default function MarkupSettings() {   // ✅ onBack prop HATAO
 // ============================================
 // Product Row
 // ============================================
-function ProductRow({ product, countries, storeId, saving, onSaveStart, onSaveEnd, onMessage }) {
+function ProductRow({
+  product,
+  countries,
+  storeId,
+  saving,
+  onSaveStart,
+  onSaveEnd,
+  onMessage,
+}) {
   const [countryId, setCountryId] = useState('')
 
-  // ✅ markup blank agar 0 ya missing ho
   const [markup, setMarkup] = useState(
-    product.markup != null && product.markup > 0
-      ? String(product.markup)
-      : ''
+    product.markup != null && product.markup > 0 ? String(product.markup) : ''
   )
 
   const [type, setType] = useState(product.markup_type || 'fixed')
 
-  // ✅ extra_percent blank agar 0 ya missing
   const [extraPercent, setExtraPercent] = useState(
     product.extra_percent != null && product.extra_percent > 0
       ? String(product.extra_percent)
@@ -394,7 +409,6 @@ function ProductRow({ product, countries, storeId, saving, onSaveStart, onSaveEn
 
   const selectedCountry = countries.find((c) => c.id === parseInt(countryId))
 
-  // ✅ "both" calculation
   const calc = (() => {
     const amazon = parseFloat(product.amazon_price) || 0
     const m = parseFloat(markup) || 0
@@ -431,7 +445,6 @@ function ProductRow({ product, countries, storeId, saving, onSaveStart, onSaveEn
       onMessage({ type: 'error', text: '❌ Country select karein' })
       return
     }
-    // ✅ markup required
     if (!markup || parseFloat(markup) <= 0) {
       onMessage({ type: 'error', text: '❌ Markup value enter karein' })
       return
@@ -452,7 +465,10 @@ function ProductRow({ product, countries, storeId, saving, onSaveStart, onSaveEn
         extra_percent: parseFloat(extraPercent) || 0,
         tax_rate: parseFloat(taxRate),
       })
-      onMessage({ type: 'success', text: '✅ Pricing save ho gayi! (Shopify bhi update)' })
+      onMessage({
+        type: 'success',
+        text: '✅ Pricing save ho gayi! (Shopify bhi update)',
+      })
     } catch (err) {
       onMessage({ type: 'error', text: `❌ ${err.message}` })
     } finally {
@@ -468,7 +484,12 @@ function ProductRow({ product, countries, storeId, saving, onSaveStart, onSaveEn
             <img
               src={product.image_url}
               alt=""
-              style={{ width: 40, height: 40, objectFit: 'cover', borderRadius: 4 }}
+              style={{
+                width: 40,
+                height: 40,
+                objectFit: 'cover',
+                borderRadius: 4,
+              }}
             />
           )}
           <span style={{ fontSize: 13 }}>
@@ -477,7 +498,9 @@ function ProductRow({ product, countries, storeId, saving, onSaveStart, onSaveEn
         </div>
       </td>
 
-      <td style={styles.td}>${(product.amazon_price || 0).toFixed(2)}</td>
+      <td style={styles.td}>
+        ${(product.amazon_price || 0).toFixed(2)}
+      </td>
 
       <td style={styles.td}>
         <select
@@ -488,7 +511,9 @@ function ProductRow({ product, countries, storeId, saving, onSaveStart, onSaveEn
         >
           <option value="">Select</option>
           {countries.map((c) => (
-            <option key={c.id} value={c.id}>{c.name}</option>
+            <option key={c.id} value={c.id}>
+              {c.name}
+            </option>
           ))}
         </select>
       </td>
@@ -519,7 +544,6 @@ function ProductRow({ product, countries, storeId, saving, onSaveStart, onSaveEn
         />
       </td>
 
-      {/* Extra % column — sirf "both" ke liye enable */}
       <td style={styles.td}>
         <input
           type="number"
@@ -558,12 +582,15 @@ function ProductRow({ product, countries, storeId, saving, onSaveStart, onSaveEn
 
       <td style={styles.td}>
         <button
+          type="button"
           onClick={handleSave}
           disabled={!countryId || !markup || saving || !storeId}
           style={{
             padding: '6px 16px',
             background:
-              countryId && markup && !saving && storeId ? '#008060' : '#babfc3',
+              countryId && markup && !saving && storeId
+                ? '#008060'
+                : '#babfc3',
             color: 'white',
             border: 'none',
             borderRadius: 4,
@@ -593,7 +620,12 @@ const styles = {
   },
   container: { maxWidth: '1400px', margin: '0 auto' },
   centerBox: { padding: '60px 20px', textAlign: 'center' },
-  h1: { fontSize: '24px', fontWeight: '700', color: '#202223', marginBottom: '4px' },
+  h1: {
+    fontSize: '24px',
+    fontWeight: '700',
+    color: '#202223',
+    marginBottom: '4px',
+  },
   subtitle: { color: '#637381', fontSize: '14px', marginBottom: '20px' },
 
   backBtn: {
@@ -659,7 +691,12 @@ const styles = {
     borderBottom: '1px solid #e1e3e5',
   },
   tbodyRow: { borderBottom: '1px solid #f0f0f0' },
-  td: { padding: 12, fontSize: 13, color: '#202223', verticalAlign: 'middle' },
+  td: {
+    padding: 12,
+    fontSize: 13,
+    color: '#202223',
+    verticalAlign: 'middle',
+  },
   rowSelect: {
     padding: '6px 8px',
     border: '1px solid #babfc3',

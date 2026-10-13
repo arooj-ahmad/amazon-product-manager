@@ -7,7 +7,6 @@ import CollectionsSelector from '../components/CollectionsSelector'
 import CronRunner from '../components/CronRunner'
 import InfoBox from '../components/InfoBox'
 import PlanCard from '../components/PlanCard'
-// ❌ MarkupSettings import HATAO — ab sidebar se khulega
 
 export default function ShopifyApp() {
   const {
@@ -25,9 +24,6 @@ export default function ShopifyApp() {
 
     cronRunning, cronMessage, handleRunCron,
   } = useShopifyApp()
-
-  // ❌ showMarkupSettings state HATAO
-  // ❌ if (showMarkupSettings) block HATAO
 
   // Loading
   if (checkingSub) {
