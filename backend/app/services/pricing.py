@@ -1,6 +1,8 @@
 """
 Pricing Service - Business Logic (SQLAlchemy version)
-+ Shopify real-time sync (SYNC — no asyncio)
++ Shopify real-time sync (handled by routes — async)
++ ✅ NAYA: "both" markup type (Fixed + Percent)
++ ✅ NAYA: extra_percent support
 """
 from decimal import Decimal, ROUND_HALF_UP
 from typing import Dict, Optional, List
@@ -15,15 +17,30 @@ class PricingService:
     """Central pricing logic"""
     
     @staticmethod
-    def calculate(amazon_price, markup_type, markup_value, tax_rate):
-        amazon = Decimal(str(amazon_price))
-        markup = Decimal(str(markup_value))
-        tax_pct = Decimal(str(tax_rate))
+    def calculate(amazon_price, markup_type, markup_value, tax_rate, extra_percent=0):
+        """
+        Calculate final price.
+        
+        Types:
+        - fixed:    amazon + markup
+        - percent:  amazon * (1 + markup/100)
+        - both:     (amazon + markup) * (1 + extra_percent/100)
+        """
+        amazon = Decimal(str(amazon_price or 0))
+        markup = Decimal(str(markup_value or 0))
+        tax_pct = Decimal(str(tax_rate or 0))
+        extra_pct = Decimal(str(extra_percent or 0))
         
         if markup_type == "fixed":
             subtotal = amazon + markup
-        else:
+        elif markup_type == "percent":
             subtotal = amazon * (Decimal("1") + markup / Decimal("100"))
+        elif markup_type == "both":
+            # ✅ Fixed add karo, phir percent apply
+            base = amazon + markup
+            subtotal = base * (Decimal("1") + extra_pct / Decimal("100"))
+        else:
+            subtotal = amazon + markup
         
         tax_amount = subtotal * (tax_pct / Decimal("100"))
         
@@ -89,8 +106,9 @@ class PricingService:
         markup_type,
         markup_value,
         tax_rate=None,
+        extra_percent=0.0,   # ✅ NAYA
     ) -> Dict:
-        """Ek product ka pricing update + Shopify sync (synchronous)"""
+        """Ek product ka pricing update (Shopify sync routes se hoga)"""
         db = SessionLocal()
         try:
             # Country fetch
@@ -104,7 +122,7 @@ class PricingService:
             if tax_rate is None:
                 tax_rate = float(country[0] or 0)
             
-            # Product fetch (WITH shopify_product_id)
+            # Product fetch
             product = db.execute(text("""
                 SELECT amazon_price, shopify_product_id 
                 FROM products WHERE id = :pid
@@ -116,12 +134,13 @@ class PricingService:
             amazon_price = float(product[0] or 0)
             shopify_product_id = product[1]
             
-            # Calculate
+            # Calculate (with extra_percent)
             calc = cls.calculate(
                 amazon_price=amazon_price,
                 markup_type=markup_type,
                 markup_value=markup_value,
                 tax_rate=tax_rate,
+                extra_percent=extra_percent,   # ✅ NAYA
             )
             
             # Upsert product_pricing
@@ -149,59 +168,34 @@ class PricingService:
                 "fprice": calc["final_price"],
             })
             
-            # ✅ Products table mein bhi final price update
+            # ✅ Products table update (markup, markup_type, extra_percent, price)
             db.execute(text("""
                 UPDATE products 
-                SET price = :fprice 
+                SET price = :fprice,
+                    markup = :mval,
+                    markup_type = :mtype,
+                    extra_percent = :epercent
                 WHERE id = :pid
             """), {
                 "pid": product_id,
                 "fprice": calc["final_price"],
+                "mval": markup_value,
+                "mtype": markup_type,
+                "epercent": extra_percent,
             })
             
             db.commit()
-            
-            # ✅ SHOPIFY SYNC (synchronous — no asyncio)
-            shopify_synced = False
-            
-            if shopify_product_id:
-                try:
-                    # ✅ FIX: shopify_stores (plural — as per models/shopify_store.py)
-                    store = db.execute(text("""
-                        SELECT shop_domain, access_token 
-                        FROM shopify_stores
-                        LIMIT 1
-                    """)).fetchone()
-                    
-                    if store and store[0] and store[1]:
-                        from app.services.shopify import sync_update_shopify_price
-                        
-                        shopify_synced = sync_update_shopify_price(
-                            shop_domain=store[0],
-                            access_token=store[1],
-                            shopify_product_id=shopify_product_id,
-                            new_price=calc["final_price"],
-                        )
-                        
-                        if shopify_synced:
-                            logger.info(f"✅ Shopify synced: ${calc['final_price']}")
-                        else:
-                            logger.warning("⚠️ Shopify sync failed (DB saved)")
-                    else:
-                        logger.warning("⚠️ No Shopify store connected")
-                except Exception as e:
-                    logger.error(f"❌ Shopify sync error: {e}")
-                    # DB save already ho gaya, sirf sync fail hua
             
             return {
                 "product_id": product_id,
                 "country_id": country_id,
                 "markup_type": markup_type,
                 "markup_value": markup_value,
+                "extra_percent": extra_percent,   # ✅ NAYA
                 "tax_rate": tax_rate,
                 "tax_amount": calc["tax_amount"],
                 "final_price": calc["final_price"],
-                "shopify_synced": shopify_synced,
+                "shopify_product_id": shopify_product_id,   # ✅ Route ko pass karo
             }
         except Exception:
             db.rollback()
@@ -210,8 +204,15 @@ class PricingService:
             db.close()
     
     @classmethod
-    def bulk_update(cls, country_id, markup_type, markup_value, tax_rate=None):
-        """Saare products par apply (Shopify sync skipped — bulk ke liye)"""
+    def bulk_update(
+        cls,
+        country_id,
+        markup_type,
+        markup_value,
+        tax_rate=None,
+        extra_percent=0.0,   # ✅ NAYA
+    ):
+        """Saare products par apply (Shopify sync routes se hoga)"""
         db = SessionLocal()
         try:
             country = db.execute(text("""
@@ -238,6 +239,7 @@ class PricingService:
                     markup_type=markup_type,
                     markup_value=markup_value,
                     tax_rate=tax_rate,
+                    extra_percent=extra_percent,   # ✅ NAYA
                 )
                 
                 db.execute(text("""
@@ -264,10 +266,21 @@ class PricingService:
                     "fprice": calc["final_price"],
                 })
                 
-                # ✅ Product price bhi update
+                # ✅ Products table update
                 db.execute(text("""
-                    UPDATE products SET price = :fprice WHERE id = :pid
-                """), {"pid": p[0], "fprice": calc["final_price"]})
+                    UPDATE products 
+                    SET price = :fprice,
+                        markup = :mval,
+                        markup_type = :mtype,
+                        extra_percent = :epercent
+                    WHERE id = :pid
+                """), {
+                    "pid": p[0],
+                    "fprice": calc["final_price"],
+                    "mval": markup_value,
+                    "mtype": markup_type,
+                    "epercent": extra_percent,
+                })
                 
                 updated += 1
             
