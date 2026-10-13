@@ -1,6 +1,7 @@
 # ============================================
 # app/services/shopify_sync.py
 # Price sync (Admin API) + Storefront availability check
+# + ✅ FIXED: Circular import — direct module se import
 # ============================================
 
 import logging
@@ -10,7 +11,7 @@ import httpx
 
 from app.config import settings
 from app.services.shopify_helpers import _safe_api_version
-from app.services.shopify_product import update_shopify_product_tags_and_type
+from app.services.shopify.product_extras import update_shopify_product_tags_and_type   # ✅ FIXED
 
 logger = logging.getLogger(__name__)
 
