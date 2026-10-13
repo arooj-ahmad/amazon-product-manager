@@ -4,6 +4,7 @@
 // + ✅ NAYA: Store ID database se aati hai (koi hardcode nahi)
 // + ✅ NAYA: Bulk update par store_id bhejo
 // + ✅ NAYA: "both" markup type — Fixed + Percent
+// + ✅ FIXED: markup_value blank (user khud set karega)
 // ============================================
 
 import { useState, useEffect } from 'react'
@@ -72,7 +73,7 @@ function formatCurrency(amount, country) {
 // ============================================
 // Main Component
 // ============================================
-export default function MarkupSettings({ onBack }) {   // ✅ NAYA: onBack prop
+export default function MarkupSettings({ onBack }) {
   const [products, setProducts] = useState([])
   const [countries, setCountries] = useState([])
   const [loading, setLoading] = useState(true)
@@ -80,11 +81,12 @@ export default function MarkupSettings({ onBack }) {   // ✅ NAYA: onBack prop
   const [message, setMessage] = useState(null)
   const [storeId, setStoreId] = useState(null)
 
+  // ✅ FIXED: markup_value aur extra_percent blank
   const [bulkData, setBulkData] = useState({
     country_id: '',
     markup_type: 'fixed',
-    markup_value: '2.00',
-    extra_percent: '10',        // ✅ NAYA
+    markup_value: '',
+    extra_percent: '',
     tax_rate: '0',
   })
   const [bulkLoading, setBulkLoading] = useState(false)
@@ -137,6 +139,11 @@ export default function MarkupSettings({ onBack }) {   // ✅ NAYA: onBack prop
       setMessage({ type: 'error', text: '❌ Please select a country' })
       return
     }
+    // ✅ FIXED: markup_value required
+    if (!bulkData.markup_value || parseFloat(bulkData.markup_value) <= 0) {
+      setMessage({ type: 'error', text: '❌ Please enter a markup value' })
+      return
+    }
     if (!storeId) {
       setMessage({ type: 'error', text: '❌ Store ID detect nahi ho saka' })
       return
@@ -151,7 +158,7 @@ export default function MarkupSettings({ onBack }) {   // ✅ NAYA: onBack prop
         store_id: storeId,
         markup_type: bulkData.markup_type,
         markup_value: parseFloat(bulkData.markup_value),
-        extra_percent: parseFloat(bulkData.extra_percent) || 0,   // ✅ NAYA
+        extra_percent: parseFloat(bulkData.extra_percent) || 0,
         tax_rate: parseFloat(bulkData.tax_rate),
       })
       setMessage({
@@ -176,7 +183,7 @@ export default function MarkupSettings({ onBack }) {   // ✅ NAYA: onBack prop
   return (
     <div style={styles.page}>
       <div style={styles.container}>
-        {/* ✅ NAYA: Back button */}
+        {/* Back button */}
         {onBack && (
           <button
             type="button"
@@ -197,7 +204,7 @@ export default function MarkupSettings({ onBack }) {   // ✅ NAYA: onBack prop
 
         <h1 style={styles.h1}>⚙️ Markup Settings</h1>
         <p style={styles.subtitle}>
-          Har product ka markup, country aur tax set karein. Default $2 hai.
+          Har product ka markup, country aur tax set karein.
         </p>
 
         {!storeId && (
@@ -238,7 +245,7 @@ export default function MarkupSettings({ onBack }) {   // ✅ NAYA: onBack prop
           >
             <option value="fixed">$ Fixed</option>
             <option value="percent">% Percent</option>
-            <option value="both">$ + % (Both)</option>   {/* ✅ NAYA */}
+            <option value="both">$ + % (Both)</option>
           </select>
 
           <input
@@ -249,10 +256,10 @@ export default function MarkupSettings({ onBack }) {   // ✅ NAYA: onBack prop
             onChange={(e) => setBulkData({ ...bulkData, markup_value: e.target.value })}
             style={styles.bulkInput}
             disabled={bulkLoading}
-            placeholder={bulkData.markup_type === 'percent' ? '%' : '$'}
+            placeholder={bulkData.markup_type === 'percent' ? 'e.g. 10' : 'e.g. 2.00'}
           />
 
-          {/* ✅ NAYA: extra_percent input — sirf "both" ke liye */}
+          {/* Extra % input — sirf "both" ke liye */}
           {bulkData.markup_type === 'both' && (
             <input
               type="number"
@@ -263,7 +270,7 @@ export default function MarkupSettings({ onBack }) {   // ✅ NAYA: onBack prop
               onChange={(e) => setBulkData({ ...bulkData, extra_percent: e.target.value })}
               style={styles.bulkInput}
               disabled={bulkLoading}
-              placeholder="Extra %"
+              placeholder="e.g. 10"
             />
           )}
 
@@ -281,11 +288,22 @@ export default function MarkupSettings({ onBack }) {   // ✅ NAYA: onBack prop
 
           <button
             onClick={handleBulkUpdate}
-            disabled={bulkLoading || !storeId}
+            disabled={
+              bulkLoading ||
+              !storeId ||
+              !bulkData.markup_value ||
+              parseFloat(bulkData.markup_value) <= 0
+            }
             style={{
               ...styles.primaryBtn,
-              background: bulkLoading || !storeId ? '#babfc3' : '#008060',
-              cursor: bulkLoading || !storeId ? 'not-allowed' : 'pointer',
+              background:
+                bulkLoading || !storeId || !bulkData.markup_value
+                  ? '#babfc3'
+                  : '#008060',
+              cursor:
+                bulkLoading || !storeId || !bulkData.markup_value
+                  ? 'not-allowed'
+                  : 'pointer',
             }}
           >
             {bulkLoading ? '⏳ Applying...' : 'Apply to All'}
@@ -319,7 +337,7 @@ export default function MarkupSettings({ onBack }) {   // ✅ NAYA: onBack prop
                   <th style={styles.th}>Country</th>
                   <th style={styles.th}>Type</th>
                   <th style={styles.th}>Markup</th>
-                  <th style={styles.th}>Extra %</th>   {/* ✅ NAYA */}
+                  <th style={styles.th}>Extra %</th>
                   <th style={styles.th}>Tax %</th>
                   <th style={styles.th}>Tax Amt</th>
                   <th style={styles.th}>Final Price</th>
@@ -353,14 +371,28 @@ export default function MarkupSettings({ onBack }) {   // ✅ NAYA: onBack prop
 // ============================================
 function ProductRow({ product, countries, storeId, saving, onSaveStart, onSaveEnd, onMessage }) {
   const [countryId, setCountryId] = useState('')
-  const [markup, setMarkup] = useState(String(product.markup ?? 2))
+
+  // ✅ FIXED: markup blank agar 0 ya missing ho
+  const [markup, setMarkup] = useState(
+    product.markup != null && product.markup > 0
+      ? String(product.markup)
+      : ''
+  )
+
   const [type, setType] = useState(product.markup_type || 'fixed')
-  const [extraPercent, setExtraPercent] = useState(String(product.extra_percent ?? 0))   // ✅ NAYA
+
+  // ✅ FIXED: extra_percent blank agar 0 ya missing
+  const [extraPercent, setExtraPercent] = useState(
+    product.extra_percent != null && product.extra_percent > 0
+      ? String(product.extra_percent)
+      : ''
+  )
+
   const [taxRate, setTaxRate] = useState('0')
 
   const selectedCountry = countries.find((c) => c.id === parseInt(countryId))
 
-  // ✅ NAYA: "both" calculation
+  // ✅ "both" calculation
   const calc = (() => {
     const amazon = parseFloat(product.amazon_price) || 0
     const m = parseFloat(markup) || 0
@@ -371,7 +403,6 @@ function ProductRow({ product, countries, storeId, saving, onSaveStart, onSaveEn
     if (type === 'percent') {
       subtotal = amazon * (1 + m / 100)
     } else if (type === 'both') {
-      // ✅ Fixed add karo, phir percent apply karo
       const base = amazon + m
       subtotal = base * (1 + extra / 100)
     } else {
@@ -398,6 +429,11 @@ function ProductRow({ product, countries, storeId, saving, onSaveStart, onSaveEn
       onMessage({ type: 'error', text: '❌ Country select karein' })
       return
     }
+    // ✅ FIXED: markup required
+    if (!markup || parseFloat(markup) <= 0) {
+      onMessage({ type: 'error', text: '❌ Markup value enter karein' })
+      return
+    }
     if (!storeId) {
       onMessage({ type: 'error', text: '❌ Store ID detect nahi ho saka' })
       return
@@ -411,7 +447,7 @@ function ProductRow({ product, countries, storeId, saving, onSaveStart, onSaveEn
         store_id: storeId,
         markup_type: type,
         markup_value: parseFloat(markup),
-        extra_percent: parseFloat(extraPercent) || 0,   // ✅ NAYA
+        extra_percent: parseFloat(extraPercent) || 0,
         tax_rate: parseFloat(taxRate),
       })
       onMessage({ type: 'success', text: '✅ Pricing save ho gayi! (Shopify bhi update)' })
@@ -464,7 +500,7 @@ function ProductRow({ product, countries, storeId, saving, onSaveStart, onSaveEn
         >
           <option value="fixed">$ Fixed</option>
           <option value="percent">% Percent</option>
-          <option value="both">$ + % (Both)</option>   {/* ✅ NAYA */}
+          <option value="both">$ + % (Both)</option>
         </select>
       </td>
 
@@ -477,10 +513,11 @@ function ProductRow({ product, countries, storeId, saving, onSaveStart, onSaveEn
           onChange={(e) => setMarkup(e.target.value)}
           style={styles.rowInput}
           disabled={saving}
+          placeholder={type === 'percent' ? '10' : '2.00'}
         />
       </td>
 
-      {/* ✅ NAYA: Extra % column — sirf "both" ke liye enable */}
+      {/* Extra % column — sirf "both" ke liye enable */}
       <td style={styles.td}>
         <input
           type="number"
@@ -520,14 +557,18 @@ function ProductRow({ product, countries, storeId, saving, onSaveStart, onSaveEn
       <td style={styles.td}>
         <button
           onClick={handleSave}
-          disabled={!countryId || saving || !storeId}
+          disabled={!countryId || !markup || saving || !storeId}
           style={{
             padding: '6px 16px',
-            background: countryId && !saving && storeId ? '#008060' : '#babfc3',
+            background:
+              countryId && markup && !saving && storeId ? '#008060' : '#babfc3',
             color: 'white',
             border: 'none',
             borderRadius: 4,
-            cursor: countryId && !saving && storeId ? 'pointer' : 'not-allowed',
+            cursor:
+              countryId && markup && !saving && storeId
+                ? 'pointer'
+                : 'not-allowed',
             fontSize: 13,
           }}
         >
@@ -553,7 +594,6 @@ const styles = {
   h1: { fontSize: '24px', fontWeight: '700', color: '#202223', marginBottom: '4px' },
   subtitle: { color: '#637381', fontSize: '14px', marginBottom: '20px' },
 
-  // ✅ NAYA: Back button
   backBtn: {
     display: 'inline-flex',
     alignItems: 'center',

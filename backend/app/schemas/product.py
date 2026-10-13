@@ -3,6 +3,7 @@
 # Product ke liye Pydantic schemas
 # + Out of Stock tracking
 # + ✅ NAYA: extra_percent support (Fixed + Percent)
+# + ✅ FIXED: markup default 0.0 (user khud set karega)
 # ============================================
 
 from datetime import datetime
@@ -21,12 +22,14 @@ class ProductBase(BaseModel):
     image_url: Optional[str] = Field(None, max_length=1000)
     amazon_price: Optional[float] = Field(None, ge=0)
     price: Optional[float] = Field(None, ge=0)
-    markup: float = Field(default=2.0, ge=0)
+
+    # ✅ FIXED: Default 0.0 — user khud set karega
+    markup: float = Field(default=0.0, ge=0)
     markup_type: str = Field(
         default="fixed",
         description="'fixed', 'percent', or 'both'",
     )
-    extra_percent: Optional[float] = Field(   # ✅ NAYA
+    extra_percent: Optional[float] = Field(
         default=0.0, ge=0,
         description="Extra % for 'both' type",
     )
@@ -57,8 +60,9 @@ class ProductResponse(ProductBase):
     # ✅ Shopify fields
     shopify_product_id: Optional[str] = None
     shopify_handle: Optional[str] = None
+    shopify_status: Optional[str] = None
 
-    # ✅ NAYA — Categories + Tags (collections ke liye)
+    # ✅ Categories + Tags (collections ke liye)
     categories: List[str] = []
     tags: List[str] = []
 
@@ -73,13 +77,15 @@ class ProductResponse(ProductBase):
 # ============================================
 class ProductCreate(BaseModel):
     amazon_url: str = Field(..., description="Amazon product URL")
+
+    # ✅ FIXED: Default 0.0 — user khud set karega
     markup: Optional[float] = Field(
-        2.0, ge=0, description="Markup value (dollar or percent)"
+        0.0, ge=0, description="Markup value (dollar or percent)"
     )
-    markup_type: Optional[Literal["fixed", "percent", "both"]] = Field(   # ✅ NAYA
+    markup_type: Optional[Literal["fixed", "percent", "both"]] = Field(
         "fixed", description="'fixed' = dollars, 'percent' = %, 'both' = $ + %"
     )
-    extra_percent: Optional[float] = Field(   # ✅ NAYA
+    extra_percent: Optional[float] = Field(
         default=0.0, ge=0, description="Extra % for 'both' type"
     )
 
@@ -96,8 +102,8 @@ class ProductUpdate(BaseModel):
     specifications: Optional[Dict[str, str]] = None
     price: Optional[float] = Field(None, ge=0)
     markup: Optional[float] = Field(None, ge=0)
-    markup_type: Optional[Literal["fixed", "percent", "both"]] = None   # ✅ NAYA
-    extra_percent: Optional[float] = Field(None, ge=0)   # ✅ NAYA
+    markup_type: Optional[Literal["fixed", "percent", "both"]] = None
+    extra_percent: Optional[float] = Field(None, ge=0)
 
     # ✅ Stock Tracking (admin manually bhi change kar sakta hai)
     availability: Optional[str] = None
@@ -106,15 +112,19 @@ class ProductUpdate(BaseModel):
 
 
 # ============================================
-# ✅ FIXED: MARKUP UPDATE SCHEMA
+# ✅ MARKUP UPDATE SCHEMA
 # + ✅ NAYA: extra_percent support (both type ke liye)
+# + ✅ FIXED: Default 0.0 — user khud set karega
 # ============================================
 class MarkupUpdate(BaseModel):
-    markup: float = Field(..., ge=0, description="Markup value")
-    markup_type: Literal["fixed", "percent", "both"] = Field(   # ✅ NAYA "both"
+    markup: float = Field(
+        default=0.0, ge=0,
+        description="Markup value (user must provide)"
+    )
+    markup_type: Literal["fixed", "percent", "both"] = Field(
         "fixed", description="'fixed', 'percent', or 'both'"
     )
-    extra_percent: Optional[float] = Field(   # ✅ NAYA
+    extra_percent: Optional[float] = Field(
         default=0.0, ge=0,
         description="Extra % — only used when markup_type='both'",
     )

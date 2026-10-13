@@ -8,8 +8,8 @@ export default function AddProductForm({
   setMarkup,
   markupType,
   setMarkupType,
-  extraPercent,          // ✅ NAYA
-  setExtraPercent,       // ✅ NAYA
+  extraPercent,
+  setExtraPercent,
   isLoading,
   message,
   onSubmit,
@@ -19,6 +19,11 @@ export default function AddProductForm({
     const m = parseFloat(markup) || 0
     const e = parseFloat(extraPercent) || 0
 
+    // ✅ Agar markup empty hai toh warning
+    if (!markup || m <= 0) {
+      return '⚠️ Please enter a markup value to continue'
+    }
+
     if (markupType === 'percent') {
       return `💡 Final price = Amazon price × (1 + ${m}%)`
     }
@@ -27,6 +32,15 @@ export default function AddProductForm({
     }
     return `💡 Final price = Amazon price + $${m}`
   }
+
+  // ✅ NAYA: Check karo submit ke liye valid hai ya nahi
+  const isFormValid = () => {
+    if (!amazonUrl.trim()) return false
+    if (!markup || parseFloat(markup) <= 0) return false
+    return true
+  }
+
+  const formValid = isFormValid()
 
   return (
     <div style={styles.card}>
@@ -75,13 +89,19 @@ export default function AddProductForm({
             >
               <option value="fixed">$ Fixed</option>
               <option value="percent">% Percent</option>
-              <option value="both">$ + % (Both)</option>   {/* ✅ NAYA */}
+              <option value="both">$ + % (Both)</option>
             </select>
             <input
               type="number"
               value={markup}
               onChange={(e) => setMarkup(e.target.value)}
-              placeholder={markupType === 'percent' ? '10' : '2.00'}
+              placeholder={
+                markupType === 'percent'
+                  ? 'e.g. 10'
+                  : markupType === 'both'
+                    ? 'e.g. 2.00'
+                    : 'e.g. 2.00'
+              }
               step="0.01"
               min="0"
               style={styles.inputSmall}
@@ -103,21 +123,30 @@ export default function AddProductForm({
               />
             )}
           </div>
-          <p style={styles.hint}>{getPriceHint()}</p>
+          <p
+            style={{
+              ...styles.hint,
+              color: !markup
+                ? theme.colors.warning || '#b45309'
+                : theme.colors.textMuted,
+            }}
+          >
+            {getPriceHint()}
+          </p>
         </div>
 
         {/* Submit */}
         <button
           type="submit"
-          disabled={isLoading || !amazonUrl.trim()}
+          disabled={isLoading || !formValid}
           style={{
             ...styles.button,
             background:
-              isLoading || !amazonUrl.trim()
+              isLoading || !formValid
                 ? 'linear-gradient(135deg, #b5b5b5 0%, #d1d1d1 100%)'
                 : theme.colors.gradientPrimary,
             cursor:
-              isLoading || !amazonUrl.trim() ? 'not-allowed' : 'pointer',
+              isLoading || !formValid ? 'not-allowed' : 'pointer',
           }}
         >
           {isLoading ? (

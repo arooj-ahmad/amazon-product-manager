@@ -7,6 +7,7 @@
 # + ✅ NAYA: shopify_store_id (multi-store support)
 # + ✅ NAYA: categories (Collections) + tags (Shopify tags)
 # + ✅ NAYA: extra_percent (Fixed + Percent markup type)
+# + ✅ FIXED: markup default 0.0 (user khud set karega)
 # ============================================
 
 from sqlalchemy import (
@@ -52,7 +53,7 @@ class Product(Base):
     reviews_count = Column(BigInteger, nullable=True)
 
     # ----------------------------------------
-    # ✅ NAYA: Collections + Tags
+    # ✅ Collections + Tags
     # ----------------------------------------
     # Amazon categories — Shopify collections ke liye
     # Format: ["Books", "Romance", "Fantasy"]
@@ -78,8 +79,7 @@ class Product(Base):
     variant_attributes = Column(JSON, default=list)
 
     # ----------------------------------------
-    # ✅ Shopify Store Link (multi-store support)
-    # Kis store ki product hai
+    # Shopify Store Link (multi-store support)
     # ----------------------------------------
     shopify_store_id = Column(
         BigInteger,
@@ -94,7 +94,7 @@ class Product(Base):
     shopify_product_id = Column(String(255), nullable=True)
     shopify_handle = Column(String(255), nullable=True)
 
-    # ✅ Shopify status track karne ke liye
+    # Shopify status track karne ke liye
     # Values: "active" ya "draft"
     shopify_status = Column(String(20), default="draft", nullable=True)
 
@@ -103,11 +103,13 @@ class Product(Base):
     # ----------------------------------------
     amazon_price = Column(Float, nullable=True)
     price = Column(Float, nullable=True)
-    markup = Column(Float, default=2.0)
-    markup_type = Column(String(20), default="fixed")
-    # ✅ NAYA: "both" (Fixed + Percent) type ke liye
+
+    # ✅ FIXED: markup default 0.0 — user khud set karega
+    markup = Column(Float, default=0.0, nullable=False)
+    markup_type = Column(String(20), default="fixed", nullable=False)
+    # "both" (Fixed + Percent) type ke liye
     # Example: markup=2.0, extra_percent=10 → (amazon + 2) × 1.10
-    extra_percent = Column(Float, default=0.0)
+    extra_percent = Column(Float, default=0.0, nullable=False)
 
     # ----------------------------------------
     # Manual Override

@@ -74,9 +74,14 @@ function resolveShopDomain(currentDomain) {
 // ============================================
 export function useShopifyApp() {
   const [amazonUrl, setAmazonUrl] = useState('')
-  const [markup, setMarkup] = useState('2.00')
+
+  // ✅ FIXED: markup default '2.00' → '' (user khud set karega)
+  const [markup, setMarkup] = useState('')
   const [markupType, setMarkupType] = useState('fixed')
-  const [extraPercent, setExtraPercent] = useState('10')   // ✅ NAYA — "both" ke liye
+
+  // ✅ FIXED: extraPercent default '10' → '' (user khud set karega)
+  const [extraPercent, setExtraPercent] = useState('')
+
   const [isLoading, setIsLoading] = useState(false)
   const [isSubscribing, setIsSubscribing] = useState(false)
   const [message, setMessage] = useState(null)
@@ -93,7 +98,7 @@ export function useShopifyApp() {
   const [selectedCollections, setSelectedCollections] = useState(new Set())
   const [collectionsLoading, setCollectionsLoading] = useState(false)
 
-  // ✅ NAYA: Cron job state
+  // ✅ Cron job state
   const [cronRunning, setCronRunning] = useState(false)
   const [cronMessage, setCronMessage] = useState(null)
 
@@ -436,10 +441,20 @@ export function useShopifyApp() {
   // ========================================
   // 4. Add product handler
   // + ✅ NAYA: extra_percent bhejo
+  // + ✅ FIXED: markup validate karo (blank allow nahi)
   // ========================================
   const handleAddProduct = async (e) => {
     e.preventDefault()
     if (!amazonUrl.trim() || isLoading) return
+
+    // ✅ FIXED: Markup validation
+    if (!markup || parseFloat(markup) <= 0) {
+      setMessage({
+        type: 'error',
+        text: '❌ Please enter a markup value (greater than 0)',
+      })
+      return
+    }
 
     setIsLoading(true)
     setMessage(null)
@@ -462,9 +477,9 @@ export function useShopifyApp() {
           },
           body: JSON.stringify({
             amazon_url: amazonUrl.trim(),
-            markup: parseFloat(markup) || 2.0,
+            markup: parseFloat(markup),   // ✅ FIXED: no fallback 2.0
             markup_type: markupType,
-            extra_percent: parseFloat(extraPercent) || 0,   // ✅ NAYA
+            extra_percent: parseFloat(extraPercent) || 0,
             collection_ids: collectionIdsArray,
           }),
         }
@@ -502,9 +517,10 @@ export function useShopifyApp() {
         text: `✅ ${successMsg}${collectionsAdded > 0 ? ` (+${collectionsAdded} collections)` : ''}`,
       })
 
+      // ✅ FIXED: Reset to empty
       setAmazonUrl('')
-      setMarkup('2.00')
-      setExtraPercent('10')   // ✅ NAYA
+      setMarkup('')
+      setExtraPercent('')
       clearCollections()
 
       showToast('Product added!')
@@ -519,7 +535,7 @@ export function useShopifyApp() {
     amazonUrl,
     markup,
     markupType,
-    extraPercent,        // ✅ NAYA
+    extraPercent,
     isLoading,
     isSubscribing,
     message,
@@ -532,7 +548,7 @@ export function useShopifyApp() {
     setAmazonUrl,
     setMarkup,
     setMarkupType,
-    setExtraPercent,     // ✅ NAYA
+    setExtraPercent,
 
     handleAddProduct,
     handleSubscribe,
@@ -547,7 +563,7 @@ export function useShopifyApp() {
     loadCollections,
     refreshCollections,
 
-    // ✅ NAYA: Cron job
+    // ✅ Cron job
     cronRunning,
     cronMessage,
     handleRunCron,
