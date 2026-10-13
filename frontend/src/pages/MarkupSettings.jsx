@@ -5,9 +5,11 @@
 // + ✅ NAYA: Bulk update par store_id bhejo
 // + ✅ NAYA: "both" markup type — Fixed + Percent
 // + ✅ FIXED: markup_value blank (user khud set karega)
+// + ✅ FIXED: useNavigate (sidebar navigation ke liye)
 // ============================================
 
 import { useState, useEffect } from 'react'
+import { useNavigate } from 'react-router-dom'   // ✅ NAYA
 import {
   getCountries,
   updatePricing,
@@ -73,7 +75,9 @@ function formatCurrency(amount, country) {
 // ============================================
 // Main Component
 // ============================================
-export default function MarkupSettings({ onBack }) {
+export default function MarkupSettings() {   // ✅ onBack prop HATAO
+  const navigate = useNavigate()              // ✅ NAYA
+
   const [products, setProducts] = useState([])
   const [countries, setCountries] = useState([])
   const [loading, setLoading] = useState(true)
@@ -81,7 +85,7 @@ export default function MarkupSettings({ onBack }) {
   const [message, setMessage] = useState(null)
   const [storeId, setStoreId] = useState(null)
 
-  // ✅ FIXED: markup_value aur extra_percent blank
+  // ✅ markup_value aur extra_percent blank
   const [bulkData, setBulkData] = useState({
     country_id: '',
     markup_type: 'fixed',
@@ -139,7 +143,7 @@ export default function MarkupSettings({ onBack }) {
       setMessage({ type: 'error', text: '❌ Please select a country' })
       return
     }
-    // ✅ FIXED: markup_value required
+    // ✅ markup_value required
     if (!bulkData.markup_value || parseFloat(bulkData.markup_value) <= 0) {
       setMessage({ type: 'error', text: '❌ Please enter a markup value' })
       return
@@ -183,24 +187,22 @@ export default function MarkupSettings({ onBack }) {
   return (
     <div style={styles.page}>
       <div style={styles.container}>
-        {/* Back button */}
-        {onBack && (
-          <button
-            type="button"
-            onClick={onBack}
-            style={styles.backBtn}
-            onMouseEnter={(e) => {
-              e.currentTarget.style.background = '#f6f6f7'
-              e.currentTarget.style.transform = 'translateX(-2px)'
-            }}
-            onMouseLeave={(e) => {
-              e.currentTarget.style.background = 'white'
-              e.currentTarget.style.transform = 'translateX(0)'
-            }}
-          >
-            ← Back to Dashboard
-          </button>
-        )}
+        {/* ✅ Back button — useNavigate use karo */}
+        <button
+          type="button"
+          onClick={() => navigate('/')}
+          style={styles.backBtn}
+          onMouseEnter={(e) => {
+            e.currentTarget.style.background = '#f6f6f7'
+            e.currentTarget.style.transform = 'translateX(-2px)'
+          }}
+          onMouseLeave={(e) => {
+            e.currentTarget.style.background = 'white'
+            e.currentTarget.style.transform = 'translateX(0)'
+          }}
+        >
+          ← Back to Dashboard
+        </button>
 
         <h1 style={styles.h1}>⚙️ Markup Settings</h1>
         <p style={styles.subtitle}>
@@ -372,7 +374,7 @@ export default function MarkupSettings({ onBack }) {
 function ProductRow({ product, countries, storeId, saving, onSaveStart, onSaveEnd, onMessage }) {
   const [countryId, setCountryId] = useState('')
 
-  // ✅ FIXED: markup blank agar 0 ya missing ho
+  // ✅ markup blank agar 0 ya missing ho
   const [markup, setMarkup] = useState(
     product.markup != null && product.markup > 0
       ? String(product.markup)
@@ -381,7 +383,7 @@ function ProductRow({ product, countries, storeId, saving, onSaveStart, onSaveEn
 
   const [type, setType] = useState(product.markup_type || 'fixed')
 
-  // ✅ FIXED: extra_percent blank agar 0 ya missing
+  // ✅ extra_percent blank agar 0 ya missing
   const [extraPercent, setExtraPercent] = useState(
     product.extra_percent != null && product.extra_percent > 0
       ? String(product.extra_percent)
@@ -429,7 +431,7 @@ function ProductRow({ product, countries, storeId, saving, onSaveStart, onSaveEn
       onMessage({ type: 'error', text: '❌ Country select karein' })
       return
     }
-    // ✅ FIXED: markup required
+    // ✅ markup required
     if (!markup || parseFloat(markup) <= 0) {
       onMessage({ type: 'error', text: '❌ Markup value enter karein' })
       return

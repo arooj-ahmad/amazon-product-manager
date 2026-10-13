@@ -1,5 +1,4 @@
 // src/pages/ShopifyApp.jsx
-import { useState } from 'react'
 import { useShopifyApp } from '../hooks/useShopifyApp'
 import { styles, theme } from '../styles/theme'
 import Header from '../components/Header'
@@ -8,7 +7,7 @@ import CollectionsSelector from '../components/CollectionsSelector'
 import CronRunner from '../components/CronRunner'
 import InfoBox from '../components/InfoBox'
 import PlanCard from '../components/PlanCard'
-import MarkupSettings from './MarkupSettings'
+// ❌ MarkupSettings import HATAO — ab sidebar se khulega
 
 export default function ShopifyApp() {
   const {
@@ -27,19 +26,8 @@ export default function ShopifyApp() {
     cronRunning, cronMessage, handleRunCron,
   } = useShopifyApp()
 
-  // Markup Settings page toggle
-  const [showMarkupSettings, setShowMarkupSettings] = useState(false)
-
-  // ========================================
-  // Markup Settings Page (Full Page)
-  // ========================================
-  if (showMarkupSettings) {
-    return (
-      <MarkupSettings
-        onBack={() => setShowMarkupSettings(false)}
-      />
-    )
-  }
+  // ❌ showMarkupSettings state HATAO
+  // ❌ if (showMarkupSettings) block HATAO
 
   // Loading
   if (checkingSub) {
@@ -98,7 +86,6 @@ export default function ShopifyApp() {
           shopifyReady={shopifyReady}
           shopDomain={shopDomain}
           subscription={subscription}
-          onOpenMarkupSettings={() => setShowMarkupSettings(true)}
         />
 
         <AddProductForm

@@ -1,9 +1,10 @@
 // ============================================
 // frontend/src/App.jsx
 // Final routes — user + admin + Footer
+// + ✅ FIXED: HashRouter (Shopify iframe compatible)
 // ============================================
 
-import { BrowserRouter, Routes, Route, useLocation, Navigate, Link } from 'react-router-dom'
+import { HashRouter, Routes, Route, useLocation, Navigate, Link } from 'react-router-dom'
 import Navbar from './components/Navbar'
 import Footer from './components/Footer'
 
@@ -43,7 +44,7 @@ function Layout({ children }) {
 
 function App() {
   return (
-    <BrowserRouter>
+    <HashRouter>
       <Layout>
         <Routes>
           {/* USER ROUTES */}
@@ -93,7 +94,7 @@ function App() {
           />
         </Routes>
       </Layout>
-    </BrowserRouter>
+    </HashRouter>
   )
 }
 
