@@ -69,6 +69,11 @@ export function useShopifyApp() {
   const [plans, setPlans] = useState([])
   const [checkingSub, setCheckingSub] = useState(true)
 
+  // ✅ NAYA: Collections state
+  const [collections, setCollections] = useState([])
+  const [selectedCollections, setSelectedCollections] = useState(new Set())
+  const [collectionsLoading, setCollectionsLoading] = useState(false)
+
   const bridgeCheckRef = useRef(null)
 
   // ========================================
@@ -157,6 +162,68 @@ export function useShopifyApp() {
       if (bridgeCheckRef.current) clearInterval(bridgeCheckRef.current)
     }
   }, [loadBillingData])
+
+  // ========================================
+  // ✅ NAYA: Load Collections
+  // ========================================
+  const loadCollections = useCallback(async (domain) => {
+    if (!domain) return
+
+    setCollectionsLoading(true)
+    try {
+      const res = await safeFetch(
+        `${API_URL}/api/shopify/collections?shop_domain=${encodeURIComponent(domain)}`
+      )
+
+      if (!res.ok) {
+        throw new Error(res.data.detail || `HTTP ${res.status}`)
+      }
+
+      if (res.data.success) {
+        setCollections(res.data.collections || [])
+        console.log(`✅ Loaded ${res.data.collections?.length || 0} collections`)
+      } else {
+        console.warn('⚠️ Collections fetch failed:', res.data)
+        setCollections([])
+      }
+    } catch (err) {
+      console.error('❌ Load collections error:', err)
+      setCollections([])
+    } finally {
+      setCollectionsLoading(false)
+    }
+  }, [])
+
+  // ========================================
+  // ✅ NAYA: Auto-load collections when shopDomain + subscription ready
+  // ========================================
+  useEffect(() => {
+    if (shopDomain && subscription?.active) {
+      loadCollections(shopDomain)
+    }
+  }, [shopDomain, subscription?.active, loadCollections])
+
+  // ========================================
+  // ✅ NAYA: Toggle Collection Selection
+  // ========================================
+  const toggleCollection = useCallback((collectionId) => {
+    setSelectedCollections((prev) => {
+      const newSet = new Set(prev)
+      if (newSet.has(collectionId)) {
+        newSet.delete(collectionId)
+      } else {
+        newSet.add(collectionId)
+      }
+      return newSet
+    })
+  }, [])
+
+  // ========================================
+  // ✅ NAYA: Clear All Selections
+  // ========================================
+  const clearCollections = useCallback(() => {
+    setSelectedCollections(new Set())
+  }, [])
 
   // ========================================
   // 3. Subscribe handler
@@ -262,6 +329,11 @@ export function useShopifyApp() {
           subscription: { name: 'Basic Plan (Test)', status: 'ACTIVE' },
         })
         showToast('Active Test Mode enabled!')
+
+        // ✅ NAYA: Test activate ke baad collections load karo
+        if (targetShop) {
+          loadCollections(targetShop)
+        }
       } else {
         throw new Error(res.data.detail || 'Test activation failed')
       }
@@ -273,8 +345,7 @@ export function useShopifyApp() {
   }
 
   // ========================================
-  // 4. Add product handler
-  // ✅ FIXED: /api prefix added
+  // 4. Add product handler — collection_ids bhi bhejo
   // ========================================
   const handleAddProduct = async (e) => {
     e.preventDefault()
@@ -286,7 +357,11 @@ export function useShopifyApp() {
     try {
       const idToken = await getIdToken()
 
-      // ✅ YAHAN /api ADD KIYA HAI
+      // ✅ Collections array banao
+      const collectionIdsArray = Array.from(selectedCollections)
+
+      console.log('📤 Sending product with collections:', collectionIdsArray)
+
       const res = await safeFetch(
         `${API_URL}/api/shopify/app/add-product`,
         {
@@ -299,6 +374,7 @@ export function useShopifyApp() {
             amazon_url: amazonUrl.trim(),
             markup: parseFloat(markup) || 2.0,
             markup_type: markupType,
+            collection_ids: collectionIdsArray,   // ✅ NAYA
           }),
         }
       )
@@ -327,12 +403,20 @@ export function useShopifyApp() {
         throw new Error(res.data.detail || 'Failed to add product')
       }
 
+      // ✅ Success message with collections count
+      const collectionsAdded = res.data.collections_added || 0
+      const successMsg = res.data.message || 'Product added successfully!'
+
       setMessage({
         type: 'success',
-        text: `✅ ${res.data.message || 'Product added successfully!'}`,
+        text: `✅ ${successMsg}${collectionsAdded > 0 ? ` (+${collectionsAdded} collections)` : ''}`,
       })
+
+      // Reset form
       setAmazonUrl('')
       setMarkup('2.00')
+      clearCollections()   // ✅ NAYA: Clear collection selections
+
       showToast('Product added!')
     } catch (err) {
       setMessage({ type: 'error', text: `❌ ${err.message}` })
@@ -361,5 +445,13 @@ export function useShopifyApp() {
     handleAddProduct,
     handleSubscribe,
     handleTestActivate,
+
+    // ✅ NAYA: Collections
+    collections,
+    selectedCollections,
+    collectionsLoading,
+    toggleCollection,
+    clearCollections,
+    loadCollections,   // (optional — manual reload ke liye)
   }
 }

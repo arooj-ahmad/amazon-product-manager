@@ -3,6 +3,7 @@ import { useShopifyApp } from '../hooks/useShopifyApp'
 import { styles, theme } from '../styles/theme'
 import Header from '../components/Header'
 import AddProductForm from '../components/AddProductForm'
+import CollectionsSelector from '../components/CollectionsSelector'   // ✅ NAYA
 import InfoBox from '../components/InfoBox'
 import PlanCard from '../components/PlanCard'
 
@@ -25,6 +26,13 @@ export default function ShopifyApp() {
     handleAddProduct,
     handleSubscribe,
     handleTestActivate,
+
+    // ✅ NAYA: Collections
+    collections,
+    selectedCollections,
+    collectionsLoading,
+    toggleCollection,
+    clearCollections,
   } = useShopifyApp()
 
   // ========================================
@@ -89,7 +97,6 @@ export default function ShopifyApp() {
             </div>
           )}
 
-          {/* Test mode bypass */}
           <div style={{ marginTop: '24px', textAlign: 'center' }}>
             <button
               type="button"
@@ -135,6 +142,15 @@ export default function ShopifyApp() {
           isLoading={isLoading}
           message={message}
           onSubmit={handleAddProduct}
+        />
+
+        {/* ✅ NAYA: Collections Selector */}
+        <CollectionsSelector
+          collections={collections}
+          selectedCollections={selectedCollections}
+          loading={collectionsLoading}
+          onToggle={toggleCollection}
+          onClear={clearCollections}
         />
 
         <InfoBox />

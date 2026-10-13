@@ -13,6 +13,7 @@
 # + ✅ FIXED v2: PRICE FLOW — variant price $0.00 issue solved
 # + ✅ FIXED v3: DATA + PRODUCT MERGE — Bright Data ke saare
 #               standard fields Shopify tak pahunchte hain
+# + ✅ NAYA: Collections — fetch + add product to collections
 # ============================================
 
 import logging
@@ -44,6 +45,7 @@ from app.services.shopify import (
     create_shopify_product,
     create_shopify_product_with_variants,
     add_variant_to_existing_product,
+    add_product_to_collections,   # ✅ NAYA
     exchange_code_for_token,
     exchange_id_token_for_offline_token,
     verify_hmac,
@@ -58,8 +60,6 @@ router = APIRouter(prefix="/api/shopify", tags=["Shopify"])
 
 # ============================================
 # ✅ FIXED v3: Build product_data with metafields
-# - `data` (Bright Data) + `product` (DB) dono merge karta hai
-# - Standard fields dono sources se read hote hain
 # ============================================
 def _build_product_data_for_shopify(data: dict, product=None) -> dict:
     """
@@ -136,7 +136,6 @@ def _build_product_data_for_shopify(data: dict, product=None) -> dict:
 
     # ═══════════════════════════════════════════
     # STEP 2: STANDARD FIELDS — dono sources se merge
-    # Priority: data (Bright Data) > product.specifications > product.<attr>
     # ═══════════════════════════════════════════
     standard_fields = [
         "model_number", "item_model_number", "model_name",
@@ -155,14 +154,14 @@ def _build_product_data_for_shopify(data: dict, product=None) -> dict:
         "hard_disk", "graphics_coprocessor", "warranty",
     ]
 
-    # Source A: Bright Data `data` (highest priority)
+    # Source A: Bright Data `data`
     if data:
         for field in standard_fields:
             val = data.get(field)
             if val is not None and str(val).strip() and str(val).strip() != "None":
                 base[field] = str(val).strip()
 
-    # Source B: product.specifications (JSON)
+    # Source B: product.specifications
     if product:
         specs = product.specifications or {}
         if isinstance(specs, str):
@@ -187,19 +186,15 @@ def _build_product_data_for_shopify(data: dict, product=None) -> dict:
             if val is not None and str(val).strip() and str(val).strip() != "None":
                 base[field] = str(val).strip()
 
-    # ═══════════════════════════════════════════
-    # STEP 3: product_details (raw array)
-    # ═══════════════════════════════════════════
+    # STEP 3: product_details
     base["product_details"] = (data.get("product_details") if data else None) or []
 
-    # ✅ DEBUG LOG
     filled = [f for f in standard_fields if f in base]
     logger.info(
         f"   📦 product_data built: "
         f"price=${base.get('price')}, "
         f"{len(filled)} standard fields"
     )
-    logger.info(f"   📋 Filled: {filled}")
 
     return base
 
@@ -479,12 +474,85 @@ def get_store_id_by_domain(
 
 
 # ============================================
+# ✅ NAYA: FETCH SHOPIFY COLLECTIONS
+# ============================================
+@router.get("/collections")
+async def get_shopify_collections(
+    shop_domain: str = Query(..., description="Shopify store domain"),
+    db: Session = Depends(get_db),
+):
+    """
+    Shopify store ki saari collections fetch karo.
+    Frontend dropdown mein dikhane ke liye.
+    """
+    store = (
+        db.query(ShopifyStore)
+        .filter(ShopifyStore.shop_domain == shop_domain)
+        .first()
+    )
+
+    if not store:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Store not connected: {shop_domain}",
+        )
+
+    query = """
+    query getCollections($first: Int!) {
+      collections(first: $first) {
+        edges {
+          node {
+            id
+            title
+            handle
+            productsCount { count }
+          }
+        }
+      }
+    }
+    """
+
+    result = await shopify_graphql(
+        shop_domain, store.access_token, query, {"first": 250}
+    )
+
+    if "errors" in result:
+        logger.error(f"❌ Collections fetch errors: {result['errors']}")
+        raise HTTPException(status_code=400, detail="Failed to fetch collections")
+
+    edges = (
+        result.get("data", {})
+        .get("collections", {})
+        .get("edges", [])
+    )
+
+    collections = []
+    for edge in edges:
+        node = edge.get("node", {})
+        collections.append({
+            "id": node.get("id"),
+            "title": node.get("title"),
+            "handle": node.get("handle"),
+            "products_count": (node.get("productsCount") or {}).get("count", 0),
+        })
+
+    logger.info(f"✅ Fetched {len(collections)} collections for {shop_domain}")
+
+    return {
+        "success": True,
+        "total": len(collections),
+        "collections": collections,
+    }
+
+
+# ============================================
 # PUSH PRODUCT TO SHOPIFY (Admin Panel Se)
 # ============================================
 @router.post("/push-product/{product_id}")
 async def push_product_to_shopify(
     product_id: int,
     shop_domain: str = Body(..., embed=True),
+    collection_ids: list = Body(default=[], embed=True),   # ✅ NAYA
     db: Session = Depends(get_db),
     current_admin: Admin = Depends(get_current_admin),
 ):
@@ -554,15 +622,25 @@ async def push_product_to_shopify(
             product.shopify_handle = existing_parent.shopify_handle
             db.commit()
 
+            # ✅ NAYA: Collections mein add karo
+            if collection_ids:
+                await add_product_to_collections(
+                    shop=store.shop_domain,
+                    access_token=store.access_token,
+                    product_id=existing_parent.shopify_product_id,
+                    collection_ids=collection_ids,
+                )
+
             return {
                 "success": True,
                 "message": "Variant added",
                 "shopify_product_id": existing_parent.shopify_product_id,
                 "variations": all_variations,
                 "variant_added": True,
+                "collections_added": len(collection_ids),
             }
 
-    # ✅ Build product_data — product se (data={} hai)
+    # ✅ Build product_data — product se
     product_data = _build_product_data_for_shopify(
         data={}, product=product
     )
@@ -585,16 +663,28 @@ async def push_product_to_shopify(
         result.get("data", {}).get("productSet", {}).get("product", {})
     )
 
-    product.shopify_product_id = shopify_product.get("id")
+    new_pid = shopify_product.get("id")
+
+    product.shopify_product_id = new_pid
     product.shopify_handle = shopify_product.get("handle")
     db.commit()
+
+    # ✅ NAYA: Collections mein add karo
+    if new_pid and collection_ids:
+        await add_product_to_collections(
+            shop=store.shop_domain,
+            access_token=store.access_token,
+            product_id=new_pid,
+            collection_ids=collection_ids,
+        )
 
     return {
         "success": True,
         "message": "Product pushed to Shopify",
-        "shopify_product_id": shopify_product.get("id"),
+        "shopify_product_id": new_pid,
         "shopify_handle": shopify_product.get("handle"),
         "variant_added": False,
+        "collections_added": len(collection_ids),
     }
 
 
@@ -606,6 +696,7 @@ async def add_product_from_shopify_app(
     amazon_url: str = Body(..., embed=True),
     markup: float = Body(2.0, embed=True),
     markup_type: str = Body("fixed", embed=True),
+    collection_ids: list = Body(default=[], embed=True),   # ✅ NAYA
     authorization: str = Header(...),
     db: Session = Depends(get_db),
 ):
@@ -630,6 +721,7 @@ async def add_product_from_shopify_app(
         raise HTTPException(status_code=401, detail="Shop domain missing")
 
     logger.info(f"✅ Verified request from: {shop_domain}")
+    logger.info(f"📁 Collections selected: {len(collection_ids)}")
 
     store = db.query(ShopifyStore).filter(
         ShopifyStore.shop_domain == shop_domain
@@ -773,6 +865,7 @@ async def add_product_from_shopify_app(
     shopify_pushed = False
     shopify_product_id = None
     variant_added = False
+    collections_added = 0
 
     try:
         def is_401(result: dict) -> bool:
@@ -813,9 +906,6 @@ async def add_product_from_shopify_app(
             else:
                 logger.info("🆕 Creating new product")
 
-                # ✅ FIXED v3: `data` + `new_product` dono pass karo
-                # `data` (Bright Data) mein standard fields hain
-                # `new_product` (DB) mein price, stock, title etc.
                 product_data = _build_product_data_for_shopify(
                     data=data, product=new_product
                 )
@@ -859,6 +949,20 @@ async def add_product_from_shopify_app(
             if refreshed:
                 shopify_pushed, shopify_product_id, variant_added, _ = await do_push()
 
+        # ✅ NAYA: Collections mein add karo (push success ke baad)
+        if shopify_pushed and shopify_product_id and collection_ids:
+            logger.info(
+                f"📁 Adding product to {len(collection_ids)} collection(s)..."
+            )
+            success = await add_product_to_collections(
+                shop=shop_domain,
+                access_token=store.access_token,
+                product_id=shopify_product_id,
+                collection_ids=collection_ids,
+            )
+            if success:
+                collections_added = len(collection_ids)
+
     except Exception as e:
         logger.error(f"❌ Shopify push fail: {e}")
 
@@ -868,6 +972,7 @@ async def add_product_from_shopify_app(
             f"Product added (ASIN: {asin})"
             + (" + variant added ✅" if variant_added else "")
             + (" + new product created ✅" if shopify_pushed and not variant_added else "")
+            + (f" + added to {collections_added} collection(s) ✅" if collections_added else "")
         ),
         "product_id": new_product.id,
         "asin": asin,
@@ -880,6 +985,7 @@ async def add_product_from_shopify_app(
         "shopify_pushed": shopify_pushed,
         "shopify_product_id": shopify_product_id,
         "variant_added": variant_added,
+        "collections_added": collections_added,   # ✅ NAYA
         "shop_domain": shop_domain,
         "store_id": store.id,
     }

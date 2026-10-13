@@ -12,6 +12,7 @@
 # + ✅ UPGRADED: Description mein SAARE metafields HTML table
 # + ✅ FIXED v3: Chunked metafields (25 per call) + Pinned limit handle
 # + ✅ NEW: Auto compare_at_price (price × 1.2)
+# + ✅ NEW: add_product_to_collections() for Collections feature
 # ============================================
 
 import logging
@@ -120,8 +121,6 @@ def _slugify_key(name: str) -> str:
 
 # ============================================
 # ✅ FIXED v3: Ensure Metafield Definitions exist
-# - Pinned limit (50) handle karta hai
-# - Existing definitions ka type bhi return karta hai
 # ============================================
 async def ensure_metafield_definitions(
     shop: str,
@@ -192,7 +191,6 @@ async def ensure_metafield_definitions(
         else:
             name, mf_type, desc = METAFIELD_DEFINITIONS[key]
 
-        # ✅ Dynamic pin decision
         should_pin = can_pin and pinned_count < PINNED_LIMIT
 
         to_create.append({
@@ -240,7 +238,6 @@ async def ensure_metafield_definitions(
             )
 
             if user_errors:
-                # ✅ PINNED_LIMIT_REACHED ko gracefully handle karo
                 pinned_error = any(
                     "pinned" in (e.get("message") or "").lower()
                     or e.get("code") == "PINNED_LIMIT_REACHED"
@@ -258,7 +255,6 @@ async def ensure_metafield_definitions(
                     continue
 
                 if pinned_error:
-                    # Retry without pin
                     logger.warning(
                         f"   ⚠️ {defn['key']} — pinned limit hit, "
                         f"retrying without pin"
@@ -670,6 +666,106 @@ async def publish_product_to_channels(
 
 
 # ============================================
+# ✅ NAYA: Product Ko Collections Mein Add Karo
+# ============================================
+async def add_product_to_collections(
+    shop: str,
+    access_token: str,
+    product_id: str,
+    collection_ids: list,
+) -> bool:
+    """
+    Product ko multiple collections mein add karo.
+    """
+    if not collection_ids:
+        logger.info("   No collections to add")
+        return True
+
+    # Product GID check
+    if not product_id.startswith("gid://"):
+        product_gid = f"gid://shopify/Product/{product_id}"
+    else:
+        product_gid = product_id
+
+    mutation = """
+    mutation collectionAddProducts(
+      $id: ID!,
+      $productIds: [ID!]!
+    ) {
+      collectionAddProducts(id: $id, productIds: $productIds) {
+        collection {
+          id
+          title
+          productsCount { count }
+        }
+        userErrors { field message }
+      }
+    }
+    """
+
+    success_count = 0
+    failed = []
+
+    for collection_id in collection_ids:
+        if not collection_id:
+            continue
+
+        # Collection GID check
+        if not collection_id.startswith("gid://"):
+            collection_gid = f"gid://shopify/Collection/{collection_id}"
+        else:
+            collection_gid = collection_id
+
+        variables = {
+            "id": collection_gid,
+            "productIds": [product_gid],
+        }
+
+        result = await shopify_graphql(shop, access_token, mutation, variables)
+
+        if "errors" in result:
+            logger.error(
+                f"   ❌ Collection {collection_id} add errors: {result['errors']}"
+            )
+            failed.append(collection_id)
+            continue
+
+        add_errors = (
+            result.get("data", {})
+            .get("collectionAddProducts", {})
+            .get("userErrors", [])
+        )
+
+        if add_errors:
+            # "already exists" error ignore karo
+            already = any(
+                "already" in (e.get("message") or "").lower()
+                or "in the collection" in (e.get("message") or "").lower()
+                for e in add_errors
+            )
+            if already:
+                logger.info(f"   ℹ️ Product already in collection {collection_id}")
+                success_count += 1
+                continue
+
+            logger.error(f"   ❌ Collection {collection_id} user errors: {add_errors}")
+            failed.append(collection_id)
+            continue
+
+        success_count += 1
+        logger.info(f"   ✅ Product added to collection {collection_id}")
+
+    logger.info(
+        f"✅ Added to {success_count}/{len(collection_ids)} collections"
+    )
+
+    if failed:
+        logger.warning(f"⚠️ Failed collections: {failed}")
+
+    return len(failed) == 0
+
+
+# ============================================
 # DELETE SHOPIFY PRODUCT
 # ============================================
 async def delete_shopify_product(
@@ -767,7 +863,7 @@ async def update_variant_with_tracked(
     variant_id: str,
     price: float,
     sku: str = "",
-    compare_at_price: float = None,   # ✅ NAYA PARAM
+    compare_at_price: float = None,
 ) -> bool:
     """Variant update karo — price + SKU + compare_at_price ke saath."""
     mutation = """
@@ -797,7 +893,6 @@ async def update_variant_with_tracked(
         "inventoryItem": inventory_item_input,
     }
 
-    # ✅ Compare at price add karo agar diya hai aur price se zyada hai
     if compare_at_price is not None:
         try:
             cap = float(compare_at_price)
@@ -843,8 +938,6 @@ async def update_variant_with_tracked(
 
 # ============================================
 # ✅ FIXED v3: SET PRODUCT METAFIELDS (CHUNKED)
-# - 25 per call (Shopify limit)
-# - Type-aware
 # ============================================
 async def set_product_metafields(
     shop: str,
@@ -856,11 +949,9 @@ async def set_product_metafields(
         logger.info("   No metafields to set")
         return True
 
-    # STEP 1: Definitions ensure
     keys = [mf["key"] for mf in metafields]
     actual_types = await ensure_metafield_definitions(shop, access_token, keys)
 
-    # STEP 2: Value adaptation
     def _adapt_value_and_type(raw_value, definition_type: str) -> tuple:
         val_str = str(raw_value) if raw_value is not None else ""
 
@@ -911,7 +1002,6 @@ async def set_product_metafields(
         logger.info("   No valid metafields to set after adaptation")
         return True
 
-    # STEP 3: CHUNKED sending (25 per call)
     CHUNK_SIZE = 25
     total = len(metafields_with_owner)
     chunks = [
@@ -1537,7 +1627,6 @@ async def create_shopify_product(
         inventory_item_id = variant_node.get("inventoryItem", {}).get("id")
 
         if product_id and variant_id:
-            # ✅ Compare at price calculate karo (price se 20% zyada)
             compare_price = None
             if price_float and price_float > 0:
                 compare_price = round(price_float * 1.2, 2)
@@ -1549,7 +1638,7 @@ async def create_shopify_product(
                 variant_id=variant_id,
                 price=price_float,
                 sku=asin_value,
-                compare_at_price=compare_price,   # ✅ YEH ADD KAREIN
+                compare_at_price=compare_price,
             )
 
         if inventory_item_id:
