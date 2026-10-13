@@ -2,170 +2,145 @@
 
 export const theme = {
   colors: {
-    bg: '#f6f6f7',
-    cardBg: '#ffffff',
-    textPrimary: '#202223',
-    textSecondary: '#637381',
-    border: '#e1e3e5',
-    borderInput: '#babfc3',
+    // Primary (Shopify green)
     primary: '#008060',
-    primaryHover: '#006e52',
-    primaryDisabled: '#b5b5b5',
-    successBg: '#e4f5e4',
-    successText: '#008060',
-    successBorder: '#aee9ae',
-    errorBg: '#fef2f0',
-    errorText: '#d72c0d',
-    errorBorder: '#fecdc4',
-    warningBg: '#fef3cd',
-    warningText: '#8a6d3b',
-    infoBg: '#f0f7ff',
-    infoBorder: '#c3ddf8',
-    infoText: '#005bd3',
-    badgeSuccessBg: '#e3f9e5',
-    badgeInfoBg: '#eaf2ff',
+    primaryDark: '#006e52',
+    primaryLight: '#e6f5f1',
+    
+    // Gradients
+    gradientPrimary: 'linear-gradient(135deg, #008060 0%, #00a67d 100%)',
+    gradientSuccess: 'linear-gradient(135deg, #00a67d 0%, #4cd4a7 100%)',
+    gradientDanger: 'linear-gradient(135deg, #d32f2f 0%, #f44336 100%)',
+    
+    // Backgrounds
+    bg: '#f6f6f7',
+    bgCard: '#ffffff',
+    bgHover: '#f0f1f2',
+    bgSubtle: '#fafbfc',
+    
+    // Text
+    text: '#202223',
+    textSecondary: '#6d7175',
+    textMuted: '#8c9196',
+    
+    // Borders
+    border: '#e1e3e5',
+    borderLight: '#f1f2f3',
+    
+    // Status
+    success: '#008060',
+    successBg: '#eefbf4',
+    successBorder: '#aee9d1',
+    error: '#d32f2f',
+    errorBg: '#fff4f4',
+    errorBorder: '#ffd6d6',
+    warning: '#ffb700',
+    warningBg: '#fff8e6',
+    
+    // Accents
+    blue: '#4a90e2',
+    purple: '#8b5cf6',
+    pink: '#ec4899',
+    orange: '#ff8c42',
   },
+  
   shadows: {
-    card: '0 1px 3px rgba(0, 0, 0, 0.04), 0 4px 12px rgba(0, 0, 0, 0.04)',
+    sm: '0 1px 2px rgba(0, 0, 0, 0.05)',
+    md: '0 2px 8px rgba(0, 0, 0, 0.08)',
+    lg: '0 4px 16px rgba(0, 0, 0, 0.10)',
+    xl: '0 8px 24px rgba(0, 0, 0, 0.12)',
+    focus: '0 0 0 3px rgba(0, 128, 96, 0.15)',
   },
-  radius: {
+  
+  radii: {
     sm: '6px',
     md: '8px',
     lg: '12px',
+    xl: '16px',
+    full: '9999px',
+  },
+  
+  transitions: {
+    fast: 'all 0.15s ease',
+    normal: 'all 0.25s ease',
+    slow: 'all 0.4s ease',
   },
 }
 
 export const styles = {
+  // Page layout
   page: {
-    padding: '40px 20px 80px',
-    fontFamily:
-      'Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-    background: theme.colors.bg,
     minHeight: '100vh',
-    display: 'flex',
-    justifyContent: 'center',
+    background: theme.colors.bg,
+    padding: '0',
+    fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
   },
+  
   container: {
-    maxWidth: '680px',
-    width: '100%',
+    maxWidth: '720px',
+    margin: '0 auto',
+    padding: '24px 20px 60px',
   },
-  centerBox: {
-    padding: '80px 20px',
-    textAlign: 'center',
-    fontFamily: 'Inter, sans-serif',
+  
+  // Cards
+  card: {
+    background: theme.colors.bgCard,
+    borderRadius: theme.radii.lg,
+    border: `1px solid ${theme.colors.border}`,
+    padding: '24px',
+    marginBottom: '20px',
+    boxShadow: theme.shadows.sm,
   },
+  
+  // Typography
   h1: {
     fontSize: '26px',
     fontWeight: '700',
-    color: theme.colors.textPrimary,
-    marginBottom: '6px',
-    letterSpacing: '-0.5px',
-    margin: '0 0 6px 0',
+    color: theme.colors.text,
+    margin: '0 0 8px',
+    letterSpacing: '-0.02em',
   },
-  h2: {
-    fontSize: '17px',
-    fontWeight: '700',
-    marginBottom: '22px',
-    color: theme.colors.textPrimary,
-    margin: '0 0 22px 0',
-    display: 'flex',
-    alignItems: 'center',
-  },
+  
   subtitle: {
+    fontSize: '14px',
     color: theme.colors.textSecondary,
-    fontSize: '14.5px',
-    marginBottom: '22px',
-    margin: '0 0 22px 0',
-    lineHeight: '1.5',
+    margin: '0 0 24px',
   },
-  card: {
-    background: theme.colors.cardBg,
-    border: `1px solid ${theme.colors.border}`,
-    borderRadius: theme.radius.lg,
-    padding: '28px 32px',
-    marginBottom: '20px',
-    boxShadow: theme.shadows.card,
-  },
-  label: {
-    display: 'block',
-    fontSize: '13.5px',
-    fontWeight: '600',
-    marginBottom: '8px',
-    color: theme.colors.textPrimary,
-  },
-  input: {
-    width: '100%',
-    padding: '11px 14px',
-    border: `1px solid ${theme.colors.borderInput}`,
-    borderRadius: theme.radius.md,
-    fontSize: '14.5px',
-    outline: 'none',
-    boxSizing: 'border-box',
-    marginBottom: '18px',
-    color: theme.colors.textPrimary,
-    transition: 'border-color 0.2s, box-shadow 0.2s',
-    fontFamily: 'inherit',
-  },
-  primaryBtn: {
-    width: '100%',
+  
+  // Buttons
+  button: {
+    padding: '12px 24px',
+    background: theme.colors.gradientPrimary,
     color: 'white',
     border: 'none',
-    padding: '14px 24px',
-    borderRadius: theme.radius.md,
-    fontSize: '15px',
+    borderRadius: theme.radii.md,
+    fontSize: '14px',
     fontWeight: '600',
-    transition: 'all 0.2s',
+    cursor: 'pointer',
+    transition: theme.transitions.fast,
+    boxShadow: theme.shadows.sm,
+  },
+  
+  // ... existing styles (keep them for compatibility)
+  centerBox: {
     display: 'flex',
     justifyContent: 'center',
     alignItems: 'center',
-    gap: '8px',
-    letterSpacing: '0.2px',
+    minHeight: '100vh',
+    background: theme.colors.bg,
   },
-  helpText: {
-    marginTop: '8px',
-    fontSize: '12.5px',
-    color: theme.colors.textSecondary,
-    margin: '8px 0 0 0',
-    lineHeight: '1.5',
-  },
-  badgeRow: {
-    display: 'flex',
-    gap: '8px',
-    flexWrap: 'wrap',
-    marginBottom: '22px',
-  },
-  infoBox: {
-    background: '#ffffff',
-    borderRadius: theme.radius.lg,
-    padding: '22px 24px',
-    fontSize: '13.5px',
-    color: theme.colors.textSecondary,
-    lineHeight: '1.7',
+  
+  messageBox: {
+    padding: '16px 20px',
+    borderRadius: theme.radii.md,
+    fontSize: '14px',
     marginBottom: '16px',
-    border: `1px solid ${theme.colors.border}`,
-    boxShadow: theme.shadows.card,
   },
-  securityBox: {
-    padding: '14px 18px',
-    background: theme.colors.infoBg,
-    border: `1px solid ${theme.colors.infoBorder}`,
-    borderRadius: theme.radius.md,
-    fontSize: '12.5px',
-    color: theme.colors.infoText,
-    display: 'flex',
-    alignItems: 'flex-start',
-    gap: '10px',
-    lineHeight: '1.5',
-  },
+  
   grid: {
     display: 'grid',
-    gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))',
-    gap: '20px',
-  },
-  planCard: {
-    background: 'white',
-    border: `2px solid ${theme.colors.border}`,
-    borderRadius: theme.radius.lg,
-    padding: '24px',
+    gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))',
+    gap: '16px',
+    marginBottom: '24px',
   },
 }
