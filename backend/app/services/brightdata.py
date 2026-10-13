@@ -10,6 +10,7 @@
 # + ✅ NAYA: Categories (Collections) + Tags (Features/Specs)
 # + ✅ NAYA: Standard metafields fields (model, dimensions, etc.)
 # + ✅ FIXED: Tags — CLEAN & PROFESSIONAL (no duplicates, no garbage)
+# + ✅ FIXED: Description — clean (no "> See more product details")
 # ============================================
 
 import logging
@@ -325,24 +326,10 @@ def parse_standard_fields(raw: dict) -> dict:
 
 # ============================================
 # ✅ IMPROVED: TAGS PARSE — Clean & Professional
-# Amazon ke raw tags ko clean karke Shopify-ready banata hai
-# - Duplicate hataata hai
-# - "Color: Red" format use karta hai
-# - "Customer Reviews: 4.04.0 out of 5 stars(..." jaisa garbage skip karta hai
-# - Useless values (No, None, 0) skip karta hai
-# - 25 tags max
 # ============================================
 def parse_tags(raw: dict, categories: list[str]) -> list[str]:
     """
     Amazon response se CLEAN aur USEFUL tags nikalta hai.
-    
-    Rules:
-    - Colors → "Color: Red" (consistent prefix)
-    - Specs → "Brand: Drayear" (key: value)
-    - Categories → plain text
-    - Rating → "Rating: 4.0 stars" (clean)
-    - Skip useless values (No, None, 0, empty)
-    - Max 25 tags
     """
     import re
 
@@ -350,7 +337,6 @@ def parse_tags(raw: dict, categories: list[str]) -> list[str]:
     seen_lower: set = set()
 
     def _add(tag: str):
-        """Add tag with deduplication."""
         if not tag:
             return
         tag = tag.strip()
@@ -366,9 +352,7 @@ def parse_tags(raw: dict, categories: list[str]) -> list[str]:
         seen_lower.add(low)
         tags.append(tag)
 
-    # ─────────────────────────────────────────
-    # 1. COLORS — "Color: Red" format
-    # ─────────────────────────────────────────
+    # 1. COLORS
     COLOR_KEYWORDS = {
         "red", "blue", "green", "yellow", "black", "white",
         "orange", "purple", "pink", "brown", "gray", "grey",
@@ -407,9 +391,7 @@ def parse_tags(raw: dict, categories: list[str]) -> list[str]:
                     _add(f"Color: {color.title()}")
                     break
 
-    # ─────────────────────────────────────────
     # 2. BRAND / MANUFACTURER
-    # ─────────────────────────────────────────
     brand = raw.get("brand")
     if brand and isinstance(brand, str) and brand.strip():
         _add(f"Brand: {brand.strip()}")
@@ -419,9 +401,7 @@ def parse_tags(raw: dict, categories: list[str]) -> list[str]:
         if manufacturer.strip().lower() != (brand or "").strip().lower():
             _add(f"Manufacturer: {manufacturer.strip()}")
 
-    # ─────────────────────────────────────────
-    # 3. RATING — clean format
-    # ─────────────────────────────────────────
+    # 3. RATING
     rating = raw.get("rating")
     if rating is not None:
         try:
@@ -431,48 +411,29 @@ def parse_tags(raw: dict, categories: list[str]) -> list[str]:
         except (ValueError, TypeError):
             pass
 
-    # ─────────────────────────────────────────
-    # 4. CATEGORIES — plain text
-    # ─────────────────────────────────────────
+    # 4. CATEGORIES
     for cat in categories:
         if cat and len(cat) < 60:
             _add(cat)
 
-    # ─────────────────────────────────────────
-    # 5. KEY SPECS — from product_details
-    # ─────────────────────────────────────────
+    # 5. KEY SPECS
     SPEC_LABELS = {
-        "material": "Material",
-        "material type": "Material",
-        "fabric type": "Fabric",
-        "style": "Style",
-        "style name": "Style",
-        "theme": "Theme",
-        "pattern": "Pattern",
-        "size": "Size",
+        "material": "Material", "material type": "Material",
+        "fabric type": "Fabric", "style": "Style", "style name": "Style",
+        "theme": "Theme", "pattern": "Pattern", "size": "Size",
         "department": "Department",
-        "age range description": "Age Range",
-        "recommended age": "Age Range",
+        "age range description": "Age Range", "recommended age": "Age Range",
         "manufacturer recommended age": "Age Range",
         "power source": "Power Source",
-        "battery type": "Battery",
-        "batteries required": "Battery",
-        "number of pieces": "Pieces",
-        "unit count": "Unit Count",
-        "number of items": "Items",
-        "item package quantity": "Pack Qty",
-        "special feature": "Feature",
-        "special features": "Feature",
-        "additional features": "Feature",
-        "operation mode": "Operation",
-        "toy vehicle form": "Form",
-        "educational objective": "Educational",
-        "specific uses for product": "Uses",
-        "included components": "Includes",
-        "model number": "Model",
-        "model name": "Model Name",
-        "part number": "Part Number",
-        "manufacturer part number": "Part Number",
+        "battery type": "Battery", "batteries required": "Battery",
+        "number of pieces": "Pieces", "unit count": "Unit Count",
+        "number of items": "Items", "item package quantity": "Pack Qty",
+        "special feature": "Feature", "special features": "Feature",
+        "additional features": "Feature", "operation mode": "Operation",
+        "toy vehicle form": "Form", "educational objective": "Educational",
+        "specific uses for product": "Uses", "included components": "Includes",
+        "model number": "Model", "model name": "Model Name",
+        "part number": "Part Number", "manufacturer part number": "Part Number",
     }
 
     USELESS_VALUES = {
@@ -498,7 +459,6 @@ def parse_tags(raw: dict, categories: list[str]) -> list[str]:
             label = SPEC_LABELS.get(field_type)
             if not label:
                 continue
-
             if label in seen_specs:
                 continue
             seen_specs.add(label)
@@ -509,16 +469,12 @@ def parse_tags(raw: dict, categories: list[str]) -> list[str]:
 
             _add(f"{label}: {value}")
 
-    # ─────────────────────────────────────────
     # 6. ASIN
-    # ─────────────────────────────────────────
     asin = raw.get("asin")
     if asin and isinstance(asin, str):
         _add(f"ASIN: {asin.strip()}")
 
-    # ─────────────────────────────────────────
-    # 7. UNIT COUNT from raw
-    # ─────────────────────────────────────────
+    # 7. UNIT COUNT
     unit_count = raw.get("unit_count")
     if unit_count:
         uc = str(unit_count).strip()
@@ -526,13 +482,60 @@ def parse_tags(raw: dict, categories: list[str]) -> list[str]:
         if uc_clean and "Unit Count" not in seen_specs:
             _add(f"Unit Count: {uc_clean}")
 
-    # ─────────────────────────────────────────
-    # LIMIT: 25 tags max
-    # ─────────────────────────────────────────
     tags = tags[:25]
 
     logger.info(f"✅ Parsed tags ({len(tags)}): {tags}")
     return tags
+
+
+# ============================================
+# ✅ NAYA: CLEAN DESCRIPTION — Amazon UI garbage remove
+# ============================================
+def clean_description(description: str) -> str:
+    """
+    Amazon description se UI garbage hataata hai.
+    Examples: "> See more product details", "› Read more", etc.
+    """
+    if not description or not isinstance(description, str):
+        return ""
+
+    import re
+
+    # Remove karne wale patterns
+    garbage_patterns = [
+        r"[>›»]\s*See\s+more\s+product\s+details\.?",
+        r"[>›»]\s*See\s+more\.?",
+        r"[>›»]\s*Read\s+more\.?",
+        r"[>›»]\s*Show\s+more\.?",
+        r"[>›»]\s*View\s+more\.?",
+        r"See\s+more\s+product\s+details\.?",
+        r"Read\s+more\s+product\s+details\.?",
+        r"Report\s+incorrect\s+product\s+information\.?",
+        r"Show\s+more\s+product\s+details\.?",
+        r"View\s+more\s+product\s+details\.?",
+        r"\bSee\s+more\b",
+        r"\bRead\s+more\b",
+        r"\bShow\s+more\b",
+        r"\bView\s+more\b",
+    ]
+
+    for pattern in garbage_patterns:
+        description = re.sub(pattern, "", description, flags=re.IGNORECASE)
+
+    # Standalone ">" / "›" characters hatao
+    description = re.sub(r"^\s*[>›»]\s*", "", description)
+    description = re.sub(r"\s+[>›»]\s+", " ", description)
+
+    # Multiple spaces/newlines clean karo
+    description = re.sub(r"\s+", " ", description)
+    description = re.sub(r"\s+([.,!?;:])", r"\1", description)
+    description = description.strip()
+
+    # Agar description bahut chhoti hai toh empty return
+    if len(description) < 20:
+        return ""
+
+    return description
 
 
 # ============================================
@@ -777,11 +780,15 @@ async def fetch_product_from_brightdata(amazon_url: str) -> dict:
     tags = parse_tags(raw, categories)
     standard_fields = parse_standard_fields(raw)
 
+    # ✅ Clean description
+    cleaned_description = clean_description(raw.get("description"))
+
     logger.info(
         f"Parsed product: ASIN={asin}, ParentASIN={parent_asin}, "
         f"AmazonPrice=${amazon_price}, Rating={rating_value}, "
         f"Reviews={reviews_count}, Categories={len(categories)}, "
-        f"Tags={len(tags)}, StandardFields={len(standard_fields)}"
+        f"Tags={len(tags)}, StandardFields={len(standard_fields)}, "
+        f"Description={len(cleaned_description)} chars"
     )
 
     return {
@@ -795,7 +802,7 @@ async def fetch_product_from_brightdata(amazon_url: str) -> dict:
         "image_url": main_image,
         "images": unique_images,
         "specifications": specs,
-        "description": raw.get("description"),
+        "description": cleaned_description,   # ✅ CLEANED
         "rating": rating_value,
         "reviews_count": reviews_count,
         "availability": final_availability,
