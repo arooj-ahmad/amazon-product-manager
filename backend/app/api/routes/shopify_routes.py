@@ -11,7 +11,8 @@
 # + ✅ NAYA: App uninstalled cleanup (subscription_staus)
 # + ✅ NAYA: All standard metafields passed to shopify_product
 # + ✅ FIXED v2: PRICE FLOW — variant price $0.00 issue solved
-#               (product=new_product pass hota hai, price fallback bhi)
+# + ✅ FIXED v3: DATA + PRODUCT MERGE — Bright Data ke saare
+#               standard fields Shopify tak pahunchte hain
 # ============================================
 
 import logging
@@ -56,34 +57,33 @@ router = APIRouter(prefix="/api/shopify", tags=["Shopify"])
 
 
 # ============================================
-# ✅ FIXED v2: Build product_data with metafields
-# - product.price fallback (agar 0 hai toh amazon_price + markup)
-# - Saare DB fields properly read
+# ✅ FIXED v3: Build product_data with metafields
+# - `data` (Bright Data) + `product` (DB) dono merge karta hai
+# - Standard fields dono sources se read hote hain
 # ============================================
 def _build_product_data_for_shopify(data: dict, product=None) -> dict:
     """
     Bright Data data + product data → Shopify product_data.
-    Saare standard metafields fields pass karo.
+    Dono sources ko merge karta hai.
     """
-    if product:
-        # ✅ FIXED: Price resolution — multiple fallbacks
-        product_price = product.price
+    base = {}
 
-        # Agar price 0/missing hai, toh calculate from amazon_price + markup
+    # ═══════════════════════════════════════════
+    # STEP 1: Base fields — product (DB) se, ya `data` se
+    # ═══════════════════════════════════════════
+    if product:
+        # Price resolution
+        product_price = product.price
         if product_price is None or float(product_price or 0) <= 0:
             amazon = float(product.amazon_price or 0)
             markup_val = float(product.markup or 2.0)
             markup_type = product.markup_type or "fixed"
-
             if markup_type == "percent":
                 product_price = amazon * (1 + markup_val / 100)
             else:
                 product_price = amazon + markup_val
-
             logger.warning(
-                f"⚠️ product.price was 0/missing — calculated "
-                f"${product_price} from amazon_price=${amazon} "
-                f"+ markup={markup_val} ({markup_type})"
+                f"⚠️ product.price was 0 — calculated ${product_price}"
             )
 
         base = {
@@ -97,8 +97,7 @@ def _build_product_data_for_shopify(data: dict, product=None) -> dict:
             "stock_quantity": product.stock_quantity or 0,
             "is_available": (
                 product.is_available
-                if product.is_available is not None
-                else True
+                if product.is_available is not None else True
             ),
             "availability": product.availability or "In Stock",
             "rating": product.rating,
@@ -109,21 +108,11 @@ def _build_product_data_for_shopify(data: dict, product=None) -> dict:
             "variant_attributes": product.variant_attributes or [],
             "categories": product.categories or [],
             "tags": product.tags or [],
-            # Standard fields — DB se
             "manufacturer": getattr(product, "manufacturer", None),
             "department": getattr(product, "department", None),
             "country_of_origin": getattr(product, "country_of_origin", None),
         }
-
-        logger.info(
-            f"   📦 product_data built from DB: "
-            f"price=${product_price}, "
-            f"amazon_price=${product.amazon_price}, "
-            f"stock={product.stock_quantity}"
-        )
-
     else:
-        # Base — from Bright Data `data`
         base = {
             "title": data.get("title"),
             "description": data.get("description") or "",
@@ -145,7 +134,10 @@ def _build_product_data_for_shopify(data: dict, product=None) -> dict:
             "tags": data.get("tags", []),
         }
 
-    # ✅ Standard metafields fields — from Bright Data `data`
+    # ═══════════════════════════════════════════
+    # STEP 2: STANDARD FIELDS — dono sources se merge
+    # Priority: data (Bright Data) > product.specifications > product.<attr>
+    # ═══════════════════════════════════════════
     standard_fields = [
         "model_number", "item_model_number", "model_name",
         "part_number", "upc", "ean", "isbn",
@@ -163,16 +155,51 @@ def _build_product_data_for_shopify(data: dict, product=None) -> dict:
         "hard_disk", "graphics_coprocessor", "warranty",
     ]
 
-    # ✅ Agar product se aaye hain toh overwrite mat karo
-    for field in standard_fields:
-        if product:
-            continue  # Product fields already set above
-        val = data.get(field)
-        if val is not None and str(val).strip() and str(val).strip() != "None":
-            base[field] = str(val).strip()
+    # Source A: Bright Data `data` (highest priority)
+    if data:
+        for field in standard_fields:
+            val = data.get(field)
+            if val is not None and str(val).strip() and str(val).strip() != "None":
+                base[field] = str(val).strip()
 
-    # ✅ Raw product_details — auto-mapping ke liye
-    base["product_details"] = data.get("product_details") or []
+    # Source B: product.specifications (JSON)
+    if product:
+        specs = product.specifications or {}
+        if isinstance(specs, str):
+            try:
+                import json
+                specs = json.loads(specs)
+            except Exception:
+                specs = {}
+        if isinstance(specs, dict):
+            for field in standard_fields:
+                if field in base:
+                    continue
+                val = specs.get(field)
+                if val is not None and str(val).strip() and str(val).strip() != "None":
+                    base[field] = str(val).strip()
+
+        # Source C: product columns
+        for field in standard_fields:
+            if field in base:
+                continue
+            val = getattr(product, field, None)
+            if val is not None and str(val).strip() and str(val).strip() != "None":
+                base[field] = str(val).strip()
+
+    # ═══════════════════════════════════════════
+    # STEP 3: product_details (raw array)
+    # ═══════════════════════════════════════════
+    base["product_details"] = (data.get("product_details") if data else None) or []
+
+    # ✅ DEBUG LOG
+    filled = [f for f in standard_fields if f in base]
+    logger.info(
+        f"   📦 product_data built: "
+        f"price=${base.get('price')}, "
+        f"{len(filled)} standard fields"
+    )
+    logger.info(f"   📋 Filled: {filled}")
 
     return base
 
@@ -535,7 +562,7 @@ async def push_product_to_shopify(
                 "variant_added": True,
             }
 
-    # ✅ Build product_data with all metafields (product=product)
+    # ✅ Build product_data — product se (data={} hai)
     product_data = _build_product_data_for_shopify(
         data={}, product=product
     )
@@ -786,9 +813,11 @@ async def add_product_from_shopify_app(
             else:
                 logger.info("🆕 Creating new product")
 
-                # ✅ FIXED: product=new_product pass karo (price flow ke liye)
+                # ✅ FIXED v3: `data` + `new_product` dono pass karo
+                # `data` (Bright Data) mein standard fields hain
+                # `new_product` (DB) mein price, stock, title etc.
                 product_data = _build_product_data_for_shopify(
-                    data=data, product=new_product  # ⬅️ product=None NAHI
+                    data=data, product=new_product
                 )
 
                 logger.info(
