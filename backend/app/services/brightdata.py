@@ -9,6 +9,7 @@
 # + ✅ NAYA: Availability check with fallback
 # + ✅ NAYA: Categories (Collections) + Tags (Features/Specs)
 # + ✅ NAYA: Standard metafields fields (model, dimensions, etc.)
+# + ✅ FIXED: Tags — CLEAN & PROFESSIONAL (no duplicates, no garbage)
 # ============================================
 
 import logging
@@ -323,56 +324,212 @@ def parse_standard_fields(raw: dict) -> dict:
 
 
 # ============================================
-# TAGS PARSE
+# ✅ IMPROVED: TAGS PARSE — Clean & Professional
+# Amazon ke raw tags ko clean karke Shopify-ready banata hai
+# - Duplicate hataata hai
+# - "Color: Red" format use karta hai
+# - "Customer Reviews: 4.04.0 out of 5 stars(..." jaisa garbage skip karta hai
+# - Useless values (No, None, 0) skip karta hai
+# - 25 tags max
 # ============================================
 def parse_tags(raw: dict, categories: list[str]) -> list[str]:
-    """Amazon response se tags nikalta hai."""
-    tags: list[str] = []
+    """
+    Amazon response se CLEAN aur USEFUL tags nikalta hai.
+    
+    Rules:
+    - Colors → "Color: Red" (consistent prefix)
+    - Specs → "Brand: Drayear" (key: value)
+    - Categories → plain text
+    - Rating → "Rating: 4.0 stars" (clean)
+    - Skip useless values (No, None, 0, empty)
+    - Max 25 tags
+    """
+    import re
 
-    features = raw.get("features") or []
-    if isinstance(features, list):
-        for f in features:
-            if isinstance(f, str):
-                clean = f.strip().replace("\n", " ").replace(",", "")
-                if 3 < len(clean) < 80:
-                    tags.append(clean)
+    tags: list[str] = []
+    seen_lower: set = set()
+
+    def _add(tag: str):
+        """Add tag with deduplication."""
+        if not tag:
+            return
+        tag = tag.strip()
+        if not tag:
+            return
+        if len(tag) > 80:
+            tag = tag[:77] + "..."
+        if len(tag) < 3:
+            return
+        low = tag.lower()
+        if low in seen_lower:
+            return
+        seen_lower.add(low)
+        tags.append(tag)
+
+    # ─────────────────────────────────────────
+    # 1. COLORS — "Color: Red" format
+    # ─────────────────────────────────────────
+    COLOR_KEYWORDS = {
+        "red", "blue", "green", "yellow", "black", "white",
+        "orange", "purple", "pink", "brown", "gray", "grey",
+        "silver", "gold", "beige", "navy", "teal", "cyan",
+        "magenta", "maroon", "olive", "lime", "aqua", "violet",
+        "multicolor", "multi", "dark blue", "light blue",
+        "dark green", "light green", "dark red", "light pink",
+        "rose gold", "space gray", "space grey",
+    }
 
     product_details = raw.get("product_details") or []
     if isinstance(product_details, list):
         for item in product_details:
-            if isinstance(item, dict):
-                key = item.get("type")
-                value = item.get("value")
-                if key and value:
-                    val_str = str(value).strip()
-                    if 0 < len(val_str) < 80:
-                        tags.append(f"{key}: {val_str}")
-    elif isinstance(product_details, dict):
-        for key, value in product_details.items():
-            if not key or value is None:
+            if not isinstance(item, dict):
                 continue
-            val_str = str(value).strip()
-            if 0 < len(val_str) < 80:
-                tags.append(f"{key}: {val_str}")
+            field_type = (item.get("type") or "").strip().lower()
+            value = (item.get("value") or "").strip()
+            if field_type in ("color", "colour") and value:
+                if value.lower() not in seen_lower:
+                    _add(f"Color: {value}")
+            elif field_type in ("material", "material type") and value:
+                _add(f"Material: {value}")
+            elif field_type == "style" and value:
+                _add(f"Style: {value}")
+            elif field_type == "theme" and value:
+                _add(f"Theme: {value}")
 
-    for field, label in [
-        ("department", "Department"),
-        ("country_of_origin", "Country"),
-        ("brand", "Brand"),
-        ("manufacturer", "Manufacturer"),
-    ]:
-        val = raw.get(field)
-        if val and isinstance(val, str) and len(val) < 50:
-            tags.append(f"{label}: {val.strip()}")
+    features = raw.get("features") or []
+    if isinstance(features, list):
+        for f in features:
+            if not isinstance(f, str):
+                continue
+            f_lower = f.lower()
+            for color in COLOR_KEYWORDS:
+                if color in f_lower and f_lower.startswith(color):
+                    _add(f"Color: {color.title()}")
+                    break
 
+    # ─────────────────────────────────────────
+    # 2. BRAND / MANUFACTURER
+    # ─────────────────────────────────────────
+    brand = raw.get("brand")
+    if brand and isinstance(brand, str) and brand.strip():
+        _add(f"Brand: {brand.strip()}")
+
+    manufacturer = raw.get("manufacturer")
+    if manufacturer and isinstance(manufacturer, str) and manufacturer.strip():
+        if manufacturer.strip().lower() != (brand or "").strip().lower():
+            _add(f"Manufacturer: {manufacturer.strip()}")
+
+    # ─────────────────────────────────────────
+    # 3. RATING — clean format
+    # ─────────────────────────────────────────
+    rating = raw.get("rating")
+    if rating is not None:
+        try:
+            r = float(rating)
+            if 0 < r <= 5:
+                _add(f"Rating: {r:.1f} stars")
+        except (ValueError, TypeError):
+            pass
+
+    # ─────────────────────────────────────────
+    # 4. CATEGORIES — plain text
+    # ─────────────────────────────────────────
     for cat in categories:
-        if cat and cat not in tags and len(cat) < 50:
-            tags.append(cat)
+        if cat and len(cat) < 60:
+            _add(cat)
 
-    tags = [
-        t for t in dict.fromkeys(tags)
-        if t and len(t) < 100
-    ][:20]
+    # ─────────────────────────────────────────
+    # 5. KEY SPECS — from product_details
+    # ─────────────────────────────────────────
+    SPEC_LABELS = {
+        "material": "Material",
+        "material type": "Material",
+        "fabric type": "Fabric",
+        "style": "Style",
+        "style name": "Style",
+        "theme": "Theme",
+        "pattern": "Pattern",
+        "size": "Size",
+        "department": "Department",
+        "age range description": "Age Range",
+        "recommended age": "Age Range",
+        "manufacturer recommended age": "Age Range",
+        "power source": "Power Source",
+        "battery type": "Battery",
+        "batteries required": "Battery",
+        "number of pieces": "Pieces",
+        "unit count": "Unit Count",
+        "number of items": "Items",
+        "item package quantity": "Pack Qty",
+        "special feature": "Feature",
+        "special features": "Feature",
+        "additional features": "Feature",
+        "operation mode": "Operation",
+        "toy vehicle form": "Form",
+        "educational objective": "Educational",
+        "specific uses for product": "Uses",
+        "included components": "Includes",
+        "model number": "Model",
+        "model name": "Model Name",
+        "part number": "Part Number",
+        "manufacturer part number": "Part Number",
+    }
+
+    USELESS_VALUES = {
+        "", "no", "none", "n/a", "na", "0", "null",
+        "not applicable", "false", "-",
+    }
+
+    seen_specs = set()
+    if isinstance(product_details, list):
+        for item in product_details:
+            if not isinstance(item, dict):
+                continue
+            field_type = (item.get("type") or "").strip().lower()
+            value = (item.get("value") or "").strip()
+
+            if not value:
+                continue
+            if value.lower() in USELESS_VALUES:
+                continue
+            if field_type in ("color", "colour"):
+                continue
+
+            label = SPEC_LABELS.get(field_type)
+            if not label:
+                continue
+
+            if label in seen_specs:
+                continue
+            seen_specs.add(label)
+
+            value = re.sub(r"\s+", " ", value)
+            if len(value) > 50:
+                value = value[:47] + "..."
+
+            _add(f"{label}: {value}")
+
+    # ─────────────────────────────────────────
+    # 6. ASIN
+    # ─────────────────────────────────────────
+    asin = raw.get("asin")
+    if asin and isinstance(asin, str):
+        _add(f"ASIN: {asin.strip()}")
+
+    # ─────────────────────────────────────────
+    # 7. UNIT COUNT from raw
+    # ─────────────────────────────────────────
+    unit_count = raw.get("unit_count")
+    if unit_count:
+        uc = str(unit_count).strip()
+        uc_clean = re.sub(r"\s*(count|pcs|pieces|pack)\s*", "", uc, flags=re.IGNORECASE)
+        if uc_clean and "Unit Count" not in seen_specs:
+            _add(f"Unit Count: {uc_clean}")
+
+    # ─────────────────────────────────────────
+    # LIMIT: 25 tags max
+    # ─────────────────────────────────────────
+    tags = tags[:25]
 
     logger.info(f"✅ Parsed tags ({len(tags)}): {tags}")
     return tags
