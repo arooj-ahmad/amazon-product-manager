@@ -10,6 +10,8 @@
 # + ✅ NAYA: Multiple variants support (Color + Size)
 # + ✅ NAYA: App uninstalled cleanup (subscription_staus)
 # + ✅ NAYA: All standard metafields passed to shopify_product
+# + ✅ FIXED v2: PRICE FLOW — variant price $0.00 issue solved
+#               (product=new_product pass hota hai, price fallback bhi)
 # ============================================
 
 import logging
@@ -54,15 +56,36 @@ router = APIRouter(prefix="/api/shopify", tags=["Shopify"])
 
 
 # ============================================
-# ✅ NAYA HELPER: Build product_data with metafields
+# ✅ FIXED v2: Build product_data with metafields
+# - product.price fallback (agar 0 hai toh amazon_price + markup)
+# - Saare DB fields properly read
 # ============================================
 def _build_product_data_for_shopify(data: dict, product=None) -> dict:
     """
     Bright Data data + product data → Shopify product_data.
     Saare standard metafields fields pass karo.
     """
-    # Base data — from `data` (Bright Data response)
     if product:
+        # ✅ FIXED: Price resolution — multiple fallbacks
+        product_price = product.price
+
+        # Agar price 0/missing hai, toh calculate from amazon_price + markup
+        if product_price is None or float(product_price or 0) <= 0:
+            amazon = float(product.amazon_price or 0)
+            markup_val = float(product.markup or 2.0)
+            markup_type = product.markup_type or "fixed"
+
+            if markup_type == "percent":
+                product_price = amazon * (1 + markup_val / 100)
+            else:
+                product_price = amazon + markup_val
+
+            logger.warning(
+                f"⚠️ product.price was 0/missing — calculated "
+                f"${product_price} from amazon_price=${amazon} "
+                f"+ markup={markup_val} ({markup_type})"
+            )
+
         base = {
             "title": product.title,
             "description": product.description or "",
@@ -70,7 +93,7 @@ def _build_product_data_for_shopify(data: dict, product=None) -> dict:
             "images": product.images or (
                 [product.image_url] if product.image_url else []
             ),
-            "price": str(product.price) if product.price else "0.00",
+            "price": str(product_price) if product_price else "0.00",
             "stock_quantity": product.stock_quantity or 0,
             "is_available": (
                 product.is_available
@@ -87,10 +110,18 @@ def _build_product_data_for_shopify(data: dict, product=None) -> dict:
             "categories": product.categories or [],
             "tags": product.tags or [],
             # Standard fields — DB se
-            "manufacturer": None,  # DB mein nahi hai
-            "department": None,
-            "country_of_origin": None,
+            "manufacturer": getattr(product, "manufacturer", None),
+            "department": getattr(product, "department", None),
+            "country_of_origin": getattr(product, "country_of_origin", None),
         }
+
+        logger.info(
+            f"   📦 product_data built from DB: "
+            f"price=${product_price}, "
+            f"amazon_price=${product.amazon_price}, "
+            f"stock={product.stock_quantity}"
+        )
+
     else:
         # Base — from Bright Data `data`
         base = {
@@ -132,8 +163,11 @@ def _build_product_data_for_shopify(data: dict, product=None) -> dict:
         "hard_disk", "graphics_coprocessor", "warranty",
     ]
 
+    # ✅ Agar product se aaye hain toh overwrite mat karo
     for field in standard_fields:
-        val = data.get(field) if not product else None
+        if product:
+            continue  # Product fields already set above
+        val = data.get(field)
         if val is not None and str(val).strip() and str(val).strip() != "None":
             base[field] = str(val).strip()
 
@@ -501,9 +535,14 @@ async def push_product_to_shopify(
                 "variant_added": True,
             }
 
-    # ✅ Build product_data with all metafields
+    # ✅ Build product_data with all metafields (product=product)
     product_data = _build_product_data_for_shopify(
         data={}, product=product
+    )
+
+    logger.info(
+        f"   📤 Shopify ko bheja ja raha price: "
+        f"${product_data.get('price')}"
     )
 
     result = await create_shopify_product(
@@ -702,7 +741,7 @@ async def add_product_from_shopify_app(
     db.commit()
     db.refresh(new_product)
 
-    logger.info(f"✅ Product saved to Supabase: {asin}")
+    logger.info(f"✅ Product saved to Supabase: {asin} (price=${final_price})")
 
     shopify_pushed = False
     shopify_product_id = None
@@ -747,9 +786,14 @@ async def add_product_from_shopify_app(
             else:
                 logger.info("🆕 Creating new product")
 
-                # ✅ Build product_data with all metafields
+                # ✅ FIXED: product=new_product pass karo (price flow ke liye)
                 product_data = _build_product_data_for_shopify(
-                    data=data, product=None
+                    data=data, product=new_product  # ⬅️ product=None NAHI
+                )
+
+                logger.info(
+                    f"   📤 Shopify ko bheja ja raha price: "
+                    f"${product_data.get('price')}"
                 )
 
                 _result = await create_shopify_product(
