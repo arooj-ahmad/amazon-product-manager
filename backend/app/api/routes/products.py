@@ -8,6 +8,7 @@
 # + ✅ NAYA: categories + tags save (fetch pe) + push (markup update pe)
 # + ✅ NAYA: DELETE — pehle Shopify se delete, phir DB se
 # + ✅ FIXED: admin_delete_product + admin_update_product added
+# + ✅ NAYA: "both" markup type — extra_percent support
 # ============================================
 
 import logging
@@ -311,11 +312,13 @@ async def admin_fetch_product(
 
     user_markup = payload.markup if payload.markup is not None else 2.0
     user_markup_type = payload.markup_type or "fixed"
+    user_extra_percent = getattr(payload, "extra_percent", 0.0) or 0.0   # ✅ NAYA
 
     final_price = calculate_final_price(
         amazon_price=data["amazon_price"],
         markup=user_markup,
         markup_type=user_markup_type,
+        extra_percent=user_extra_percent,   # ✅ NAYA
     )
 
     default_store = db.query(ShopifyStore).first()
@@ -336,6 +339,7 @@ async def admin_fetch_product(
         price=final_price,
         markup=user_markup,
         markup_type=user_markup_type,
+        extra_percent=user_extra_percent,   # ✅ NAYA
         is_manual_override=False,
         availability=data.get("availability", "In Stock"),
         is_available=data.get("is_available", True),
@@ -468,6 +472,10 @@ def list_products_for_markup(store_id: int = None, db: Session = Depends(get_db)
     return query.order_by(Product.created_at.desc()).all()
 
 
+# ============================================
+# ✅ FIXED: update_product_markup
+# + ✅ NAYA: extra_percent support
+# ============================================
 @router.patch("/markup/{product_id}", response_model=ProductResponse)
 async def update_product_markup(
     product_id: int,
@@ -478,14 +486,19 @@ async def update_product_markup(
     if not product:
         raise HTTPException(status_code=404, detail="Product not found")
 
+    # ✅ NAYA: extra_percent nikalo
+    extra_pct = getattr(payload, "extra_percent", 0.0) or 0.0
+
     new_price = calculate_final_price(
         amazon_price=product.amazon_price,
         markup=payload.markup,
         markup_type=payload.markup_type,
+        extra_percent=extra_pct,   # ✅ NAYA
     )
 
     product.markup = payload.markup
     product.markup_type = payload.markup_type
+    product.extra_percent = extra_pct   # ✅ NAYA
     product.price = new_price
     product.is_manual_override = True
 
@@ -519,7 +532,8 @@ async def update_product_markup(
             )
             if ok:
                 logger.info(
-                    f"✅ Shopify price + tags updated: {product.asin} → ${new_price}"
+                    f"✅ Shopify price + tags updated: {product.asin} → ${new_price} "
+                    f"(type={payload.markup_type}, extra={extra_pct}%)"
                 )
             else:
                 logger.warning(f"⚠️ Shopify price update FAILED: {product.asin}")
@@ -529,6 +543,10 @@ async def update_product_markup(
     return product
 
 
+# ============================================
+# ✅ FIXED: bulk_update_markup
+# + ✅ NAYA: extra_percent support
+# ============================================
 @router.post("/markup/bulk-update")
 async def bulk_update_markup(
     payload: MarkupUpdate,
@@ -545,14 +563,19 @@ async def bulk_update_markup(
     shopify_failed = 0
     token_refreshed_stores = set()
 
+    # ✅ NAYA: extra_percent nikalo
+    extra_pct = getattr(payload, "extra_percent", 0.0) or 0.0
+
     for product in products:
         new_price = calculate_final_price(
             amazon_price=product.amazon_price,
             markup=payload.markup,
             markup_type=payload.markup_type,
+            extra_percent=extra_pct,   # ✅ NAYA
         )
         product.markup = payload.markup
         product.markup_type = payload.markup_type
+        product.extra_percent = extra_pct   # ✅ NAYA
         product.price = new_price
         product.is_manual_override = True
         updated += 1
@@ -720,6 +743,7 @@ async def sync_products_from_shopify(store_id: int = None, db: Session = Depends
                     amazon_price=shopify_price,
                     markup=product.markup or 2.0,
                     markup_type=product.markup_type or "fixed",
+                    extra_percent=getattr(product, "extra_percent", 0.0) or 0.0,
                 )
             updated += 1
         else:
