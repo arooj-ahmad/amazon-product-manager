@@ -8,9 +8,9 @@
 # + ✅ FIXED: SKU (ASIN) always set on variants
 # + ✅ FIXED: Metafields in Description HTML (auto-show)
 # + ✅ FIXED: Auto-publish to channels
-# + ✅ FIXED v2: Metafield TYPE mismatch (INVALID_TYPE) — existing
-#               definition ke type ke hisaab se value auto-adapt hogi
-# + ✅ UPGRADED: Description mein SAARE metafields HTML table ke saath
+# + ✅ FIXED v2: Metafield TYPE mismatch (INVALID_TYPE)
+# + ✅ UPGRADED: Description mein SAARE metafields HTML table
+# + ✅ FIXED v3: Chunked metafields (25 per call) + Pinned limit handle
 # ============================================
 
 import logging
@@ -29,7 +29,6 @@ logger = logging.getLogger(__name__)
 
 # ============================================
 # ✅ METAFIELD DEFINITIONS MAP
-# key → (display_name, type, description)
 # ============================================
 METAFIELD_DEFINITIONS = {
     # Core
@@ -119,7 +118,9 @@ def _slugify_key(name: str) -> str:
 
 
 # ============================================
-# ✅ FIXED v2: Ensure Metafield Definitions exist
+# ✅ FIXED v3: Ensure Metafield Definitions exist
+# - Pinned limit (50) handle karta hai
+# - Existing definitions ka type bhi return karta hai
 # ============================================
 async def ensure_metafield_definitions(
     shop: str,
@@ -128,7 +129,7 @@ async def ensure_metafield_definitions(
 ) -> dict:
     """
     Har key ke liye metafieldDefinition create karo (agar exist nahi karti).
-    Existing definitions ka actual type bhi fetch karo.
+    Pinned limit (50) ka dhyan rakho.
     Returns: {key: type_name}
     """
     if not keys:
@@ -143,6 +144,7 @@ async def ensure_metafield_definitions(
             namespace
             key
             type { name }
+            pinnedPosition
           }
         }
       }
@@ -152,6 +154,8 @@ async def ensure_metafield_definitions(
     result = await shopify_graphql(shop, access_token, query, {"first": 250})
 
     existing_types = {}
+    pinned_count = 0
+
     if "data" in result:
         edges = result["data"].get("metafieldDefinitions", {}).get("edges", [])
         for edge in edges:
@@ -163,6 +167,18 @@ async def ensure_metafield_definitions(
             type_name = type_obj.get("name") if isinstance(type_obj, dict) else None
             if key and type_name:
                 existing_types[key] = type_name
+            if node.get("pinnedPosition") is not None:
+                pinned_count += 1
+
+    # ✅ Pinned limit check
+    PINNED_LIMIT = 50
+    can_pin = pinned_count < PINNED_LIMIT
+
+    if not can_pin:
+        logger.warning(
+            f"   ⚠️ Pinned limit reached ({pinned_count}/{PINNED_LIMIT}) — "
+            f"new definitions won't be pinned"
+        )
 
     to_create = []
     for key in keys:
@@ -175,6 +191,9 @@ async def ensure_metafield_definitions(
         else:
             name, mf_type, desc = METAFIELD_DEFINITIONS[key]
 
+        # ✅ Dynamic pin decision
+        should_pin = can_pin and pinned_count < PINNED_LIMIT
+
         to_create.append({
             "name": name,
             "namespace": "custom",
@@ -182,8 +201,11 @@ async def ensure_metafield_definitions(
             "description": desc,
             "type": mf_type,
             "ownerType": "PRODUCT",
-            "pin": True,
+            "pin": should_pin,
         })
+
+        if should_pin:
+            pinned_count += 1
 
     if not to_create:
         logger.info(f"   ✅ All {len(keys)} metafield definitions already exist")
@@ -217,12 +239,53 @@ async def ensure_metafield_definitions(
             )
 
             if user_errors:
-                msgs = [e.get("message", "") for e in user_errors]
-                if any("already exists" in m.lower() or "taken" in m.lower() for m in msgs):
+                # ✅ PINNED_LIMIT_REACHED ko gracefully handle karo
+                pinned_error = any(
+                    "pinned" in (e.get("message") or "").lower()
+                    or e.get("code") == "PINNED_LIMIT_REACHED"
+                    for e in user_errors
+                )
+                already_exists = any(
+                    "already exists" in (e.get("message") or "").lower()
+                    or "taken" in (e.get("message") or "").lower()
+                    for e in user_errors
+                )
+
+                if already_exists:
                     existing_types[defn["key"]] = "single_line_text_field"
                     success_count += 1
                     continue
-                logger.error(f"   ❌ Definition userErrors ({defn['key']}): {user_errors}")
+
+                if pinned_error:
+                    # Retry without pin
+                    logger.warning(
+                        f"   ⚠️ {defn['key']} — pinned limit hit, "
+                        f"retrying without pin"
+                    )
+                    defn_nopin = dict(defn)
+                    defn_nopin["pin"] = False
+
+                    r2 = await shopify_graphql(
+                        shop, access_token, mutation, {"definition": defn_nopin}
+                    )
+                    ue2 = (
+                        r2.get("data", {})
+                        .get("metafieldDefinitionCreate", {})
+                        .get("userErrors", [])
+                    )
+                    if not ue2:
+                        existing_types[defn["key"]] = defn_nopin["type"]
+                        success_count += 1
+                    else:
+                        logger.error(
+                            f"   ❌ {defn['key']} retry failed: {ue2}"
+                        )
+                        existing_types[defn["key"]] = "single_line_text_field"
+                    continue
+
+                logger.error(
+                    f"   ❌ Definition userErrors ({defn['key']}): {user_errors}"
+                )
                 existing_types[defn["key"]] = "single_line_text_field"
                 continue
 
@@ -385,74 +448,42 @@ def _build_all_metafields(product_data: dict) -> list:
 
 
 # ============================================
-# ✅ UPGRADED: Build Description with SAARE Metafields (HTML Table)
+# ✅ UPGRADED: Build Description with SAARE Metafields
 # ============================================
 def _build_description_with_metafields(product_data: dict) -> str:
-    """
-    Amazon description + SAARE metafields HTML table ke saath build karo.
-    Yeh table product page pe automatically show hoti hai.
-    """
+    """Amazon description + SAARE metafields HTML table."""
     description = product_data.get("description", "") or ""
 
-    # ─────────────────────────────────────────
-    # Display labels
-    # ─────────────────────────────────────────
     FIELD_LABELS = {
-        "asin": "ASIN",
-        "brand": "Brand",
-        "manufacturer": "Manufacturer",
-        "rating": "Rating",
-        "reviews_count": "Reviews",
-        "amazon_price": "Amazon Price",
-        "availability": "Availability",
-        "model_number": "Model Number",
-        "item_model_number": "Item Model Number",
-        "model_name": "Model Name",
-        "part_number": "Part Number",
-        "upc": "UPC",
-        "ean": "EAN",
-        "isbn": "ISBN",
-        "item_dimensions": "Item Dimensions",
-        "item_weight": "Item Weight",
-        "package_dimensions": "Package Dimensions",
-        "size": "Size",
-        "color": "Color",
-        "material_type": "Material",
-        "style_name": "Style",
-        "theme": "Theme",
-        "department": "Department",
+        "asin": "ASIN", "brand": "Brand", "manufacturer": "Manufacturer",
+        "rating": "Rating", "reviews_count": "Reviews",
+        "amazon_price": "Amazon Price", "availability": "Availability",
+        "model_number": "Model Number", "item_model_number": "Item Model Number",
+        "model_name": "Model Name", "part_number": "Part Number",
+        "upc": "UPC", "ean": "EAN", "isbn": "ISBN",
+        "item_dimensions": "Item Dimensions", "item_weight": "Item Weight",
+        "package_dimensions": "Package Dimensions", "size": "Size",
+        "color": "Color", "material_type": "Material", "style_name": "Style",
+        "theme": "Theme", "department": "Department",
         "country_of_origin": "Country of Origin",
         "date_first_available": "Date First Available",
-        "best_sellers_rank": "Best Sellers Rank",
-        "language": "Language",
-        "reading_age": "Reading Age",
-        "unit_count": "Unit Count",
+        "best_sellers_rank": "Best Sellers Rank", "language": "Language",
+        "reading_age": "Reading Age", "unit_count": "Unit Count",
         "number_of_pieces": "Number of Pieces",
         "care_instructions": "Care Instructions",
-        "closure_type": "Closure Type",
-        "fabric_type": "Fabric Type",
+        "closure_type": "Closure Type", "fabric_type": "Fabric Type",
         "number_of_players": "Number of Players",
         "educational_objective": "Educational Objective",
-        "power_source": "Power Source",
-        "battery_types": "Battery Types",
-        "operation_mode": "Operation Mode",
-        "specific_uses": "Specific Uses",
-        "special_features": "Special Features",
-        "connectivity": "Connectivity",
-        "processor": "Processor",
-        "ram_technology": "RAM Technology",
-        "memory": "Memory",
-        "screen_size": "Screen Size",
-        "resolution": "Resolution",
-        "operating_system": "Operating System",
-        "hard_disk": "Hard Disk",
-        "graphics_coprocessor": "Graphics Coprocessor",
+        "power_source": "Power Source", "battery_types": "Battery Types",
+        "operation_mode": "Operation Mode", "specific_uses": "Specific Uses",
+        "special_features": "Special Features", "connectivity": "Connectivity",
+        "processor": "Processor", "ram_technology": "RAM Technology",
+        "memory": "Memory", "screen_size": "Screen Size",
+        "resolution": "Resolution", "operating_system": "Operating System",
+        "hard_disk": "Hard Disk", "graphics_coprocessor": "Graphics Coprocessor",
         "warranty": "Warranty",
     }
 
-    # ─────────────────────────────────────────
-    # Fields order (priority wise)
-    # ─────────────────────────────────────────
     fields_to_show = [
         "asin", "brand", "manufacturer",
         "model_number", "model_name", "part_number",
@@ -472,9 +503,6 @@ def _build_description_with_metafields(product_data: dict) -> str:
         "upc", "ean", "isbn", "theme", "warranty",
     ]
 
-    # ─────────────────────────────────────────
-    # Rows build karo
-    # ─────────────────────────────────────────
     rows = []
     seen = set()
 
@@ -488,17 +516,14 @@ def _build_description_with_metafields(product_data: dict) -> str:
         if not val_str or val_str == "None":
             continue
 
-        # HTML escape
         val_str = (
-            val_str
-            .replace("&", "&amp;")
+            val_str.replace("&", "&amp;")
             .replace("<", "&lt;")
             .replace(">", "&gt;")
         )
 
         label = FIELD_LABELS.get(key, key.replace("_", " ").title())
 
-        # Special formatting
         if key == "rating":
             try:
                 r = float(value)
@@ -529,9 +554,6 @@ def _build_description_with_metafields(product_data: dict) -> str:
         )
         seen.add(key)
 
-    # ─────────────────────────────────────────
-    # Table HTML append karo
-    # ─────────────────────────────────────────
     if rows:
         table_html = (
             '<hr style="margin:24px 0;border:none;border-top:1px solid #e1e3e5;">'
@@ -805,7 +827,9 @@ async def update_variant_with_tracked(
 
 
 # ============================================
-# ✅ SET PRODUCT METAFIELDS (FIXED v2 — TYPE-AWARE)
+# ✅ FIXED v3: SET PRODUCT METAFIELDS (CHUNKED)
+# - 25 per call (Shopify limit)
+# - Type-aware
 # ============================================
 async def set_product_metafields(
     shop: str,
@@ -817,40 +841,35 @@ async def set_product_metafields(
         logger.info("   No metafields to set")
         return True
 
+    # STEP 1: Definitions ensure
     keys = [mf["key"] for mf in metafields]
     actual_types = await ensure_metafield_definitions(shop, access_token, keys)
 
+    # STEP 2: Value adaptation
     def _adapt_value_and_type(raw_value, definition_type: str) -> tuple:
         val_str = str(raw_value) if raw_value is not None else ""
 
         if definition_type == "single_line_text_field":
             return val_str, "single_line_text_field"
-
         if definition_type == "multi_line_text_field":
             return val_str, "multi_line_text_field"
-
         if definition_type == "number_integer":
             try:
                 return str(int(float(val_str))), "number_integer"
             except (ValueError, TypeError):
                 return val_str, "single_line_text_field"
-
         if definition_type == "number_decimal":
             try:
                 return str(float(val_str)), "number_decimal"
             except (ValueError, TypeError):
                 return val_str, "single_line_text_field"
-
         if definition_type == "boolean":
             b = val_str.strip().lower() in ("true", "1", "yes")
             return ("true" if b else "false"), "boolean"
-
         if definition_type == "date":
             return val_str, "date"
-
         if definition_type == "date_time":
             return val_str, "date_time"
-
         if definition_type == "url":
             return val_str, "url"
 
@@ -860,7 +879,6 @@ async def set_product_metafields(
     for mf in metafields:
         key = mf["key"]
         def_type = actual_types.get(key, mf.get("type", "single_line_text_field"))
-
         value_str, final_type = _adapt_value_and_type(mf["value"], def_type)
 
         if not value_str or value_str == "None":
@@ -878,6 +896,14 @@ async def set_product_metafields(
         logger.info("   No valid metafields to set after adaptation")
         return True
 
+    # STEP 3: CHUNKED sending (25 per call)
+    CHUNK_SIZE = 25
+    total = len(metafields_with_owner)
+    chunks = [
+        metafields_with_owner[i:i + CHUNK_SIZE]
+        for i in range(0, total, CHUNK_SIZE)
+    ]
+
     mutation = """
     mutation metafieldsSet($metafields: [MetafieldsSetInput!]!) {
       metafieldsSet(metafields: $metafields) {
@@ -887,27 +913,40 @@ async def set_product_metafields(
     }
     """
 
-    variables = {"metafields": metafields_with_owner}
+    logger.info(
+        f"   Setting {total} metafields in {len(chunks)} chunk(s) "
+        f"(max {CHUNK_SIZE} per call)..."
+    )
 
-    logger.info(f"   Setting {len(metafields_with_owner)} metafields...")
+    all_success = True
+    total_created = 0
 
-    result = await shopify_graphql(shop, access_token, mutation, variables)
+    for idx, chunk in enumerate(chunks, 1):
+        logger.info(f"   📦 Chunk {idx}/{len(chunks)}: {len(chunk)} metafields")
 
-    if "errors" in result:
-        logger.error(f"❌ Metafields set GraphQL errors: {result['errors']}")
-        return False
+        result = await shopify_graphql(
+            shop, access_token, mutation, {"metafields": chunk}
+        )
 
-    mf_data = result.get("data", {}).get("metafieldsSet", {})
-    user_errors = mf_data.get("userErrors", [])
+        if "errors" in result:
+            logger.error(f"   ❌ Chunk {idx} GraphQL errors: {result['errors']}")
+            all_success = False
+            continue
 
-    if user_errors:
-        logger.error(f"❌ Metafields set user errors: {user_errors}")
-        return False
+        mf_data = result.get("data", {}).get("metafieldsSet", {})
+        user_errors = mf_data.get("userErrors", [])
 
-    created = mf_data.get("metafields", [])
-    logger.info(f"✅ Metafields set successfully: {len(created)}")
+        if user_errors:
+            logger.error(f"   ❌ Chunk {idx} user errors: {user_errors}")
+            all_success = False
+            continue
 
-    return True
+        created = mf_data.get("metafields", [])
+        total_created += len(created)
+        logger.info(f"   ✅ Chunk {idx} done: {len(created)} set")
+
+    logger.info(f"✅ Metafields set: {total_created}/{total}")
+    return all_success
 
 
 # ============================================
