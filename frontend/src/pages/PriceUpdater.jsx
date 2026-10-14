@@ -1,22 +1,21 @@
 // src/pages/PriceUpdater.jsx
 // Manual Price Update page
 // + ✅ FIXED: Navigation via window.location.hash (iframe compatible)
+// + ✅ NAYA: Circle spinner loader
 
 import { useShopifyApp } from '../hooks/useShopifyApp'
 import { styles } from '../styles/theme'
 import CronRunner from '../components/CronRunner'
+import Loader from '../components/Loader'   // ✅ NAYA
 
 // ============================================
-// ✅ NAYA: Shopify iframe-compatible navigation
-// HashRouter + iframe me navigate() unreliable hai,
-// isliye window.location.hash use karo.
+// ✅ Shopify iframe-compatible navigation
 // ============================================
 function navigateTo(path) {
   const targetHash = `#${path}`
   console.log(`🧭 Navigating to: ${targetHash}`)
 
   if (window.location.hash === targetHash) {
-    // Force re-dispatch
     window.dispatchEvent(new HashChangeEvent('hashchange'))
   } else {
     window.location.hash = targetHash
@@ -24,21 +23,25 @@ function navigateTo(path) {
 }
 
 export default function PriceUpdater() {
-  // Sirf jo zaroori hai wahi destructure karo
   const {
     cronRunning,
     cronMessage,
     handleRunCron,
+    checkingSub,       // ✅ NAYA: loading state
   } = useShopifyApp()
 
   const handleBackToDashboard = () => {
     navigateTo('/shopify-app')
   }
 
+  // ✅ NAYA: Loading spinner jab tak subscription check ho
+  if (checkingSub) {
+    return <Loader text="Loading price updater..." />
+  }
+
   return (
     <div style={styles.page}>
       <div style={styles.container}>
-        {/* Back button */}
         <button
           type="button"
           onClick={handleBackToDashboard}

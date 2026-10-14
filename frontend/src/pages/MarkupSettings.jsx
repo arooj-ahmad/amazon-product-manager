@@ -4,10 +4,12 @@
 // + ✅ NAYA: Country select (tax rate auto-fill)
 // + ✅ NAYA: Tax rate field (manual override)
 // + ✅ FIXED: Navigation via window.location.hash
+// + ✅ FIXED: Circle spinner loader (consistent with other pages)
 // ============================================
 
 import { useState, useEffect } from 'react'
 import { getCountries } from '../api/pricing'
+import Loader from '../components/Loader'   // ✅ NAYA
 
 const API_URL =
   (import.meta.env.VITE_API_URL || '').trim() ||
@@ -130,7 +132,7 @@ export default function MarkupSettings() {
     }
   }
 
-  // ✅ NAYA: Country change par tax rate auto-fill
+  // ✅ Country change par tax rate auto-fill
   const handleCountryChange = (countryId) => {
     const country = countries.find((c) => c.id === parseInt(countryId))
     setFormData({
@@ -179,7 +181,6 @@ export default function MarkupSettings() {
             markup: parseFloat(formData.markup_value),
             markup_type: formData.markup_type,
             extra_percent: parseFloat(formData.extra_percent) || 0,
-            // ✅ NAYA: Country + Tax
             country_id: formData.country_id
               ? parseInt(formData.country_id)
               : null,
@@ -212,12 +213,9 @@ export default function MarkupSettings() {
     navigateTo('/products')
   }
 
+  // ✅ FIXED: Circle spinner loader
   if (loading) {
-    return (
-      <div style={styles.centerBox}>
-        <p style={{ color: '#637381', fontSize: 14 }}>Loading...</p>
-      </div>
-    )
+    return <Loader text="Loading markup settings..." />
   }
 
   const selectedCountry = countries.find(
@@ -334,7 +332,7 @@ export default function MarkupSettings() {
           </div>
 
           {/* Row 2: Markup Type + Amount */}
-          <div style={styles.formRow} sstyle={{ marginTop: 16 }}>
+          <div style={styles.formRow}>
             <div style={styles.fieldGroup}>
               <label style={styles.label}>Markup Type</label>
               <select
@@ -526,7 +524,6 @@ const styles = {
     cursor: 'pointer',
   },
 
-  // Banner
   defaultBanner: {
     display: 'flex',
     alignItems: 'flex-start',
@@ -537,10 +534,7 @@ const styles = {
     border: '1px solid #86efac',
     borderRadius: '10px',
   },
-  bannerIcon: {
-    fontSize: '22px',
-    lineHeight: 1,
-  },
+  bannerIcon: { fontSize: '22px', lineHeight: 1 },
   bannerContent: { flex: 1 },
   bannerTitle: {
     fontSize: '12px',
@@ -578,7 +572,6 @@ const styles = {
     marginTop: '8px',
   },
 
-  // Card
   card: {
     background: 'white',
     padding: '24px',
@@ -616,7 +609,6 @@ const styles = {
     margin: 0,
   },
 
-  // Form
   formRow: {
     display: 'flex',
     gap: '16px',
@@ -656,7 +648,6 @@ const styles = {
     outline: 'none',
   },
 
-  // Preview box
   previewBox: {
     padding: '12px 16px',
     background: '#f6f6f7',
@@ -677,7 +668,6 @@ const styles = {
     color: '#202223',
   },
 
-  // Messages
   messageBox: {
     padding: '12px 16px',
     borderRadius: '6px',
@@ -686,7 +676,6 @@ const styles = {
     fontWeight: '500',
   },
 
-  // Info card
   infoCard: {
     display: 'flex',
     alignItems: 'flex-start',

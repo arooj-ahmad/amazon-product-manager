@@ -6,6 +6,7 @@
 // + ✅ Current default banner
 // + Search + Products table
 // + ✅ FIXED: Navigation via window.location.hash
+// + ✅ FIXED: Circle spinner loader
 // ============================================
 
 import { useState, useEffect } from 'react'
@@ -15,6 +16,7 @@ import {
   bulkUpdatePricing,
   getStoreIdByDomain,
 } from '../api/pricing'
+import Loader from '../components/Loader'   // ✅ NAYA
 
 const API_URL =
   (import.meta.env.VITE_API_URL || '').trim() ||
@@ -37,14 +39,13 @@ function getShopDomain() {
 }
 
 // ============================================
-// ✅ NAYA: Shopify iframe-compatible navigation
+// ✅ Shopify iframe-compatible navigation
 // ============================================
 function navigateTo(path) {
   const targetHash = `#${path}`
   console.log(`🧭 Navigating to: ${targetHash}`)
 
   if (window.location.hash === targetHash) {
-    // Force re-dispatch
     window.dispatchEvent(new HashChangeEvent('hashchange'))
   } else {
     window.location.hash = targetHash
@@ -217,7 +218,6 @@ export default function ProductsPricing() {
     }
   }
 
-  // ✅ NAYA: Navigation handler
   const handleBackToDashboard = () => {
     navigateTo('/shopify-app')
   }
@@ -231,12 +231,9 @@ export default function ProductsPricing() {
     )
   })
 
+  // ✅ FIXED: Circle spinner loader
   if (loading) {
-    return (
-      <div style={styles.centerBox}>
-        <p style={{ color: '#637381' }}>⏳ Loading products...</p>
-      </div>
-    )
+    return <Loader text="Loading products..." />
   }
 
   return (

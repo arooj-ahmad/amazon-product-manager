@@ -2,6 +2,8 @@
 // ✅ SIMPLIFIED: Markup props removed
 // ✅ NAYA: Store saved markup info banner
 // ✅ NAYA v2: Tax + country bhi banner me dikhate hain
+// ✅ NAYA v3: Circle spinner loader (consistent with other pages)
+
 import { useShopifyApp } from '../hooks/useShopifyApp'
 import { styles, theme } from '../styles/theme'
 import Header from '../components/Header'
@@ -9,6 +11,7 @@ import AddProductForm from '../components/AddProductForm'
 import CollectionsSelector from '../components/CollectionsSelector'
 import InfoBox from '../components/InfoBox'
 import PlanCard from '../components/PlanCard'
+import Loader from '../components/Loader'   // ✅ NAYA
 
 export default function ShopifyApp() {
   const {
@@ -18,7 +21,7 @@ export default function ShopifyApp() {
     subscription, plans, checkingSub,
     handleAddProduct, handleSubscribe, handleTestActivate,
 
-    // ✅ NAYA: Store ka saved markup + country + tax
+    // ✅ Store ka saved markup + country + tax
     storeMarkup,
     storeMarkupLoading,
 
@@ -26,18 +29,9 @@ export default function ShopifyApp() {
     toggleCollection, clearCollections, refreshCollections,
   } = useShopifyApp()
 
-  // Loading
+  // ✅ FIXED: Circle spinner loader
   if (checkingSub) {
-    return (
-      <div style={styles.centerBox}>
-        <div style={{ textAlign: 'center' }}>
-          <div style={styles.bigSpinner} />
-          <p style={{ color: theme.colors.textSecondary, fontSize: '14px', marginTop: '16px' }}>
-            Loading your store...
-          </p>
-        </div>
-      </div>
-    )
+    return <Loader text="Loading your store..." />
   }
 
   // Subscription required
@@ -85,7 +79,7 @@ export default function ShopifyApp() {
           subscription={subscription}
         />
 
-        {/* ✅ NAYA: Store saved markup + tax info banner */}
+        {/* Store saved markup + tax info banner */}
         <StoreMarkupBanner
           storeMarkup={storeMarkup}
           loading={storeMarkupLoading}
@@ -115,7 +109,7 @@ export default function ShopifyApp() {
 }
 
 // ============================================
-// ✅ NAYA: Store Markup Banner
+// Store Markup Banner
 // Dikhaata hai ki kaunsa markup + tax apply hoga
 // ============================================
 function StoreMarkupBanner({ storeMarkup, loading }) {
@@ -146,7 +140,7 @@ function StoreMarkupBanner({ storeMarkup, loading }) {
     markupText = `+$${markup}`
   }
 
-  // ✅ Tax text banao
+  // Tax text banao
   const taxText = taxRate > 0 ? `+ ${taxRate}% tax` : ''
 
   return (
@@ -156,7 +150,6 @@ function StoreMarkupBanner({ storeMarkup, loading }) {
         <span style={styles2.label}>Saved Markup:</span>
         <span style={styles2.value}>{markupText}</span>
 
-        {/* ✅ NAYA: Tax + Country dikhao */}
         {taxText && (
           <span style={styles2.valueTax}>{taxText}</span>
         )}
@@ -210,7 +203,6 @@ const styles2 = {
     borderRadius: '4px',
     border: '1px solid #bfdbfe',
   },
-  // ✅ NAYA: Tax value style (green)
   valueTax: {
     color: '#15803d',
     fontWeight: '700',
@@ -220,7 +212,6 @@ const styles2 = {
     borderRadius: '4px',
     border: '1px solid #86efac',
   },
-  // ✅ NAYA: Country name style
   valueCountry: {
     color: '#475569',
     fontWeight: '600',
