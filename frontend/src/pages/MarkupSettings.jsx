@@ -1,6 +1,8 @@
 // ============================================
 // frontend/src/pages/MarkupSettings.jsx
 // Markup Settings Page — Country + Tax support
+// + ✅ NAYA: Bulk update par STORE DEFAULT markup bhi save hota hai
+// + ✅ NAYA: Info banner dikhata hai ki ye default hai
 // + Store ID database se aati hai (koi hardcode nahi)
 // + Bulk update par store_id bhejo
 // + "both" markup type — Fixed + Percent
@@ -22,7 +24,7 @@ const API_URL =
   'https://amazon-product-manager-production.up.railway.app'
 
 // ============================================
-// Shop domain nikaalo (iframe ya Admin URL se)
+// Shop domain nikaalo
 // ============================================
 function getShopDomain() {
   const params = new URLSearchParams(window.location.search)
@@ -84,6 +86,10 @@ export default function MarkupSettings() {
   const [savingId, setSavingId] = useState(null)
   const [message, setMessage] = useState(null)
   const [storeId, setStoreId] = useState(null)
+  const [shopDomain, setShopDomain] = useState(null)
+
+  // ✅ NAYA: Store ka saved default markup
+  const [savedDefault, setSavedDefault] = useState(null)
 
   const [bulkData, setBulkData] = useState({
     country_id: '',
@@ -94,6 +100,9 @@ export default function MarkupSettings() {
   })
   const [bulkLoading, setBulkLoading] = useState(false)
 
+  // ✅ NAYA: Save as default toggle
+  const [saveAsDefault, setSaveAsDefault] = useState(true)
+
   useEffect(() => {
     init()
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -102,14 +111,15 @@ export default function MarkupSettings() {
   const init = async () => {
     setLoading(true)
     try {
-      const shopDomain = getShopDomain()
-      if (!shopDomain) {
+      const domain = getShopDomain()
+      if (!domain) {
         throw new Error(
           'Shop domain detect nahi ho saka. URL mein ?shop= ya /store/... hona chahiye.'
         )
       }
+      setShopDomain(domain)
 
-      const sid = await getStoreIdByDomain(shopDomain)
+      const sid = await getStoreIdByDomain(domain)
       console.log(`✅ Store ID from database: ${sid}`)
       setStoreId(sid)
 
@@ -122,6 +132,19 @@ export default function MarkupSettings() {
         throw new Error(productsRes.data.detail || 'Failed to load products')
       }
       setProducts(productsRes.data || [])
+
+      // ✅ NAYA: Store ka saved default markup load karo
+      try {
+        const defRes = await safeFetch(
+          `${API_URL}/api/markup/store-default?shop_domain=${encodeURIComponent(domain)}`
+        )
+        if (defRes.ok && defRes.data) {
+          setSavedDefault(defRes.data)
+          console.log('✅ Saved default markup:', defRes.data)
+        }
+      } catch (err) {
+        console.warn('⚠️ Could not load saved default:', err)
+      }
     } catch (err) {
       setMessage({ type: 'error', text: `❌ ${err.message}` })
     } finally {
@@ -157,6 +180,7 @@ export default function MarkupSettings() {
     setBulkLoading(true)
     setMessage(null)
     try {
+      // 1️⃣ Bulk update existing products
       const res = await bulkUpdatePricing({
         store_id: storeId,
         markup_type: bulkData.markup_type,
@@ -164,9 +188,40 @@ export default function MarkupSettings() {
         extra_percent: parseFloat(bulkData.extra_percent) || 0,
         tax_rate: parseFloat(bulkData.tax_rate),
       })
+
+      // 2️⃣ ✅ NAYA: Store default bhi save karo (agar checkbox checked hai)
+      let defaultSaved = false
+      if (saveAsDefault && shopDomain) {
+        try {
+          const defRes = await safeFetch(
+            `${API_URL}/api/markup/store-default`,
+            {
+              method: 'PUT',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                shop_domain: shopDomain,
+                markup: parseFloat(bulkData.markup_value),
+                markup_type: bulkData.markup_type,
+                extra_percent: parseFloat(bulkData.extra_percent) || 0,
+              }),
+            }
+          )
+
+          if (defRes.ok) {
+            defaultSaved = true
+            setSavedDefault(defRes.data)
+            console.log('✅ Store default markup saved:', defRes.data)
+          } else {
+            console.warn('⚠️ Store default save failed:', defRes.data)
+          }
+        } catch (err) {
+          console.warn('⚠️ Store default save error:', err)
+        }
+      }
+
       setMessage({
         type: 'success',
-        text: `✅ ${res.updated} products update ho gaye! (Shopify: ${res.shopify_updated || 0})`,
+        text: `✅ ${res.updated} products update ho gaye! (Shopify: ${res.shopify_updated || 0})${defaultSaved ? ' + Default markup saved ✅' : ''}`,
       })
     } catch (err) {
       setMessage({ type: 'error', text: `❌ ${err.message}` })
@@ -188,7 +243,7 @@ export default function MarkupSettings() {
       <div style={styles.container}>
         <button
           type="button"
-          onClick={() => navigate('/')}
+          onClick={() => navigate('/shopify-app')}
           style={styles.backBtn}
           onMouseEnter={(e) => {
             e.currentTarget.style.background = '#f6f6f7'
@@ -204,8 +259,29 @@ export default function MarkupSettings() {
 
         <h1 style={styles.h1}>⚙️ Markup Settings</h1>
         <p style={styles.subtitle}>
-          Har product ka markup, country aur tax set karein.
+          Yahan jo markup set karenge, wo <strong>naye products par bhi
+          automatically apply</strong> hoga.
         </p>
+
+        {/* ✅ NAYA: Saved default markup info */}
+        {savedDefault && (
+          <div style={styles.defaultBanner}>
+            <span style={styles.defaultIcon}>💾</span>
+            <div>
+              <strong style={styles.defaultTitle}>Current Default Markup:</strong>{' '}
+              <span style={styles.defaultValue}>
+                {savedDefault.markup_type === 'percent'
+                  ? `+${savedDefault.markup}%`
+                  : savedDefault.markup_type === 'both'
+                    ? `+$${savedDefault.markup} + ${savedDefault.extra_percent}%`
+                    : `+$${savedDefault.markup}`}
+              </span>
+              <p style={styles.defaultHint}>
+                Ye markup har naye product par apply hoga.
+              </p>
+            </div>
+          </div>
+        )}
 
         {!storeId && (
           <div
@@ -295,6 +371,18 @@ export default function MarkupSettings() {
             style={styles.bulkInput}
             disabled={bulkLoading}
           />
+
+          {/* ✅ NAYA: Save as default checkbox */}
+          <label style={styles.checkboxLabel}>
+            <input
+              type="checkbox"
+              checked={saveAsDefault}
+              onChange={(e) => setSaveAsDefault(e.target.checked)}
+              disabled={bulkLoading}
+              style={styles.checkbox}
+            />
+            <span>Save as store default</span>
+          </label>
 
           <button
             type="button"
@@ -628,6 +716,41 @@ const styles = {
   },
   subtitle: { color: '#637381', fontSize: '14px', marginBottom: '20px' },
 
+  // ✅ NAYA: Default markup banner
+  defaultBanner: {
+    display: 'flex',
+    alignItems: 'flex-start',
+    gap: '12px',
+    padding: '14px 18px',
+    marginBottom: '20px',
+    background: '#f0fdf4',
+    border: '1px solid #86efac',
+    borderRadius: '8px',
+  },
+  defaultIcon: {
+    fontSize: '20px',
+    flexShrink: 0,
+  },
+  defaultTitle: {
+    color: '#166534',
+    fontSize: '13px',
+  },
+  defaultValue: {
+    color: '#15803d',
+    fontSize: '14px',
+    fontWeight: '700',
+    background: 'white',
+    padding: '2px 10px',
+    borderRadius: '4px',
+    border: '1px solid #86efac',
+    marginLeft: '4px',
+  },
+  defaultHint: {
+    color: '#65a30d',
+    fontSize: '12px',
+    margin: '4px 0 0 0',
+  },
+
   backBtn: {
     display: 'inline-flex',
     alignItems: 'center',
@@ -668,6 +791,27 @@ const styles = {
     fontSize: 14,
     width: 100,
   },
+
+  // ✅ NAYA: Checkbox styles
+  checkboxLabel: {
+    display: 'inline-flex',
+    alignItems: 'center',
+    gap: '6px',
+    fontSize: 13,
+    color: '#202223',
+    cursor: 'pointer',
+    padding: '8px 12px',
+    background: 'white',
+    border: '1px solid #babfc3',
+    borderRadius: 6,
+    userSelect: 'none',
+  },
+  checkbox: {
+    cursor: 'pointer',
+    width: 16,
+    height: 16,
+  },
+
   messageBox: {
     padding: '12px 16px',
     borderRadius: 6,

@@ -1,4 +1,6 @@
 // src/hooks/useShopifyApp.js
+// ✅ SIMPLIFIED: Markup state removed
+// ✅ NAYA: Backend se store ka saved markup load hota hai
 import { useState, useEffect, useCallback, useRef } from 'react'
 
 const API_URL =
@@ -54,9 +56,6 @@ async function safeFetch(url, options = {}) {
   return { ok: res.ok, status: res.status, data }
 }
 
-// ============================================
-// Helper: Domain determine karo (multiple fallbacks)
-// ============================================
 function resolveShopDomain(currentDomain) {
   if (currentDomain) return currentDomain
 
@@ -75,12 +74,13 @@ function resolveShopDomain(currentDomain) {
 export function useShopifyApp() {
   const [amazonUrl, setAmazonUrl] = useState('')
 
-  // ✅ FIXED: markup default '2.00' → '' (user khud set karega)
-  const [markup, setMarkup] = useState('')
-  const [markupType, setMarkupType] = useState('fixed')
-
-  // ✅ FIXED: extraPercent default '10' → '' (user khud set karega)
-  const [extraPercent, setExtraPercent] = useState('')
+  // ✅ Store ka saved markup (backend se load hoga)
+  const [storeMarkup, setStoreMarkup] = useState({
+    markup: 2.0,
+    markupType: 'fixed',
+    extraPercent: 0,
+  })
+  const [storeMarkupLoading, setStoreMarkupLoading] = useState(false)
 
   const [isLoading, setIsLoading] = useState(false)
   const [isSubscribing, setIsSubscribing] = useState(false)
@@ -192,7 +192,39 @@ export function useShopifyApp() {
   }, [loadBillingData])
 
   // ========================================
-  // ✅ Load Collections (with domain fallback)
+  // ✅ NAYA: Store ka saved markup load karo
+  // ========================================
+  const loadStoreMarkup = useCallback(async (domain) => {
+    const actualDomain = resolveShopDomain(domain)
+    if (!actualDomain) return
+
+    console.log('💰 Loading store markup for:', actualDomain)
+    setStoreMarkupLoading(true)
+
+    try {
+      const res = await safeFetch(
+        `${API_URL}/api/markup/store-default?shop_domain=${encodeURIComponent(actualDomain)}`
+      )
+
+      if (res.ok && res.data) {
+        setStoreMarkup({
+          markup: res.data.markup ?? 2.0,
+          markupType: res.data.markup_type ?? 'fixed',
+          extraPercent: res.data.extra_percent ?? 0,
+        })
+        console.log('✅ Store markup loaded:', res.data)
+      } else {
+        console.warn('⚠️ Store markup fetch failed, using defaults')
+      }
+    } catch (err) {
+      console.error('❌ Load store markup error:', err)
+    } finally {
+      setStoreMarkupLoading(false)
+    }
+  }, [])
+
+  // ========================================
+  // ✅ Load Collections
   // ========================================
   const loadCollections = useCallback(async (domain) => {
     const actualDomain = resolveShopDomain(domain)
@@ -225,7 +257,7 @@ export function useShopifyApp() {
   }, [])
 
   // ========================================
-  // ✅ Auto-load collections
+  // ✅ Auto-load collections + store markup
   // ========================================
   useEffect(() => {
     const domain = resolveShopDomain(shopDomain)
@@ -233,8 +265,9 @@ export function useShopifyApp() {
     if (domain && subscription?.active) {
       console.log('📁 Auto-loading collections for:', domain)
       loadCollections(domain)
+      loadStoreMarkup(domain)
     }
-  }, [shopDomain, subscription?.active, loadCollections])
+  }, [shopDomain, subscription?.active, loadCollections, loadStoreMarkup])
 
   // ========================================
   // ✅ Toggle Collection Selection
@@ -251,16 +284,10 @@ export function useShopifyApp() {
     })
   }, [])
 
-  // ========================================
-  // ✅ Clear All Selections
-  // ========================================
   const clearCollections = useCallback(() => {
     setSelectedCollections(new Set())
   }, [])
 
-  // ========================================
-  // ✅ Manual Refresh Collections
-  // ========================================
   const refreshCollections = useCallback(() => {
     const domain = resolveShopDomain(shopDomain)
     return loadCollections(domain)
@@ -303,9 +330,7 @@ export function useShopifyApp() {
       })
 
       showToast('Price update completed!')
-
       setTimeout(() => setCronMessage(null), 5000)
-
     } catch (err) {
       console.error('❌ Cron trigger failed:', err)
 
@@ -427,6 +452,7 @@ export function useShopifyApp() {
 
         if (targetShop) {
           loadCollections(targetShop)
+          loadStoreMarkup(targetShop)
         }
       } else {
         throw new Error(res.data.detail || 'Test activation failed')
@@ -440,33 +466,23 @@ export function useShopifyApp() {
 
   // ========================================
   // 4. Add product handler
-  // + ✅ NAYA: extra_percent bhejo
-  // + ✅ FIXED: markup validate karo (blank allow nahi)
+  // ✅ SIMPLIFIED: Markup backend se aata hai
   // ========================================
   const handleAddProduct = async (e) => {
     e.preventDefault()
     if (!amazonUrl.trim() || isLoading) return
-
-    // ✅ FIXED: Markup validation
-    if (!markup || parseFloat(markup) <= 0) {
-      setMessage({
-        type: 'error',
-        text: '❌ Please enter a markup value (greater than 0)',
-      })
-      return
-    }
 
     setIsLoading(true)
     setMessage(null)
 
     try {
       const idToken = await getIdToken()
-
       const collectionIdsArray = Array.from(selectedCollections)
 
       console.log('📤 Sending product with collections:', collectionIdsArray)
-      console.log('📤 Markup:', markup, markupType, 'extra:', extraPercent)
+      console.log('💰 Will use store default markup from backend')
 
+      // ✅ Markup nahi bhej rahe — backend store ka saved markup use karega
       const res = await safeFetch(
         `${API_URL}/api/shopify/app/add-product`,
         {
@@ -477,10 +493,9 @@ export function useShopifyApp() {
           },
           body: JSON.stringify({
             amazon_url: amazonUrl.trim(),
-            markup: parseFloat(markup),   // ✅ FIXED: no fallback 2.0
-            markup_type: markupType,
-            extra_percent: parseFloat(extraPercent) || 0,
             collection_ids: collectionIdsArray,
+            // ✅ markup, markup_type, extra_percent hata diye
+            // Backend store ka saved markup use karega
           }),
         }
       )
@@ -510,17 +525,15 @@ export function useShopifyApp() {
       }
 
       const collectionsAdded = res.data.collections_added || 0
+      const finalPrice = res.data.final_price
       const successMsg = res.data.message || 'Product added successfully!'
 
       setMessage({
         type: 'success',
-        text: `✅ ${successMsg}${collectionsAdded > 0 ? ` (+${collectionsAdded} collections)` : ''}`,
+        text: `✅ ${successMsg}${collectionsAdded > 0 ? ` (+${collectionsAdded} collections)` : ''}${finalPrice ? ` — $${finalPrice}` : ''}`,
       })
 
-      // ✅ FIXED: Reset to empty
       setAmazonUrl('')
-      setMarkup('')
-      setExtraPercent('')
       clearCollections()
 
       showToast('Product added!')
@@ -533,9 +546,6 @@ export function useShopifyApp() {
 
   return {
     amazonUrl,
-    markup,
-    markupType,
-    extraPercent,
     isLoading,
     isSubscribing,
     message,
@@ -546,9 +556,10 @@ export function useShopifyApp() {
     checkingSub,
 
     setAmazonUrl,
-    setMarkup,
-    setMarkupType,
-    setExtraPercent,
+
+    // ✅ NAYA: Store markup (read-only info)
+    storeMarkup,
+    storeMarkupLoading,
 
     handleAddProduct,
     handleSubscribe,

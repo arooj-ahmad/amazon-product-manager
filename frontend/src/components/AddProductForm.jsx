@@ -1,43 +1,17 @@
 // src/components/AddProductForm.jsx
+// ✅ SIMPLIFIED: Markup settings hata diye — ab user sidebar se set karega
 import { theme } from '../styles/theme'
 
 export default function AddProductForm({
   amazonUrl,
   setAmazonUrl,
-  markup,
-  setMarkup,
-  markupType,
-  setMarkupType,
-  extraPercent,
-  setExtraPercent,
   isLoading,
   message,
   onSubmit,
 }) {
-  // ✅ NAYA: Final price hint dynamically banao
-  const getPriceHint = () => {
-    const m = parseFloat(markup) || 0
-    const e = parseFloat(extraPercent) || 0
-
-    // ✅ Agar markup empty hai toh warning
-    if (!markup || m <= 0) {
-      return '⚠️ Please enter a markup value to continue'
-    }
-
-    if (markupType === 'percent') {
-      return `💡 Final price = Amazon price × (1 + ${m}%)`
-    }
-    if (markupType === 'both') {
-      return `💡 Final price = (Amazon price + $${m}) × (1 + ${e}%)`
-    }
-    return `💡 Final price = Amazon price + $${m}`
-  }
-
-  // ✅ NAYA: Check karo submit ke liye valid hai ya nahi
+  // ✅ Sirf URL validation
   const isFormValid = () => {
-    if (!amazonUrl.trim()) return false
-    if (!markup || parseFloat(markup) <= 0) return false
-    return true
+    return amazonUrl.trim().length > 0
   }
 
   const formValid = isFormValid()
@@ -74,65 +48,13 @@ export default function AddProductForm({
           />
         </div>
 
-        {/* Markup */}
-        <div style={styles.field}>
-          <label style={styles.label}>
-            <span style={styles.labelIcon}>💰</span>
-            Markup Settings
-          </label>
-          <div style={styles.markupRow}>
-            <select
-              value={markupType}
-              onChange={(e) => setMarkupType(e.target.value)}
-              style={styles.select}
-              disabled={isLoading}
-            >
-              <option value="fixed">$ Fixed</option>
-              <option value="percent">% Percent</option>
-              <option value="both">$ + % (Both)</option>
-            </select>
-            <input
-              type="number"
-              value={markup}
-              onChange={(e) => setMarkup(e.target.value)}
-              placeholder={
-                markupType === 'percent'
-                  ? 'e.g. 10'
-                  : markupType === 'both'
-                    ? 'e.g. 2.00'
-                    : 'e.g. 2.00'
-              }
-              step="0.01"
-              min="0"
-              style={styles.inputSmall}
-              disabled={isLoading}
-            />
-
-            {/* ✅ NAYA: Extra % input — sirf "both" ke liye */}
-            {markupType === 'both' && (
-              <input
-                type="number"
-                value={extraPercent}
-                onChange={(e) => setExtraPercent(e.target.value)}
-                placeholder="Extra %"
-                step="0.01"
-                min="0"
-                max="500"
-                style={styles.inputSmall}
-                disabled={isLoading}
-              />
-            )}
-          </div>
-          <p
-            style={{
-              ...styles.hint,
-              color: !markup
-                ? theme.colors.warning || '#b45309'
-                : theme.colors.textMuted,
-            }}
-          >
-            {getPriceHint()}
-          </p>
+        {/* Info Banner */}
+        <div style={styles.infoBanner}>
+          <span style={styles.infoIcon}>💡</span>
+          <span style={styles.infoText}>
+            Markup aapki saved settings se apply hoga. Change karne ke liye{' '}
+            <strong>Markup Settings</strong> page par jaayein.
+          </span>
         </div>
 
         {/* Submit */}
@@ -198,7 +120,7 @@ export default function AddProductForm({
 }
 
 // ============================================
-// Styles — SAME AS BEFORE
+// Styles
 // ============================================
 const styles = {
   card: {
@@ -272,38 +194,24 @@ const styles = {
     color: theme.colors.text,
     transition: theme.transitions.fast,
   },
-  markupRow: {
+  // ✅ NAYA: Info banner styles
+  infoBanner: {
     display: 'flex',
-    gap: '8px',
-  },
-  select: {
+    alignItems: 'flex-start',
+    gap: '10px',
     padding: '12px 14px',
-    border: `1px solid ${theme.colors.border}`,
+    background: '#eff6ff',
+    border: '1px solid #bfdbfe',
     borderRadius: theme.radii.md,
-    fontSize: '14px',
-    outline: 'none',
-    background: theme.colors.bgSubtle,
-    color: theme.colors.text,
-    cursor: 'pointer',
-    minWidth: '130px',
-    fontWeight: '500',
   },
-  inputSmall: {
-    flex: 1,
-    padding: '12px 14px',
-    border: `1px solid ${theme.colors.border}`,
-    borderRadius: theme.radii.md,
-    fontSize: '14px',
-    outline: 'none',
-    boxSizing: 'border-box',
-    background: theme.colors.bgSubtle,
-    color: theme.colors.text,
-    minWidth: '80px',
+  infoIcon: {
+    fontSize: '16px',
+    flexShrink: 0,
   },
-  hint: {
-    fontSize: '12px',
-    color: theme.colors.textMuted,
-    margin: 0,
+  infoText: {
+    fontSize: '13px',
+    color: '#1e40af',
+    lineHeight: '1.5',
   },
   button: {
     width: '100%',
