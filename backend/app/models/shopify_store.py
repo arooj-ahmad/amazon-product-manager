@@ -4,13 +4,15 @@
 # + ✅ FIXED: access_token nullable=True (NULL allow karta hai)
 # + ✅ NAYE COLUMNS — Expiring offline tokens ke liye
 # + ✅ NAYE COLUMNS — Store default markup (v5)
+# + ✅ NAYE COLUMNS — Store default country + tax (v6)
 # ============================================
 
 from sqlalchemy import (
     BigInteger,
     Column,
     DateTime,
-    Numeric,        # ✅ NAYA — decimal values ke liye
+    Integer,        # ✅ NAYA — country_id ke liye
+    Numeric,        # decimal values ke liye
     String,
     Text,
     func,
@@ -48,6 +50,11 @@ class ShopifyStore(Base):
     default_markup = Column(Numeric(10, 2), nullable=True, default=2.00)
     default_markup_type = Column(String(20), nullable=True, default="fixed")
     default_extra_percent = Column(Numeric(10, 2), nullable=True, default=0.00)
+
+    # ✅ NAYE COLUMNS — Store default country + tax (v6)
+    # Ye country + tax har naye product par apply hoga
+    default_country_id = Column(Integer, nullable=True)
+    default_tax_rate = Column(Numeric(5, 2), nullable=True, default=0.00)
 
     def __repr__(self):
         return f"<ShopifyStore {self.shop_domain}>"

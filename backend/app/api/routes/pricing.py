@@ -3,7 +3,8 @@
 # Pricing API Routes
 # + ✅ NAYA: Shopify par bhi price update karo
 # + ✅ NAYA: extra_percent support (Fixed + Percent)
-# + ✅ NAYA: Store default markup (GET + PUT) — sidebar settings
+# + ✅ NAYA: Store default markup (GET + PUT)
+# + ✅ NAYA: Store default country + tax
 # ============================================
 
 import logging
@@ -23,7 +24,7 @@ router = APIRouter()
 
 
 # ============================================
-# ✅ NAYA: STORE DEFAULT MARKUP — GET
+# ✅ STORE DEFAULT — GET (markup + country + tax)
 # ============================================
 @router.get("/store-default")
 def get_store_default_markup(
@@ -31,8 +32,8 @@ def get_store_default_markup(
     db: Session = Depends(get_db),
 ):
     """
-    Store ka saved default markup return karo.
-    Ye markup add-product ke waqt use hota hai.
+    Store ka saved default markup + country + tax return karo.
+    Ye sab naye products par apply hoga.
     """
     store = db.query(ShopifyStore).filter(
         ShopifyStore.shop_domain == shop_domain
@@ -44,18 +45,40 @@ def get_store_default_markup(
             detail=f"Store not found: {shop_domain}",
         )
 
+    # ✅ Country name nikaalo (agar country_id set hai)
+    country_name = None
+    country_id = getattr(store, "default_country_id", None)
+    if country_id:
+        try:
+            countries = pricing_service.get_all_countries()
+            country = next(
+                (c for c in countries if c.get("id") == country_id),
+                None,
+            )
+            if country:
+                country_name = country.get("name")
+        except Exception as e:
+            logger.warning(f"⚠️ Could not fetch country name: {e}")
+
     return {
         "shop_domain": store.shop_domain,
+        # Markup
         "markup": float(getattr(store, "default_markup", None) or 2.0),
         "markup_type": getattr(store, "default_markup_type", None) or "fixed",
         "extra_percent": float(
             getattr(store, "default_extra_percent", None) or 0.0
         ),
+        # ✅ Country + Tax
+        "country_id": country_id,
+        "country_name": country_name,
+        "tax_rate": float(
+            getattr(store, "default_tax_rate", None) or 0.0
+        ),
     }
 
 
 # ============================================
-# ✅ NAYA: STORE DEFAULT MARKUP — PUT
+# ✅ STORE DEFAULT — PUT (markup + country + tax)
 # ============================================
 @router.put("/store-default")
 def update_store_default_markup(
@@ -63,12 +86,15 @@ def update_store_default_markup(
     markup: float = Body(..., embed=True),
     markup_type: str = Body(..., embed=True),
     extra_percent: float = Body(0.0, embed=True),
+    country_id: int = Body(None, embed=True),      # ✅ NAYA
+    tax_rate: float = Body(0.0, embed=True),       # ✅ NAYA
     db: Session = Depends(get_db),
 ):
     """
-    Store ka default markup save karo.
-    Ye markup har naye add-product me use hoga.
+    Store ka default markup + country + tax save karo.
+    Ye sab har naye add-product me use hoga.
     """
+    # Validation
     if markup_type not in ("fixed", "percent", "both"):
         raise HTTPException(
             status_code=400,
@@ -83,6 +109,11 @@ def update_store_default_markup(
             status_code=400, detail="extra_percent must be >= 0"
         )
 
+    if tax_rate < 0 or tax_rate > 100:
+        raise HTTPException(
+            status_code=400, detail="tax_rate must be between 0 and 100"
+        )
+
     store = db.query(ShopifyStore).filter(
         ShopifyStore.shop_domain == shop_domain
     ).first()
@@ -93,24 +124,50 @@ def update_store_default_markup(
             detail=f"Store not found: {shop_domain}",
         )
 
+    # Save markup
     store.default_markup = markup
     store.default_markup_type = markup_type
     store.default_extra_percent = extra_percent
+
+    # ✅ Save country + tax
+    store.default_country_id = country_id
+    store.default_tax_rate = tax_rate
+
     db.commit()
     db.refresh(store)
 
     logger.info(
-        f"✅ Store default markup saved for {shop_domain}: "
-        f"{markup} ({markup_type}), extra={extra_percent}%"
+        f"✅ Store defaults saved for {shop_domain}: "
+        f"markup={markup} ({markup_type}), extra={extra_percent}%, "
+        f"country_id={country_id}, tax_rate={tax_rate}%"
     )
+
+    # Country name nikaalo
+    country_name = None
+    if country_id:
+        try:
+            countries = pricing_service.get_all_countries()
+            country = next(
+                (c for c in countries if c.get("id") == country_id),
+                None,
+            )
+            if country:
+                country_name = country.get("name")
+        except Exception:
+            pass
 
     return {
         "success": True,
-        "message": "Default markup saved successfully",
+        "message": "Store defaults saved successfully",
         "shop_domain": store.shop_domain,
-        "markup": float(store.default_markup),
-        "markup_type": store.default_markup_type,
+        # Markup
+        "markup": float(store.default_markup or 0.0),
+        "markup_type": store.default_markup_type or "fixed",
         "extra_percent": float(store.default_extra_percent or 0.0),
+        # Country + Tax
+        "country_id": store.default_country_id,
+        "country_name": country_name,
+        "tax_rate": float(store.default_tax_rate or 0.0),
     }
 
 
@@ -154,10 +211,10 @@ async def update_pricing(
             markup_type=data.markup_type,
             markup_value=data.markup_value,
             tax_rate=data.tax_rate,
-            extra_percent=getattr(data, "extra_percent", 0.0),   # ✅ NAYA
+            extra_percent=getattr(data, "extra_percent", 0.0),
         )
 
-        # ✅ NAYA: Shopify par bhi update karo
+        # Shopify par bhi update karo
         product = db.query(Product).filter(
             Product.id == int(data.product_id)
         ).first()
@@ -201,10 +258,10 @@ async def bulk_update(
             markup_type=data.markup_type,
             markup_value=data.markup_value,
             tax_rate=data.tax_rate,
-            extra_percent=getattr(data, "extra_percent", 0.0),   # ✅ NAYA
+            extra_percent=getattr(data, "extra_percent", 0.0),
         )
 
-        # ✅ NAYA: Shopify par bhi update karo
+        # Shopify par bhi update karo
         store = db.query(ShopifyStore).first()
         if store and store.access_token:
             products = db.query(Product).filter(

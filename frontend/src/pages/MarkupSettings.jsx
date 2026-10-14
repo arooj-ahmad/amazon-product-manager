@@ -1,10 +1,9 @@
 // ============================================
 // frontend/src/pages/MarkupSettings.jsx
-// Markup Settings Page — DEFAULT MARKUP ONLY
-// Sets the store's default markup that applies to
-// every new product added to Shopify.
+// Markup Settings Page — DEFAULT MARKUP + COUNTRY + TAX
+// + ✅ NAYA: Country select (tax rate auto-fill)
+// + ✅ NAYA: Tax rate field (manual override)
 // + ✅ FIXED: Navigation via window.location.hash
-//             (Shopify iframe compatible)
 // ============================================
 
 import { useState, useEffect } from 'react'
@@ -29,26 +28,19 @@ function getShopDomain() {
 }
 
 // ============================================
-// ✅ NAYA: Shopify iframe-compatible navigation
-// HashRouter ke saath iframe me `navigate()` reliably
-// kaam nahi karta, isliye window.location.hash use karo.
+// ✅ Shopify iframe-compatible navigation
 // ============================================
 function navigateTo(path) {
   const targetHash = `#${path}`
   console.log(`🧭 Navigating to: ${targetHash}`)
 
-  // If already in HashRouter context, just change hash
   if (window.location.hash === targetHash) {
-    // Force a re-dispatch
     window.dispatchEvent(new HashChangeEvent('hashchange'))
   } else {
     window.location.hash = targetHash
   }
 }
 
-// ============================================
-// Helpers
-// ============================================
 async function safeFetch(url, options = {}) {
   const res = await fetch(url, options)
   let data = null
@@ -62,7 +54,6 @@ async function safeFetch(url, options = {}) {
   return { ok: res.ok, status: res.status, data }
 }
 
-// Format markup for display
 function formatMarkup(markup, type, extra) {
   if (type === 'percent') return `+${markup}%`
   if (type === 'both') return `+$${markup} + ${extra}%`
@@ -108,7 +99,7 @@ export default function MarkupSettings() {
       const countriesData = await getCountries()
       setCountries(countriesData || [])
 
-      // Load saved default markup
+      // Load saved default
       try {
         const defRes = await safeFetch(
           `${API_URL}/api/markup/store-default?shop_domain=${encodeURIComponent(domain)}`
@@ -116,13 +107,17 @@ export default function MarkupSettings() {
         if (defRes.ok && defRes.data) {
           setSavedDefault(defRes.data)
           setFormData({
-            country_id: '',
+            country_id: defRes.data.country_id
+              ? String(defRes.data.country_id)
+              : '',
             markup_type: defRes.data.markup_type || 'fixed',
             markup_value: defRes.data.markup ? String(defRes.data.markup) : '',
             extra_percent: defRes.data.extra_percent
               ? String(defRes.data.extra_percent)
               : '',
-            tax_rate: '0',
+            tax_rate: defRes.data.tax_rate
+              ? String(defRes.data.tax_rate)
+              : '0',
           })
         }
       } catch (err) {
@@ -135,6 +130,7 @@ export default function MarkupSettings() {
     }
   }
 
+  // ✅ NAYA: Country change par tax rate auto-fill
   const handleCountryChange = (countryId) => {
     const country = countries.find((c) => c.id === parseInt(countryId))
     setFormData({
@@ -183,6 +179,11 @@ export default function MarkupSettings() {
             markup: parseFloat(formData.markup_value),
             markup_type: formData.markup_type,
             extra_percent: parseFloat(formData.extra_percent) || 0,
+            // ✅ NAYA: Country + Tax
+            country_id: formData.country_id
+              ? parseInt(formData.country_id)
+              : null,
+            tax_rate: parseFloat(formData.tax_rate) || 0,
           }),
         }
       )
@@ -203,7 +204,6 @@ export default function MarkupSettings() {
     }
   }
 
-  // ✅ NAYA: Navigation handlers
   const handleBackToDashboard = () => {
     navigateTo('/shopify-app')
   }
@@ -220,6 +220,10 @@ export default function MarkupSettings() {
     )
   }
 
+  const selectedCountry = countries.find(
+    (c) => c.id === parseInt(formData.country_id)
+  )
+
   return (
     <div style={styles.page}>
       <div style={styles.container}>
@@ -233,23 +237,44 @@ export default function MarkupSettings() {
 
         <h1 style={styles.h1}>Markup Settings</h1>
         <p style={styles.subtitle}>
-          Configure the default markup that applies to{' '}
+          Configure the default markup, country and tax that applies to{' '}
           <strong>every new product</strong> you add.
         </p>
 
-        {/* Current Default Markup Banner */}
+        {/* Current Default Banner */}
         {savedDefault && (
           <div style={styles.defaultBanner}>
             <div style={styles.bannerIcon}>💾</div>
             <div style={styles.bannerContent}>
-              <div style={styles.bannerTitle}>Current Default Markup</div>
-              <div style={styles.bannerValue}>
-                {formatMarkup(
-                  savedDefault.markup,
-                  savedDefault.markup_type,
-                  savedDefault.extra_percent
-                )}
+              <div style={styles.bannerTitle}>Current Defaults</div>
+
+              <div style={styles.bannerRow}>
+                <span style={styles.bannerLabel}>Markup:</span>
+                <span style={styles.bannerValue}>
+                  {formatMarkup(
+                    savedDefault.markup,
+                    savedDefault.markup_type,
+                    savedDefault.extra_percent
+                  )}
+                </span>
               </div>
+
+              {savedDefault.country_name && (
+                <div style={styles.bannerRow}>
+                  <span style={styles.bannerLabel}>Country:</span>
+                  <span style={styles.bannerValue}>
+                    {savedDefault.country_name}
+                  </span>
+                </div>
+              )}
+
+              <div style={styles.bannerRow}>
+                <span style={styles.bannerLabel}>Tax:</span>
+                <span style={styles.bannerValue}>
+                  {savedDefault.tax_rate || 0}%
+                </span>
+              </div>
+
               <div style={styles.bannerHint}>
                 This will apply to all new products added to your store.
               </div>
@@ -257,21 +282,59 @@ export default function MarkupSettings() {
           </div>
         )}
 
-        {/* Set Default Markup Form */}
+        {/* Form */}
         <div style={styles.card}>
           <div style={styles.cardHeader}>
             <div style={styles.cardIconBox}>
               <span style={styles.cardIcon}>💰</span>
             </div>
             <div>
-              <h3 style={styles.cardTitle}>Set Default Markup</h3>
+              <h3 style={styles.cardTitle}>Set Defaults</h3>
               <p style={styles.cardSubtitle}>
-                Choose how you want to price new products
+                Country, tax and markup for new products
               </p>
             </div>
           </div>
 
+          {/* Row 1: Country + Tax */}
           <div style={styles.formRow}>
+            <div style={styles.fieldGroup}>
+              <label style={styles.label}>Country</label>
+              <select
+                value={formData.country_id}
+                onChange={(e) => handleCountryChange(e.target.value)}
+                style={styles.select}
+                disabled={saving}
+              >
+                <option value="">Select Country (optional)</option>
+                {countries.map((c) => (
+                  <option key={c.id} value={c.id}>
+                    {c.name} ({c.default_tax_rate}% {c.tax_label})
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <div style={styles.fieldGroup}>
+              <label style={styles.label}>Tax Rate (%)</label>
+              <input
+                type="number"
+                step="0.01"
+                min="0"
+                max="100"
+                value={formData.tax_rate}
+                onChange={(e) =>
+                  setFormData({ ...formData, tax_rate: e.target.value })
+                }
+                style={styles.input}
+                disabled={saving}
+                placeholder="e.g. 10"
+              />
+            </div>
+          </div>
+
+          {/* Row 2: Markup Type + Amount */}
+          <div style={styles.formRow} sstyle={{ marginTop: 16 }}>
             <div style={styles.fieldGroup}>
               <label style={styles.label}>Markup Type</label>
               <select
@@ -335,6 +398,29 @@ export default function MarkupSettings() {
             )}
           </div>
 
+          {/* Preview */}
+          {formData.markup_value && (
+            <div style={styles.previewBox}>
+              <div style={styles.previewLabel}>Preview</div>
+              <div style={styles.previewText}>
+                {selectedCountry ? `${selectedCountry.name}: ` : ''}
+                <strong>
+                  {formatMarkup(
+                    formData.markup_value,
+                    formData.markup_type,
+                    formData.extra_percent || 0
+                  )}
+                </strong>
+                {parseFloat(formData.tax_rate) > 0 && (
+                  <span>
+                    {' '}
+                    + <strong>{formData.tax_rate}% tax</strong>
+                  </span>
+                )}
+              </div>
+            </div>
+          )}
+
           <button
             type="button"
             onClick={handleSaveDefault}
@@ -373,7 +459,7 @@ export default function MarkupSettings() {
           </div>
         )}
 
-        {/* Info Card — Products Page Link */}
+        {/* Info Card */}
         <div style={styles.infoCard}>
           <div style={styles.infoIconBox}>
             <span style={styles.infoIcon}>📦</span>
@@ -462,22 +548,34 @@ const styles = {
     color: '#166534',
     textTransform: 'uppercase',
     letterSpacing: '0.4px',
+    marginBottom: '8px',
+  },
+  bannerRow: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: '8px',
     marginBottom: '4px',
+    fontSize: '13px',
+  },
+  bannerLabel: {
+    color: '#166534',
+    fontWeight: '600',
+    minWidth: '70px',
   },
   bannerValue: {
     display: 'inline-block',
-    fontSize: '16px',
+    fontSize: '14px',
     fontWeight: '700',
     color: '#15803d',
     background: 'white',
-    padding: '4px 12px',
+    padding: '2px 10px',
     borderRadius: '6px',
     border: '1px solid #86efac',
-    marginBottom: '6px',
   },
   bannerHint: {
     fontSize: '12px',
     color: '#65a30d',
+    marginTop: '8px',
   },
 
   // Card
@@ -523,6 +621,7 @@ const styles = {
     display: 'flex',
     gap: '16px',
     flexWrap: 'wrap',
+    marginBottom: '16px',
   },
   fieldGroup: {
     display: 'flex',
@@ -555,6 +654,27 @@ const styles = {
     background: 'white',
     color: '#202223',
     outline: 'none',
+  },
+
+  // Preview box
+  previewBox: {
+    padding: '12px 16px',
+    background: '#f6f6f7',
+    borderRadius: '6px',
+    border: '1px solid #e1e3e5',
+    marginTop: '8px',
+  },
+  previewLabel: {
+    fontSize: '11px',
+    fontWeight: '600',
+    color: '#637381',
+    textTransform: 'uppercase',
+    letterSpacing: '0.3px',
+    marginBottom: '4px',
+  },
+  previewText: {
+    fontSize: '13px',
+    color: '#202223',
   },
 
   // Messages
