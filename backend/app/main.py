@@ -1,6 +1,7 @@
 # ============================================
 # app/main.py
 # FastAPI application ka main entry point
+# + ✅ FIXED: pricing.router dono prefixes pe register
 # ============================================
 
 import logging
@@ -18,7 +19,7 @@ from app.api.routes import (
     billing_routes,
     batch_routes,
     pricing,
-    webhooks,           # ✅ NAYA
+    webhooks,
 )
 from app.config import settings
 from app.services.scheduler import start_scheduler, stop_scheduler
@@ -34,21 +35,16 @@ logger = logging.getLogger(__name__)
 
 
 # ============================================
-# LIFESPAN (Startup + Shutdown) — EK HI RAKHEIN
+# LIFESPAN
 # ============================================
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """
-    App startup aur shutdown events handle karta hai.
-    - Scheduler start/stop
-    - ARQ Redis pool create/close
-    """
+    """App startup aur shutdown events handle karta hai."""
     # ---------- STARTUP ----------
     logger.info("=" * 60)
     logger.info("Starting Amazon Product Manager API...")
     logger.info("=" * 60)
 
-    # 1) ARQ Redis pool
     try:
         app.state.arq_pool = await create_pool(
             RedisSettings.from_dsn(settings.REDIS_URL)
@@ -58,7 +54,6 @@ async def lifespan(app: FastAPI):
         logger.error(f"❌ ARQ pool init fail: {e}")
         app.state.arq_pool = None
 
-    # 2) Scheduler
     try:
         start_scheduler()
         logger.info("✅ Scheduler started")
@@ -72,14 +67,12 @@ async def lifespan(app: FastAPI):
     # ---------- SHUTDOWN ----------
     logger.info("Shutting down...")
 
-    # 1) Scheduler stop
     try:
         stop_scheduler()
         logger.info("✅ Scheduler stopped")
     except Exception as e:
         logger.error(f"❌ Scheduler stop fail: {e}")
 
-    # 2) ARQ pool close
     if getattr(app.state, "arq_pool", None):
         try:
             await app.state.arq_pool.close()
@@ -91,7 +84,7 @@ async def lifespan(app: FastAPI):
 
 
 # ============================================
-# FASTAPI APP — SIRF EK BAAR
+# FASTAPI APP
 # ============================================
 app = FastAPI(
     title="Amazon Product Manager API",
@@ -130,9 +123,14 @@ app.include_router(auth.router)
 app.include_router(products.router)
 app.include_router(shopify_routes.router)
 app.include_router(billing_routes.router)
-app.include_router(batch_routes.router)   # ← Batch import routes
-app.include_router(pricing.router, prefix="/api/pricing", tags=["Pricing"])  # ← Pricing
-app.include_router(webhooks.router)       # ← ✅ NAYA — Shopify webhooks
+app.include_router(batch_routes.router)
+app.include_router(webhooks.router)
+
+# ✅ Pricing/Markup — dono prefixes support karo (frontend compat)
+# Purana frontend: /api/pricing/...
+# Naya frontend:   /api/markup/...
+app.include_router(pricing.router, prefix="/api/pricing", tags=["Pricing"])
+app.include_router(pricing.router, prefix="/api/markup", tags=["Markup"])
 
 
 # ============================================

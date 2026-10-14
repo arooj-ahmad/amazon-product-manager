@@ -17,6 +17,8 @@
 # + ✅ NAYA: Manual Cron Trigger — /trigger-price-update
 # + ✅ NAYA: Markup type "both" — Fixed + Percent
 # + ✅ FIXED v4: /collections me auto-refresh (401 problem solved)
+# + ✅ FIXED v5: /app/add-product ab STORE DEFAULT markup use karta hai
+#               (frontend se markup bhejna band kiya)
 # ============================================
 
 import logging
@@ -54,8 +56,8 @@ from app.services.shopify import (
     verify_hmac,
     verify_id_token,
     shopify_graphql,
+    refresh_shopify_token,
 )
-from app.services.shopify import refresh_shopify_token  # ✅ NAYA
 from app.services.scheduler import run_price_update_now
 
 logger = logging.getLogger(__name__)
@@ -121,6 +123,24 @@ async def _get_valid_access_token(
             logger.error(f"❌ Token refresh failed for {store.shop_domain}")
 
     return store.access_token
+
+
+# ============================================
+# ✅ NAYA: Store ka saved markup nikaalo (with defaults)
+# ============================================
+def _get_store_markup(store: ShopifyStore) -> tuple:
+    """
+    Store se saved markup return karo.
+    Returns: (markup_value, markup_type, extra_percent)
+    """
+    markup_val = float(getattr(store, "default_markup", None) or 2.0)
+    markup_type = getattr(store, "default_markup_type", None) or "fixed"
+    extra_pct = float(getattr(store, "default_extra_percent", None) or 0.0)
+
+    if markup_type not in ("fixed", "percent", "both"):
+        markup_type = "fixed"
+
+    return markup_val, markup_type, extra_pct
 
 
 # ============================================
@@ -589,13 +609,11 @@ async def get_shopify_collections(
     }
     """
 
-    # ✅ Pehla attempt — fresh/refreshed token ke saath
     access_token = await _get_valid_access_token(store, db)
     result = await shopify_graphql(
         shop_domain, access_token, query, {"first": 250}
     )
 
-    # ✅ Agar 401 aaya — force refresh karke retry
     if _is_auth_error(result):
         logger.warning(f"🔄 401 for {shop_domain} — forcing refresh...")
         access_token = await _get_valid_access_token(
@@ -644,9 +662,7 @@ async def trigger_price_update(
     authorization: str = Header(...),
     db: Session = Depends(get_db),
 ):
-    """
-    Manually price update cron job trigger karo.
-    """
+    """Manually price update cron job trigger karo."""
     if not authorization or not authorization.startswith("Bearer "):
         raise HTTPException(status_code=401, detail="Missing authorization")
 
@@ -742,7 +758,6 @@ async def push_product_to_shopify(
         "specifications": product.specifications or {},
     })
 
-    # ✅ Valid token ensure karo
     access_token = await _get_valid_access_token(store, db)
 
     if existing_parent and existing_parent.shopify_product_id:
@@ -844,13 +859,16 @@ async def push_product_to_shopify(
 
 # ============================================
 # ✅ ADD PRODUCT FROM SHOPIFY APP
+# ✅ FIXED v5: Ab STORE DEFAULT markup use karta hai
+#              (frontend se markup bhejna optional hai)
 # ============================================
 @router.post("/app/add-product")
 async def add_product_from_shopify_app(
     amazon_url: str = Body(..., embed=True),
-    markup: float = Body(2.0, embed=True),
-    markup_type: str = Body("fixed", embed=True),
-    extra_percent: float = Body(0.0, embed=True),
+    # ✅ Ye 3 fields ab OPTIONAL hain — agar nahi bheji to store default use hoga
+    markup: float = Body(None, embed=True),
+    markup_type: str = Body(None, embed=True),
+    extra_percent: float = Body(None, embed=True),
     collection_ids: list = Body(default=[], embed=True),
     authorization: str = Header(...),
     db: Session = Depends(get_db),
@@ -975,22 +993,35 @@ async def add_product_from_shopify_app(
             logger.warning("⚠️ Variant exists — new product")
             existing_parent = None
 
-    user_markup = float(markup) if markup is not None else 2.0
-    user_markup_type = (
-        markup_type if markup_type in ("fixed", "percent", "both") else "fixed"
-    )
+    # ✅ FIXED v5: STORE DEFAULT markup use karo
+    # Agar frontend se markup bheja gaya, to wo use karo (backward compat)
+    # Warna store ka saved markup use karo
+    if markup is not None and markup > 0:
+        user_markup = float(markup)
+        user_markup_type = (
+            markup_type if markup_type in ("fixed", "percent", "both") else "fixed"
+        )
+        user_extra = float(extra_percent or 0.0)
+        logger.info(f"💰 Using frontend markup: {user_markup} ({user_markup_type})")
+    else:
+        user_markup, user_markup_type, user_extra = _get_store_markup(store)
+        logger.info(
+            f"💰 Using STORE DEFAULT markup: {user_markup} "
+            f"({user_markup_type}), extra={user_extra}%"
+        )
+
     user_markup = apply_markup_cap(user_markup, user_markup_type)
 
     logger.info(
-        f"💰 Markup: {user_markup} ({user_markup_type}), "
-        f"extra_percent={extra_percent}"
+        f"💰 Final markup: {user_markup} ({user_markup_type}), "
+        f"extra_percent={user_extra}"
     )
 
     final_price = calculate_final_price(
         amazon_price=data["amazon_price"],
         markup=user_markup,
         markup_type=user_markup_type,
-        extra_percent=extra_percent,
+        extra_percent=user_extra,
     )
 
     logger.info(f"💰 Final price: ${final_price}")
@@ -1169,7 +1200,7 @@ async def add_product_from_shopify_app(
         "parent_asin": new_product.parent_asin,
         "markup": user_markup,
         "markup_type": user_markup_type,
-        "extra_percent": extra_percent,
+        "extra_percent": user_extra,
         "final_price": final_price,
         "amazon_price": new_product.amazon_price,
         "variations": all_variations,
