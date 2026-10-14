@@ -3,10 +3,11 @@
 // Markup Settings Page — DEFAULT MARKUP ONLY
 // Sets the store's default markup that applies to
 // every new product added to Shopify.
+// + ✅ FIXED: Navigation via window.location.hash
+//             (Shopify iframe compatible)
 // ============================================
 
 import { useState, useEffect } from 'react'
-import { useNavigate } from 'react-router-dom'
 import { getCountries } from '../api/pricing'
 
 const API_URL =
@@ -25,6 +26,24 @@ function getShopDomain() {
   if (pathMatch) return `${pathMatch[1]}.myshopify.com`
 
   return null
+}
+
+// ============================================
+// ✅ NAYA: Shopify iframe-compatible navigation
+// HashRouter ke saath iframe me `navigate()` reliably
+// kaam nahi karta, isliye window.location.hash use karo.
+// ============================================
+function navigateTo(path) {
+  const targetHash = `#${path}`
+  console.log(`🧭 Navigating to: ${targetHash}`)
+
+  // If already in HashRouter context, just change hash
+  if (window.location.hash === targetHash) {
+    // Force a re-dispatch
+    window.dispatchEvent(new HashChangeEvent('hashchange'))
+  } else {
+    window.location.hash = targetHash
+  }
 }
 
 // ============================================
@@ -54,8 +73,6 @@ function formatMarkup(markup, type, extra) {
 // Main Component
 // ============================================
 export default function MarkupSettings() {
-  const navigate = useNavigate()
-
   const [countries, setCountries] = useState([])
   const [loading, setLoading] = useState(true)
   const [message, setMessage] = useState(null)
@@ -186,6 +203,15 @@ export default function MarkupSettings() {
     }
   }
 
+  // ✅ NAYA: Navigation handlers
+  const handleBackToDashboard = () => {
+    navigateTo('/shopify-app')
+  }
+
+  const handleGoToProducts = () => {
+    navigateTo('/products')
+  }
+
   if (loading) {
     return (
       <div style={styles.centerBox}>
@@ -199,7 +225,7 @@ export default function MarkupSettings() {
       <div style={styles.container}>
         <button
           type="button"
-          onClick={() => navigate('/shopify-app')}
+          onClick={handleBackToDashboard}
           style={styles.backBtn}
         >
           ← Back to Dashboard
@@ -360,7 +386,7 @@ export default function MarkupSettings() {
             </p>
             <button
               type="button"
-              onClick={() => navigate('/products')}
+              onClick={handleGoToProducts}
               style={styles.infoBtn}
             >
               Go to Products →
