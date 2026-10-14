@@ -2,11 +2,19 @@
 // frontend/src/App.jsx
 // Final routes — user + admin + Footer
 // + HashRouter (Shopify iframe compatible)
-// + ✅ FIX: External hash change listener (sidebar navigation)
+// + ✅ FIX: External hash change listener (event + polling)
 // ============================================
 
-import { HashRouter, Routes, Route, useLocation, Navigate, Link, useNavigate } from 'react-router-dom'
-import { useEffect } from 'react'
+import {
+  HashRouter,
+  Routes,
+  Route,
+  useLocation,
+  Navigate,
+  Link,
+  useNavigate,
+} from 'react-router-dom'
+import { useEffect, useRef } from 'react'
 import Navbar from './components/Navbar'
 import Footer from './components/Footer'
 
@@ -17,35 +25,49 @@ import PrivacyPolicy from './pages/PrivacyPolicy'
 import TermsOfService from './pages/TermsOfService'
 
 // ============================================
-// ✅ NAYA: External hash change sun-ne wala component
-// Shopify sidebar se click hone par hash badalta hai,
-// lekin HashRouter khud detect nahi karta — isliye manual sync.
+// ✅ FIXED: External hash change listener
+// Shopify iframe me `hashchange` event reliably fire nahi hota,
+// isliye event + polling dono use kar rahe hain.
+// lastHashRef se infinite loop bhi rok diya.
 // ============================================
 function HashChangeListener() {
   const navigate = useNavigate()
   const location = useLocation()
+  const lastHashRef = useRef(window.location.hash)
 
   useEffect(() => {
     const syncFromHash = () => {
-      const rawHash = window.location.hash.replace(/^#/, '') || '/shopify-app'
+      const currentHash = window.location.hash
+      const rawHash = currentHash.replace(/^#/, '') || '/shopify-app'
       const currentPath = location.pathname
 
-      if (rawHash !== currentPath) {
+      // ✅ Sirf tab navigate karo jab:
+      //   1. External hash change hua ho (lastHashRef se different)
+      //   2. Aur current route se different ho
+      if (
+        currentHash !== lastHashRef.current &&
+        rawHash !== currentPath
+      ) {
         console.log(`🔄 External hash change detected: ${rawHash}`)
+        lastHashRef.current = currentHash
         navigate(rawHash)
       }
     }
 
-    // Initial sync (page load pe)
+    // Initial sync
     syncFromHash()
 
-    // Listen for changes
+    // Event-based (fast path)
     window.addEventListener('hashchange', syncFromHash)
     window.addEventListener('popstate', syncFromHash)
+
+    // ✅ Polling backup — Shopify iframe ke liye ZAROORI
+    const intervalId = setInterval(syncFromHash, 300)
 
     return () => {
       window.removeEventListener('hashchange', syncFromHash)
       window.removeEventListener('popstate', syncFromHash)
+      clearInterval(intervalId)
     }
   }, [navigate, location.pathname])
 
@@ -79,7 +101,7 @@ function Layout({ children }) {
 function App() {
   return (
     <HashRouter>
-      <HashChangeListener />   {/* ✅ Ye add karo */}
+      <HashChangeListener />
       <Layout>
         <Routes>
           {/* USER ROUTES */}
@@ -96,7 +118,10 @@ function App() {
 
           {/* APP ROUTES */}
           <Route path="/shopify-app" element={<ShopifyApp />} />
-          <Route path="/admin/dashboard" element={<Navigate to="/shopify-app" replace />} />
+          <Route
+            path="/admin/dashboard"
+            element={<Navigate to="/shopify-app" replace />}
+          />
 
           <Route path="/shopify-app/privacy" element={<PrivacyPolicy />} />
           <Route path="/shopify-app/terms" element={<TermsOfService />} />
