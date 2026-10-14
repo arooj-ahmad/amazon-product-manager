@@ -1,6 +1,7 @@
 // src/pages/ShopifyApp.jsx
 // ✅ SIMPLIFIED: Markup props removed
 // ✅ NAYA: Store saved markup info banner
+// ✅ NAYA v2: Tax + country bhi banner me dikhate hain
 import { useShopifyApp } from '../hooks/useShopifyApp'
 import { styles, theme } from '../styles/theme'
 import Header from '../components/Header'
@@ -17,7 +18,7 @@ export default function ShopifyApp() {
     subscription, plans, checkingSub,
     handleAddProduct, handleSubscribe, handleTestActivate,
 
-    // ✅ NAYA: Store ka saved markup
+    // ✅ NAYA: Store ka saved markup + country + tax
     storeMarkup,
     storeMarkupLoading,
 
@@ -84,7 +85,7 @@ export default function ShopifyApp() {
           subscription={subscription}
         />
 
-        {/* ✅ NAYA: Store saved markup info banner */}
+        {/* ✅ NAYA: Store saved markup + tax info banner */}
         <StoreMarkupBanner
           storeMarkup={storeMarkup}
           loading={storeMarkupLoading}
@@ -115,7 +116,7 @@ export default function ShopifyApp() {
 
 // ============================================
 // ✅ NAYA: Store Markup Banner
-// Dikhaata hai ki kaunsa markup apply hoga
+// Dikhaata hai ki kaunsa markup + tax apply hoga
 // ============================================
 function StoreMarkupBanner({ storeMarkup, loading }) {
   if (loading) {
@@ -127,7 +128,13 @@ function StoreMarkupBanner({ storeMarkup, loading }) {
     )
   }
 
-  const { markup, markupType, extraPercent } = storeMarkup
+  const {
+    markup,
+    markupType,
+    extraPercent,
+    taxRate,
+    countryName,
+  } = storeMarkup || {}
 
   // Markup text banao
   let markupText = ''
@@ -139,12 +146,24 @@ function StoreMarkupBanner({ storeMarkup, loading }) {
     markupText = `+$${markup}`
   }
 
+  // ✅ Tax text banao
+  const taxText = taxRate > 0 ? `+ ${taxRate}% tax` : ''
+
   return (
     <div style={styles2.banner}>
       <span style={styles2.icon}>💰</span>
       <div style={styles2.content}>
         <span style={styles2.label}>Saved Markup:</span>
         <span style={styles2.value}>{markupText}</span>
+
+        {/* ✅ NAYA: Tax + Country dikhao */}
+        {taxText && (
+          <span style={styles2.valueTax}>{taxText}</span>
+        )}
+        {countryName && (
+          <span style={styles2.valueCountry}>({countryName})</span>
+        )}
+
         <span style={styles2.hint}>
           Change karne ke liye sidebar me <strong>Markup Settings</strong> kholein
         </span>
@@ -190,6 +209,23 @@ const styles2 = {
     padding: '2px 10px',
     borderRadius: '4px',
     border: '1px solid #bfdbfe',
+  },
+  // ✅ NAYA: Tax value style (green)
+  valueTax: {
+    color: '#15803d',
+    fontWeight: '700',
+    fontSize: '14px',
+    background: '#f0fdf4',
+    padding: '2px 10px',
+    borderRadius: '4px',
+    border: '1px solid #86efac',
+  },
+  // ✅ NAYA: Country name style
+  valueCountry: {
+    color: '#475569',
+    fontWeight: '600',
+    fontSize: '13px',
+    fontStyle: 'italic',
   },
   hint: {
     color: '#64748b',

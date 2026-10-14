@@ -6,7 +6,7 @@
 # + Inventory quantity sync (har variant)
 # + Shopify price update (HAR CHANGE PE — increase ya decrease)
 # + SAARE products process (draft bhi)
-# + price hamesha amazon_price + STORE DEFAULT markup
+# + price hamesha amazon_price + STORE DEFAULT markup + TAX
 # + Shopify metafields update
 # + ✅ NAYA: shopify_status field DB mein save
 # + ✅ NAYA: SKU na mile toh title se Shopify product dhoondo
@@ -20,6 +20,7 @@
 # + ✅ FIXED: Inventory error par warning log hoti hai
 # + ✅ NAYA: Markup type "both" — Fixed + Percent
 # + ✅ FIXED v2: STORE DEFAULT markup use karo (product.markup nahi)
+# + ✅ FIXED v3: STORE DEFAULT tax bhi use karo
 # ============================================
 
 import logging
@@ -83,24 +84,25 @@ def _get_store_for_product(
 
 
 # ============================================
-# ✅ NAYA: Store ka default markup nikaalo
+# ✅ FIXED v3: Store ka default markup + tax nikaalo
 # ============================================
 def _get_store_default_markup(store: ShopifyStore) -> tuple:
     """
-    Store ka saved default markup return karo.
-    Returns: (markup_value, markup_type, extra_percent)
+    Store ka saved default markup + tax return karo.
+    Returns: (markup_value, markup_type, extra_percent, tax_rate)
     """
     if not store:
-        return 2.0, "fixed", 0.0
+        return 2.0, "fixed", 0.0, 0.0
 
     markup_val = float(getattr(store, "default_markup", None) or 2.0)
     markup_type = getattr(store, "default_markup_type", None) or "fixed"
     extra_pct = float(getattr(store, "default_extra_percent", None) or 0.0)
+    tax_rate = float(getattr(store, "default_tax_rate", None) or 0.0)
 
     if markup_type not in ("fixed", "percent", "both"):
         markup_type = "fixed"
 
-    return markup_val, markup_type, extra_pct
+    return markup_val, markup_type, extra_pct, tax_rate
 
 
 # ============================================
@@ -440,7 +442,7 @@ async def sync_shopify_price(product: Product, new_price: float, db: Session):
 
 # ============================================
 # JOB: UPDATE ALL PRICES
-# + ✅ FIXED v2: STORE DEFAULT markup use karo
+# + ✅ FIXED v3: STORE DEFAULT markup + tax use karo
 # ============================================
 async def update_all_prices():
     """SAARE products ke prices update karta hai (24h)."""
@@ -465,11 +467,14 @@ async def update_all_prices():
 
         for product in products:
             try:
-                # ✅ NAYA: Store ka default markup nikaalo
+                # ✅ NAYA: Store ka default markup + tax nikaalo
                 store = _get_store_for_product(db, product)
-                store_markup, store_markup_type, store_extra_pct = (
-                    _get_store_default_markup(store)
-                )
+                (
+                    store_markup,
+                    store_markup_type,
+                    store_extra_pct,
+                    store_tax_rate,
+                ) = _get_store_default_markup(store)
 
                 amazon_url = f"https://www.amazon.com/dp/{product.asin}"
                 data = await fetch_product_from_brightdata(amazon_url)
@@ -520,12 +525,13 @@ async def update_all_prices():
                 old_amazon = product.amazon_price or 0
                 old_price = product.price
 
-                # ✅ FIXED v2: STORE DEFAULT markup use karo
+                # ✅ FIXED v3: STORE DEFAULT markup + tax use karo
                 new_final_price = calculate_final_price(
                     amazon_price=new_amazon_price,
                     markup=store_markup,
                     markup_type=store_markup_type,
                     extra_percent=store_extra_pct,
+                    tax_rate=store_tax_rate,  # ✅ NAYA
                 )
 
                 logger.info(
@@ -533,6 +539,7 @@ async def update_all_prices():
                     f"amazon=${new_amazon_price}, "
                     f"markup={store_markup} ({store_markup_type}), "
                     f"extra={store_extra_pct}%, "
+                    f"tax={store_tax_rate}%, "
                     f"final=${new_final_price}"
                 )
 

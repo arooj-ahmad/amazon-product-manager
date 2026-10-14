@@ -17,6 +17,7 @@
 # + ✅ FIXED v4: /collections me auto-refresh
 # + ✅ FIXED v5: STORE DEFAULT markup use
 # + ✅ FIXED v6: Weight → Shopify variant mapping
+# + ✅ FIXED v7: STORE DEFAULT tax bhi use karo
 # ============================================
 
 import logging
@@ -118,17 +119,23 @@ async def _get_valid_access_token(
 
 
 # ============================================
-# HELPER: Store default markup
+# HELPER: Store default markup + tax
+# + ✅ FIXED v7: tax_rate bhi return karo
 # ============================================
 def _get_store_markup(store: ShopifyStore) -> tuple:
+    """
+    Store se saved markup + country + tax return karo.
+    Returns: (markup_value, markup_type, extra_percent, tax_rate)
+    """
     markup_val = float(getattr(store, "default_markup", None) or 2.0)
     markup_type = getattr(store, "default_markup_type", None) or "fixed"
     extra_pct = float(getattr(store, "default_extra_percent", None) or 0.0)
+    tax_rate = float(getattr(store, "default_tax_rate", None) or 0.0)
 
     if markup_type not in ("fixed", "percent", "both"):
         markup_type = "fixed"
 
-    return markup_val, markup_type, extra_pct
+    return markup_val, markup_type, extra_pct, tax_rate
 
 
 # ============================================
@@ -183,7 +190,6 @@ def _build_product_data_for_shopify(data: dict, product=None) -> dict:
             "manufacturer": getattr(product, "manufacturer", None),
             "department": getattr(product, "department", None),
             "country_of_origin": getattr(product, "country_of_origin", None),
-            # ✅ NAYA: weight fields
             "item_weight": getattr(product, "item_weight", None),
             "package_dimensions": getattr(product, "package_dimensions", None),
             "item_dimensions": getattr(product, "item_dimensions", None),
@@ -679,7 +685,6 @@ async def trigger_price_update(
 
 # ============================================
 # PUSH PRODUCT TO SHOPIFY
-# ✅ FIXED v6: Weight pass karo variant me
 # ============================================
 @router.post("/push-product/{product_id}")
 async def push_product_to_shopify(
@@ -742,7 +747,6 @@ async def push_product_to_shopify(
             f"➕ Adding variant to existing: {existing_parent.shopify_product_id}"
         )
 
-        # ✅ NAYA: product_data se weight nikaalo
         _temp_product_data = _build_product_data_for_shopify(
             data={}, product=product
         )
@@ -759,7 +763,7 @@ async def push_product_to_shopify(
                 "price": product.price,
                 "sku": product.asin,
                 "stock": product.stock_quantity or 0,
-                "weight": _weight,  # ✅ NAYA
+                "weight": _weight,
             },
             all_options=all_variations,
         )
@@ -834,7 +838,7 @@ async def push_product_to_shopify(
 
 # ============================================
 # ADD PRODUCT FROM SHOPIFY APP
-# ✅ FIXED v6: Weight pass karo variant me
+# ✅ FIXED v7: STORE DEFAULT tax bhi use karo
 # ============================================
 @router.post("/app/add-product")
 async def add_product_from_shopify_app(
@@ -966,37 +970,42 @@ async def add_product_from_shopify_app(
             logger.warning("⚠️ Variant exists — new product")
             existing_parent = None
 
+    # ✅ FIXED v7: STORE DEFAULT markup + tax use karo
     if markup is not None and markup > 0:
         user_markup = float(markup)
         user_markup_type = (
             markup_type if markup_type in ("fixed", "percent", "both") else "fixed"
         )
         user_extra = float(extra_percent or 0.0)
+        user_tax_rate = 0.0  # frontend se tax nahi aata
         logger.info(f"💰 Using frontend markup: {user_markup} ({user_markup_type})")
     else:
-        user_markup, user_markup_type, user_extra = _get_store_markup(store)
+        user_markup, user_markup_type, user_extra, user_tax_rate = (
+            _get_store_markup(store)
+        )
         logger.info(
             f"💰 Using STORE DEFAULT markup: {user_markup} "
-            f"({user_markup_type}), extra={user_extra}%"
+            f"({user_markup_type}), extra={user_extra}%, tax={user_tax_rate}%"
         )
 
     user_markup = apply_markup_cap(user_markup, user_markup_type)
 
     logger.info(
         f"💰 Final markup: {user_markup} ({user_markup_type}), "
-        f"extra_percent={user_extra}"
+        f"extra_percent={user_extra}, tax_rate={user_tax_rate}%"
     )
 
+    # ✅ FIXED v7: tax_rate pass karo
     final_price = calculate_final_price(
         amazon_price=data["amazon_price"],
         markup=user_markup,
         markup_type=user_markup_type,
         extra_percent=user_extra,
+        tax_rate=user_tax_rate,  # ✅ NAYA
     )
 
     logger.info(f"💰 Final price: ${final_price}")
 
-    # ✅ NAYA: weight extract karo
     weight_str = data.get("item_weight") or data.get("package_weight")
     if weight_str:
         logger.info(f"⚖️ Weight available: {weight_str}")
@@ -1062,7 +1071,6 @@ async def add_product_from_shopify_app(
                         "price": final_price,
                         "sku": asin,
                         "stock": new_product.stock_quantity or 0,
-                        # ✅ NAYA: weight pass karo
                         "weight": weight_str,
                     },
                     all_options=all_variations,
@@ -1178,6 +1186,7 @@ async def add_product_from_shopify_app(
         "markup": user_markup,
         "markup_type": user_markup_type,
         "extra_percent": user_extra,
+        "tax_rate": user_tax_rate,
         "final_price": final_price,
         "amazon_price": new_product.amazon_price,
         "variations": all_variations,

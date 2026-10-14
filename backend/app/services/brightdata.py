@@ -13,6 +13,7 @@
 # + ✅ FIXED: Description — clean (no "> See more product details")
 # + ✅ NAYA: Markup type "both" — Fixed + Percent
 # + ✅ FIXED v2: package_dimensions se item_weight + item_dimensions extract
+# + ✅ FIXED v3: tax_rate support in calculate_final_price
 # ============================================
 
 import logging
@@ -869,7 +870,8 @@ async def fetch_product_from_brightdata(amazon_url: str) -> dict:
 
 
 # ============================================
-# ✅ FIXED v2: CALCULATE FINAL PRICE
+# ✅ FIXED v3: CALCULATE FINAL PRICE
+# + ✅ NAYA: tax_rate support
 # ============================================
 def calculate_final_price(
     amazon_price: Optional[float],
@@ -878,9 +880,14 @@ def calculate_final_price(
     admin_price: Optional[float] = None,
     is_manual_override: bool = False,
     extra_percent: float = 0.0,
+    tax_rate: float = 0.0,
 ) -> Optional[float]:
     """
     Final website price calculate karta hai.
+
+    Steps:
+    1. Markup apply karo (fixed / percent / both)
+    2. Tax apply karo: final = subtotal * (1 + tax/100)
 
     Types:
     - fixed:    amazon + markup
@@ -892,16 +899,21 @@ def calculate_final_price(
 
     markup = markup or 0.0
     extra_percent = extra_percent or 0.0
+    tax_rate = tax_rate or 0.0
 
+    # ── Step 1: Markup apply karo ──
     if markup_type == "percent":
-        auto_price = amazon_price * (1 + markup / 100.0)
+        subtotal = amazon_price * (1 + markup / 100.0)
     elif markup_type == "both":
         base_price = amazon_price + markup
-        auto_price = base_price * (1 + extra_percent / 100.0)
+        subtotal = base_price * (1 + extra_percent / 100.0)
     else:
-        auto_price = amazon_price + markup
+        subtotal = amazon_price + markup
+
+    # ✅ Step 2: Tax apply karo
+    final_price = subtotal * (1 + tax_rate / 100.0)
 
     if is_manual_override and admin_price is not None:
-        return round(max(admin_price, auto_price), 2)
+        return round(max(admin_price, final_price), 2)
 
-    return round(auto_price, 2)
+    return round(final_price, 2)

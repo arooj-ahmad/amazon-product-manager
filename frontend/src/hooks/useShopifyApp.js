@@ -1,6 +1,7 @@
 // src/hooks/useShopifyApp.js
 // ✅ SIMPLIFIED: Markup state removed
 // ✅ NAYA: Backend se store ka saved markup load hota hai
+// ✅ NAYA v2: Tax + Country bhi load hote hain
 import { useState, useEffect, useCallback, useRef } from 'react'
 
 const API_URL =
@@ -74,11 +75,15 @@ function resolveShopDomain(currentDomain) {
 export function useShopifyApp() {
   const [amazonUrl, setAmazonUrl] = useState('')
 
-  // ✅ Store ka saved markup (backend se load hoga)
+  // ✅ Store ka saved markup + country + tax (backend se load hoga)
   const [storeMarkup, setStoreMarkup] = useState({
     markup: 2.0,
     markupType: 'fixed',
     extraPercent: 0,
+    // ✅ NAYA: country + tax
+    countryId: null,
+    countryName: null,
+    taxRate: 0,
   })
   const [storeMarkupLoading, setStoreMarkupLoading] = useState(false)
 
@@ -192,7 +197,7 @@ export function useShopifyApp() {
   }, [loadBillingData])
 
   // ========================================
-  // ✅ NAYA: Store ka saved markup load karo
+  // ✅ NAYA: Store ka saved markup + country + tax load karo
   // ========================================
   const loadStoreMarkup = useCallback(async (domain) => {
     const actualDomain = resolveShopDomain(domain)
@@ -211,6 +216,10 @@ export function useShopifyApp() {
           markup: res.data.markup ?? 2.0,
           markupType: res.data.markup_type ?? 'fixed',
           extraPercent: res.data.extra_percent ?? 0,
+          // ✅ NAYA: country + tax
+          countryId: res.data.country_id ?? null,
+          countryName: res.data.country_name ?? null,
+          taxRate: res.data.tax_rate ?? 0,
         })
         console.log('✅ Store markup loaded:', res.data)
       } else {
@@ -480,9 +489,9 @@ export function useShopifyApp() {
       const collectionIdsArray = Array.from(selectedCollections)
 
       console.log('📤 Sending product with collections:', collectionIdsArray)
-      console.log('💰 Will use store default markup from backend')
+      console.log('💰 Will use store default markup + tax from backend')
 
-      // ✅ Markup nahi bhej rahe — backend store ka saved markup use karega
+      // ✅ Markup/tax nahi bhej rahe — backend store ka saved markup + tax use karega
       const res = await safeFetch(
         `${API_URL}/api/shopify/app/add-product`,
         {
@@ -494,8 +503,8 @@ export function useShopifyApp() {
           body: JSON.stringify({
             amazon_url: amazonUrl.trim(),
             collection_ids: collectionIdsArray,
-            // ✅ markup, markup_type, extra_percent hata diye
-            // Backend store ka saved markup use karega
+            // ✅ markup, markup_type, extra_percent, tax_rate hata diye
+            // Backend store ka saved markup + tax use karega
           }),
         }
       )
