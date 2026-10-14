@@ -21,6 +21,7 @@
 # + ✅ NAYA: Markup type "both" — Fixed + Percent
 # + ✅ FIXED v2: STORE DEFAULT markup use karo (product.markup nahi)
 # + ✅ FIXED v3: STORE DEFAULT tax bhi use karo
+# + ✅ FIXED v4: Final price change pe bhi Shopify pe push karo
 # ============================================
 
 import logging
@@ -442,7 +443,7 @@ async def sync_shopify_price(product: Product, new_price: float, db: Session):
 
 # ============================================
 # JOB: UPDATE ALL PRICES
-# + ✅ FIXED v3: STORE DEFAULT markup + tax use karo
+# ✅ FIXED v4: Final price change pe bhi push karo
 # ============================================
 async def update_all_prices():
     """SAARE products ke prices update karta hai (24h)."""
@@ -531,7 +532,7 @@ async def update_all_prices():
                     markup=store_markup,
                     markup_type=store_markup_type,
                     extra_percent=store_extra_pct,
-                    tax_rate=store_tax_rate,  # ✅ NAYA
+                    tax_rate=store_tax_rate,  # ✅ tax support
                 )
 
                 logger.info(
@@ -575,8 +576,13 @@ async def update_all_prices():
 
                 price_recalculated_count += 1
 
-                # STEP 4: Shopify pe price + metafields HAR change pe push
-                if new_amazon_price != old_amazon:
+                # ✅ FIXED v4: Push karo agar Amazon price YA final price change hui
+                price_changed = (
+                    new_amazon_price != old_amazon
+                    or new_final_price != old_price
+                )
+
+                if price_changed:
                     await sync_shopify_price(
                         product=product,
                         new_price=new_final_price,
