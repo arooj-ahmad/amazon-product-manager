@@ -1,20 +1,14 @@
 // ============================================
 // frontend/src/pages/MarkupSettings.jsx
-// Markup Settings Page — GLOBAL SETTINGS ONLY
-// + Bulk update + store default markup save
-// + Products table hata di (wo alag page par hai)
-// + Store ID database se aati hai (koi hardcode nahi)
-// + "both" markup type — Fixed + Percent
-// + useNavigate (sidebar navigation ke liye)
+// Markup Settings Page — DEFAULT MARKUP ONLY
+// Ye page sirf store ka default markup set karta hai
+// jo har naye product par apply hoga.
+// Bulk update + products table → Products page par hain.
 // ============================================
 
 import { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
-import {
-  getCountries,
-  bulkUpdatePricing,
-  getStoreIdByDomain,
-} from '../api/pricing'
+import { getCountries, getStoreIdByDomain } from '../api/pricing'
 
 const API_URL =
   (import.meta.env.VITE_API_URL || '').trim() ||
@@ -68,23 +62,21 @@ export default function MarkupSettings() {
   const [countries, setCountries] = useState([])
   const [loading, setLoading] = useState(true)
   const [message, setMessage] = useState(null)
-  const [storeId, setStoreId] = useState(null)
   const [shopDomain, setShopDomain] = useState(null)
 
   // Store ka saved default markup
   const [savedDefault, setSavedDefault] = useState(null)
 
-  const [bulkData, setBulkData] = useState({
+  // Form data
+  const [formData, setFormData] = useState({
     country_id: '',
     markup_type: 'fixed',
     markup_value: '',
     extra_percent: '',
     tax_rate: '0',
   })
-  const [bulkLoading, setBulkLoading] = useState(false)
 
-  // Save as default toggle
-  const [saveAsDefault, setSaveAsDefault] = useState(true)
+  const [saving, setSaving] = useState(false)
 
   useEffect(() => {
     init()
@@ -102,10 +94,7 @@ export default function MarkupSettings() {
       }
       setShopDomain(domain)
 
-      const sid = await getStoreIdByDomain(domain)
-      console.log(`✅ Store ID from database: ${sid}`)
-      setStoreId(sid)
-
+      // Sirf countries load karo (store ID ki zaroorat nahi — save me shop_domain se hoga)
       const countriesData = await getCountries()
       setCountries(countriesData || [])
 
@@ -117,6 +106,17 @@ export default function MarkupSettings() {
         if (defRes.ok && defRes.data) {
           setSavedDefault(defRes.data)
           console.log('✅ Saved default markup:', defRes.data)
+
+          // Form me current values prefill karo
+          setFormData({
+            country_id: '',
+            markup_type: defRes.data.markup_type || 'fixed',
+            markup_value: defRes.data.markup ? String(defRes.data.markup) : '',
+            extra_percent: defRes.data.extra_percent
+              ? String(defRes.data.extra_percent)
+              : '',
+            tax_rate: '0',
+          })
         }
       } catch (err) {
         console.warn('⚠️ Could not load saved default:', err)
@@ -128,89 +128,76 @@ export default function MarkupSettings() {
     }
   }
 
-  const handleBulkCountryChange = (countryId) => {
+  const handleCountryChange = (countryId) => {
     const country = countries.find((c) => c.id === parseInt(countryId))
-    setBulkData({
-      ...bulkData,
+    setFormData({
+      ...formData,
       country_id: countryId,
       tax_rate: country ? String(country.default_tax_rate) : '0',
     })
   }
 
-  const handleBulkUpdate = async () => {
-    if (!bulkData.country_id) {
-      setMessage({ type: 'error', text: '❌ Please select a country' })
-      return
-    }
-    if (!bulkData.markup_value || parseFloat(bulkData.markup_value) <= 0) {
-      setMessage({ type: 'error', text: '❌ Please enter a markup value' })
-      return
-    }
-    if (!storeId) {
-      setMessage({ type: 'error', text: '❌ Store ID detect nahi ho saka' })
-      return
-    }
-
-    if (!window.confirm('Saare products par yeh pricing apply karein?')) return
-
-    setBulkLoading(true)
-    setMessage(null)
-    try {
-      // 1️⃣ Bulk update existing products
-      const res = await bulkUpdatePricing({
-        store_id: storeId,
-        markup_type: bulkData.markup_type,
-        markup_value: parseFloat(bulkData.markup_value),
-        extra_percent: parseFloat(bulkData.extra_percent) || 0,
-        tax_rate: parseFloat(bulkData.tax_rate),
-      })
-
-      // 2️⃣ Store default bhi save karo (agar checkbox checked hai)
-      let defaultSaved = false
-      if (saveAsDefault && shopDomain) {
-        try {
-          const defRes = await safeFetch(
-            `${API_URL}/api/markup/store-default`,
-            {
-              method: 'PUT',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({
-                shop_domain: shopDomain,
-                markup: parseFloat(bulkData.markup_value),
-                markup_type: bulkData.markup_type,
-                extra_percent: parseFloat(bulkData.extra_percent) || 0,
-              }),
-            }
-          )
-
-          if (defRes.ok) {
-            defaultSaved = true
-            setSavedDefault(defRes.data)
-            console.log('✅ Store default markup saved:', defRes.data)
-          } else {
-            console.warn('⚠️ Store default save failed:', defRes.data)
-            setMessage({
-              type: 'error',
-              text: `⚠️ Default markup save nahi hua: ${defRes.data?.detail || 'Unknown error'}`,
-            })
-          }
-        } catch (err) {
-          console.warn('⚠️ Store default save error:', err)
-          setMessage({
-            type: 'error',
-            text: `⚠️ Default markup save error: ${err.message}`,
-          })
-        }
-      }
-
+  const handleSaveDefault = async () => {
+    // Validation
+    if (!formData.markup_value || parseFloat(formData.markup_value) <= 0) {
       setMessage({
-        type: 'success',
-        text: `✅ ${res.updated} products update ho gaye! (Shopify: ${res.shopify_updated || 0})${defaultSaved ? ' + Default markup saved ✅' : ''}`,
+        type: 'error',
+        text: '❌ Please enter a markup value',
       })
+      return
+    }
+
+    if (!shopDomain) {
+      setMessage({ type: 'error', text: '❌ Shop domain missing' })
+      return
+    }
+
+    if (
+      !window.confirm(
+        `Default markup set karein: ${
+          formData.markup_type === 'percent'
+            ? `+${formData.markup_value}%`
+            : formData.markup_type === 'both'
+              ? `+$${formData.markup_value} + ${formData.extra_percent || 0}%`
+              : `+$${formData.markup_value}`
+        }? Ye har naye product par apply hoga.`
+      )
+    ) {
+      return
+    }
+
+    setSaving(true)
+    setMessage(null)
+
+    try {
+      const defRes = await safeFetch(
+        `${API_URL}/api/markup/store-default`,
+        {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            shop_domain: shopDomain,
+            markup: parseFloat(formData.markup_value),
+            markup_type: formData.markup_type,
+            extra_percent: parseFloat(formData.extra_percent) || 0,
+          }),
+        }
+      )
+
+      if (defRes.ok) {
+        setSavedDefault(defRes.data)
+        setMessage({
+          type: 'success',
+          text: '✅ Default markup save ho gaya! Ab har naya product par apply hoga.',
+        })
+        console.log('✅ Store default markup saved:', defRes.data)
+      } else {
+        throw new Error(defRes.data?.detail || 'Save failed')
+      }
     } catch (err) {
       setMessage({ type: 'error', text: `❌ ${err.message}` })
     } finally {
-      setBulkLoading(false)
+      setSaving(false)
     }
   }
 
@@ -243,11 +230,11 @@ export default function MarkupSettings() {
 
         <h1 style={styles.h1}>⚙️ Markup Settings</h1>
         <p style={styles.subtitle}>
-          Yahan jo markup set karenge, wo <strong>naye products par bhi
-          automatically apply</strong> hoga.
+          Yahan jo markup set karenge, wo{' '}
+          <strong>har naye product par automatically apply</strong> hoga.
         </p>
 
-        {/* Saved default markup info */}
+        {/* Current default markup banner */}
         {savedDefault && (
           <div style={styles.defaultBanner}>
             <span style={styles.defaultIcon}>💾</span>
@@ -269,128 +256,103 @@ export default function MarkupSettings() {
           </div>
         )}
 
-        {!storeId && (
-          <div
-            style={{
-              ...styles.messageBox,
-              background: '#fef3e7',
-              color: '#b54708',
-              border: '1px solid #fedf89',
-            }}
-          >
-            ⚠️ Store ID detect nahi ho saka. URL mein <code>?shop=</code> ya{' '}
-            <code>/store/...</code> hona chahiye.
+        {/* Default Markup Form */}
+        <div style={styles.card}>
+          <div style={styles.cardHeader}>
+            <span style={styles.cardIcon}>💰</span>
+            <div>
+              <h3 style={styles.cardTitle}>Set Default Markup</h3>
+              <p style={styles.cardSubtitle}>
+                Ye markup har naye product par apply hoga
+              </p>
+            </div>
           </div>
-        )}
 
-        <div style={styles.bulkBox}>
-          <strong>🔄 Bulk Update All:</strong>
+          <div style={styles.formRow}>
+            <select
+              value={formData.country_id}
+              onChange={(e) => handleCountryChange(e.target.value)}
+              style={styles.input}
+              disabled={saving}
+            >
+              <option value="">Country (optional)</option>
+              {countries.map((c) => (
+                <option key={c.id} value={c.id}>
+                  {c.name} ({c.default_tax_rate}% {c.tax_label})
+                </option>
+              ))}
+            </select>
 
-          <select
-            value={bulkData.country_id}
-            onChange={(e) => handleBulkCountryChange(e.target.value)}
-            style={styles.bulkSelect}
-            disabled={bulkLoading}
-          >
-            <option value="">Select Country</option>
-            {countries.map((c) => (
-              <option key={c.id} value={c.id}>
-                {c.name} ({c.default_tax_rate}% {c.tax_label})
-              </option>
-            ))}
-          </select>
+            <select
+              value={formData.markup_type}
+              onChange={(e) =>
+                setFormData({ ...formData, markup_type: e.target.value })
+              }
+              style={styles.input}
+              disabled={saving}
+            >
+              <option value="fixed">$ Fixed</option>
+              <option value="percent">% Percent</option>
+              <option value="both">$ + % (Both)</option>
+            </select>
 
-          <select
-            value={bulkData.markup_type}
-            onChange={(e) =>
-              setBulkData({ ...bulkData, markup_type: e.target.value })
-            }
-            style={styles.bulkSelect}
-            disabled={bulkLoading}
-          >
-            <option value="fixed">$ Fixed</option>
-            <option value="percent">% Percent</option>
-            <option value="both">$ + % (Both)</option>
-          </select>
-
-          <input
-            type="number"
-            step="0.01"
-            min="0"
-            value={bulkData.markup_value}
-            onChange={(e) =>
-              setBulkData({ ...bulkData, markup_value: e.target.value })
-            }
-            style={styles.bulkInput}
-            disabled={bulkLoading}
-            placeholder={
-              bulkData.markup_type === 'percent' ? 'e.g. 10' : 'e.g. 2.00'
-            }
-          />
-
-          {bulkData.markup_type === 'both' && (
             <input
               type="number"
               step="0.01"
               min="0"
-              max="500"
-              value={bulkData.extra_percent}
+              value={formData.markup_value}
               onChange={(e) =>
-                setBulkData({ ...bulkData, extra_percent: e.target.value })
+                setFormData({ ...formData, markup_value: e.target.value })
               }
-              style={styles.bulkInput}
-              disabled={bulkLoading}
-              placeholder="e.g. 10"
+              style={styles.input}
+              disabled={saving}
+              placeholder={
+                formData.markup_type === 'percent'
+                  ? 'e.g. 10'
+                  : 'e.g. 2.00'
+              }
             />
-          )}
 
-          <input
-            type="number"
-            step="0.01"
-            min="0"
-            max="100"
-            placeholder="Tax %"
-            value={bulkData.tax_rate}
-            onChange={(e) =>
-              setBulkData({ ...bulkData, tax_rate: e.target.value })
-            }
-            style={styles.bulkInput}
-            disabled={bulkLoading}
-          />
-
-          <label style={styles.checkboxLabel}>
-            <input
-              type="checkbox"
-              checked={saveAsDefault}
-              onChange={(e) => setSaveAsDefault(e.target.checked)}
-              disabled={bulkLoading}
-              style={styles.checkbox}
-            />
-            <span>Save as store default</span>
-          </label>
+            {formData.markup_type === 'both' && (
+              <input
+                type="number"
+                step="0.01"
+                min="0"
+                max="500"
+                value={formData.extra_percent}
+                onChange={(e) =>
+                  setFormData({
+                    ...formData,
+                    extra_percent: e.target.value,
+                  })
+                }
+                style={styles.input}
+                disabled={saving}
+                placeholder="Extra %"
+              />
+            )}
+          </div>
 
           <button
             type="button"
-            onClick={handleBulkUpdate}
+            onClick={handleSaveDefault}
             disabled={
-              bulkLoading ||
-              !storeId ||
-              !bulkData.markup_value ||
-              parseFloat(bulkData.markup_value) <= 0
+              saving || !formData.markup_value || parseFloat(formData.markup_value) <= 0
             }
             style={{
               ...styles.primaryBtn,
               background:
-                bulkLoading || !storeId || !bulkData.markup_value
+                saving || !formData.markup_value
                   ? '#babfc3'
                   : '#008060',
               cursor:
-                bulkLoading || !storeId || !bulkData.markup_value
+                saving || !formData.markup_value
                   ? 'not-allowed'
                   : 'pointer',
+              marginTop: 16,
             }}
           >
-            {bulkLoading ? '⏳ Applying...' : 'Apply to All'}
+            {saving ? '⏳ Saving...' : '💾 Save as Default'}
           </button>
         </div>
 
@@ -409,7 +371,7 @@ export default function MarkupSettings() {
           </div>
         )}
 
-        {/* ✅ Info card — Products page ka link */}
+        {/* Info card — Products page ka link */}
         <div style={styles.infoCard}>
           <div style={styles.infoIconBox}>
             <span style={styles.infoIcon}>📦</span>
@@ -417,7 +379,8 @@ export default function MarkupSettings() {
           <div style={styles.infoContent}>
             <h3 style={styles.infoTitle}>Product-wise Pricing</h3>
             <p style={styles.infoText}>
-              Har product ka markup, tax alag set karne ke liye{' '}
+              Existing products ka markup change karne ke liye, ya{' '}
+              <strong>Bulk Update</strong> karne ke liye{' '}
               <strong>Products</strong> page par jaayein.
             </p>
             <button
@@ -504,49 +467,49 @@ const styles = {
     transition: 'all 0.15s ease',
   },
 
-  bulkBox: {
+  // ✅ Card styles
+  card: {
     background: 'white',
-    padding: 20,
+    padding: 24,
     borderRadius: 8,
     marginBottom: 20,
-    display: 'flex',
-    gap: 12,
-    alignItems: 'center',
-    flexWrap: 'wrap',
     border: '1px solid #e1e3e5',
     boxShadow: '0 1px 2px rgba(0,0,0,0.05)',
   },
-  bulkSelect: {
-    padding: '8px 12px',
-    border: '1px solid #babfc3',
-    borderRadius: 6,
-    fontSize: 14,
+  cardHeader: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: '12px',
+    marginBottom: 16,
   },
-  bulkInput: {
-    padding: '8px 12px',
-    border: '1px solid #babfc3',
-    borderRadius: 6,
-    fontSize: 14,
-    width: 100,
+  cardIcon: {
+    fontSize: '24px',
+  },
+  cardTitle: {
+    fontSize: '15px',
+    fontWeight: '700',
+    color: '#202223',
+    margin: '0 0 2px 0',
+  },
+  cardSubtitle: {
+    fontSize: '12px',
+    color: '#637381',
+    margin: 0,
   },
 
-  checkboxLabel: {
-    display: 'inline-flex',
+  formRow: {
+    display: 'flex',
+    gap: 12,
+    flexWrap: 'wrap',
     alignItems: 'center',
-    gap: '6px',
-    fontSize: 13,
-    color: '#202223',
-    cursor: 'pointer',
-    padding: '8px 12px',
-    background: '#f6f6f7',
+  },
+  input: {
+    padding: '10px 12px',
     border: '1px solid #babfc3',
     borderRadius: 6,
-    userSelect: 'none',
-  },
-  checkbox: {
-    cursor: 'pointer',
-    width: 16,
-    height: 16,
+    fontSize: 14,
+    background: 'white',
+    minWidth: 100,
   },
 
   messageBox: {
@@ -556,7 +519,6 @@ const styles = {
     marginBottom: 16,
   },
 
-  // ✅ Info card — Products page link
   infoCard: {
     display: 'flex',
     alignItems: 'flex-start',
@@ -612,7 +574,7 @@ const styles = {
   primaryBtn: {
     color: 'white',
     border: 'none',
-    padding: '10px 20px',
+    padding: '12px 24px',
     borderRadius: 6,
     fontSize: 14,
     fontWeight: '600',

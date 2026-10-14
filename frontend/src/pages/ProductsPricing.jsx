@@ -1,7 +1,8 @@
 // ============================================
 // frontend/src/pages/ProductsPricing.jsx
 // Product-wise Pricing Editor
-// Har product ka markup, country, tax alag set karo
+// + ✅ NAYA: Bulk Update section (top)
+// + Search + Products table
 // ============================================
 
 import { useState, useEffect } from 'react'
@@ -9,6 +10,7 @@ import { useNavigate } from 'react-router-dom'
 import {
   getCountries,
   updatePricing,
+  bulkUpdatePricing,
   getStoreIdByDomain,
 } from '../api/pricing'
 
@@ -69,9 +71,20 @@ export default function ProductsPricing() {
   const [savingId, setSavingId] = useState(null)
   const [message, setMessage] = useState(null)
   const [storeId, setStoreId] = useState(null)
+  const [shopDomain, setShopDomain] = useState(null)
 
   // ✅ Search
   const [searchTerm, setSearchTerm] = useState('')
+
+  // ✅ Bulk Update state
+  const [bulkData, setBulkData] = useState({
+    country_id: '',
+    markup_type: 'fixed',
+    markup_value: '',
+    extra_percent: '',
+    tax_rate: '0',
+  })
+  const [bulkLoading, setBulkLoading] = useState(false)
 
   useEffect(() => {
     init()
@@ -85,6 +98,7 @@ export default function ProductsPricing() {
       if (!domain) {
         throw new Error('Shop domain detect nahi ho saka.')
       }
+      setShopDomain(domain)
 
       const sid = await getStoreIdByDomain(domain)
       setStoreId(sid)
@@ -92,16 +106,71 @@ export default function ProductsPricing() {
       const countriesData = await getCountries()
       setCountries(countriesData || [])
 
-      const url = `${API_URL}/api/markup/products?store_id=${sid}`
-      const productsRes = await safeFetch(url)
-      if (!productsRes.ok) {
-        throw new Error(productsRes.data.detail || 'Failed to load products')
-      }
-      setProducts(productsRes.data || [])
+      await loadProducts(sid)
     } catch (err) {
       setMessage({ type: 'error', text: `❌ ${err.message}` })
     } finally {
       setLoading(false)
+    }
+  }
+
+  const loadProducts = async (sid) => {
+    const url = `${API_URL}/api/markup/products?store_id=${sid}`
+    const productsRes = await safeFetch(url)
+    if (!productsRes.ok) {
+      throw new Error(productsRes.data.detail || 'Failed to load products')
+    }
+    setProducts(productsRes.data || [])
+  }
+
+  // ✅ Bulk Update handlers
+  const handleBulkCountryChange = (countryId) => {
+    const country = countries.find((c) => c.id === parseInt(countryId))
+    setBulkData({
+      ...bulkData,
+      country_id: countryId,
+      tax_rate: country ? String(country.default_tax_rate) : '0',
+    })
+  }
+
+  const handleBulkUpdate = async () => {
+    if (!bulkData.country_id) {
+      setMessage({ type: 'error', text: '❌ Please select a country' })
+      return
+    }
+    if (!bulkData.markup_value || parseFloat(bulkData.markup_value) <= 0) {
+      setMessage({ type: 'error', text: '❌ Please enter a markup value' })
+      return
+    }
+    if (!storeId) {
+      setMessage({ type: 'error', text: '❌ Store ID detect nahi ho saka' })
+      return
+    }
+
+    if (!window.confirm('Saare products par yeh pricing apply karein?')) return
+
+    setBulkLoading(true)
+    setMessage(null)
+    try {
+      const res = await bulkUpdatePricing({
+        store_id: storeId,
+        markup_type: bulkData.markup_type,
+        markup_value: parseFloat(bulkData.markup_value),
+        extra_percent: parseFloat(bulkData.extra_percent) || 0,
+        tax_rate: parseFloat(bulkData.tax_rate),
+      })
+
+      setMessage({
+        type: 'success',
+        text: `✅ ${res.updated} products update ho gaye! (Shopify: ${res.shopify_updated || 0})`,
+      })
+
+      // Products refresh karo
+      await loadProducts(storeId)
+    } catch (err) {
+      setMessage({ type: 'error', text: `❌ ${err.message}` })
+    } finally {
+      setBulkLoading(false)
     }
   }
 
@@ -136,7 +205,7 @@ export default function ProductsPricing() {
 
         <h1 style={styles.h1}>📦 Product Pricing</h1>
         <p style={styles.subtitle}>
-          Har product ka markup, country aur tax alag set karein.
+          Bulk update ya har product ka markup alag-alag set karein.
         </p>
 
         {!storeId && (
@@ -151,6 +220,120 @@ export default function ProductsPricing() {
             ⚠️ Store ID detect nahi ho saka.
           </div>
         )}
+
+        {/* ✅ Bulk Update Section */}
+        <div style={styles.bulkCard}>
+          <div style={styles.bulkHeader}>
+            <span style={styles.bulkIcon}>🔄</span>
+            <div>
+              <h3 style={styles.bulkTitle}>Bulk Update All Products</h3>
+              <p style={styles.bulkSubtitle}>
+                Ye settings saare existing products par apply hongi
+              </p>
+            </div>
+          </div>
+
+          <div style={styles.bulkRow}>
+            <select
+              value={bulkData.country_id}
+              onChange={(e) => handleBulkCountryChange(e.target.value)}
+              style={styles.bulkSelect}
+              disabled={bulkLoading}
+            >
+              <option value="">Select Country</option>
+              {countries.map((c) => (
+                <option key={c.id} value={c.id}>
+                  {c.name} ({c.default_tax_rate}% {c.tax_label})
+                </option>
+              ))}
+            </select>
+
+            <select
+              value={bulkData.markup_type}
+              onChange={(e) =>
+                setBulkData({ ...bulkData, markup_type: e.target.value })
+              }
+              style={styles.bulkSelect}
+              disabled={bulkLoading}
+            >
+              <option value="fixed">$ Fixed</option>
+              <option value="percent">% Percent</option>
+              <option value="both">$ + % (Both)</option>
+            </select>
+
+            <input
+              type="number"
+              step="0.01"
+              min="0"
+              value={bulkData.markup_value}
+              onChange={(e) =>
+                setBulkData({ ...bulkData, markup_value: e.target.value })
+              }
+              style={styles.bulkInput}
+              disabled={bulkLoading}
+              placeholder={
+                bulkData.markup_type === 'percent' ? 'e.g. 10' : 'e.g. 2.00'
+              }
+            />
+
+            {bulkData.markup_type === 'both' && (
+              <input
+                type="number"
+                step="0.01"
+                min="0"
+                max="500"
+                value={bulkData.extra_percent}
+                onChange={(e) =>
+                  setBulkData({
+                    ...bulkData,
+                    extra_percent: e.target.value,
+                  })
+                }
+                style={styles.bulkInput}
+                disabled={bulkLoading}
+                placeholder="Extra %"
+              />
+            )}
+
+            <input
+              type="number"
+              step="0.01"
+              min="0"
+              max="100"
+              placeholder="Tax %"
+              value={bulkData.tax_rate}
+              onChange={(e) =>
+                setBulkData({ ...bulkData, tax_rate: e.target.value })
+              }
+              style={styles.bulkInput}
+              disabled={bulkLoading}
+            />
+
+            <button
+              type="button"
+              onClick={handleBulkUpdate}
+              disabled={
+                bulkLoading ||
+                !storeId ||
+                !bulkData.markup_value ||
+                parseFloat(bulkData.markup_value) <= 0
+              }
+              style={{
+                ...styles.primaryBtn,
+                background:
+                  bulkLoading || !storeId || !bulkData.markup_value
+                    ? '#babfc3'
+                    : '#008060',
+                cursor:
+                  bulkLoading || !storeId || !bulkData.markup_value
+                    ? 'not-allowed'
+                    : 'pointer',
+              }}
+            >
+              {bulkLoading ? '⏳ Applying...' : 'Apply to All'}
+            </button>
+          </div>
+        </div>
 
         {/* Search bar */}
         <div style={styles.searchBox}>
@@ -227,7 +410,7 @@ export default function ProductsPricing() {
 }
 
 // ============================================
-// Product Row (same as before)
+// Product Row
 // ============================================
 function ProductRow({
   product,
@@ -488,6 +671,55 @@ const styles = {
     cursor: 'pointer',
   },
 
+  // ✅ Bulk Update card styles
+  bulkCard: {
+    background: 'white',
+    padding: 20,
+    borderRadius: 8,
+    marginBottom: 20,
+    border: '1px solid #e1e3e5',
+    boxShadow: '0 1px 2px rgba(0,0,0,0.05)',
+  },
+  bulkHeader: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: '12px',
+    marginBottom: 16,
+  },
+  bulkIcon: {
+    fontSize: '22px',
+  },
+  bulkTitle: {
+    fontSize: '15px',
+    fontWeight: '700',
+    color: '#202223',
+    margin: '0 0 2px 0',
+  },
+  bulkSubtitle: {
+    fontSize: '12px',
+    color: '#637381',
+    margin: 0,
+  },
+  bulkRow: {
+    display: 'flex',
+    gap: 12,
+    flexWrap: 'wrap',
+    alignItems: 'center',
+  },
+  bulkSelect: {
+    padding: '8px 12px',
+    border: '1px solid #babfc3',
+    borderRadius: 6,
+    fontSize: 14,
+  },
+  bulkInput: {
+    padding: '8px 12px',
+    border: '1px solid #babfc3',
+    borderRadius: 6,
+    fontSize: 14,
+    width: 100,
+  },
+
   searchBox: {
     display: 'flex',
     alignItems: 'center',
@@ -553,5 +785,13 @@ const styles = {
     borderRadius: 4,
     fontSize: 13,
     width: 70,
+  },
+  primaryBtn: {
+    color: 'white',
+    border: 'none',
+    padding: '10px 20px',
+    borderRadius: 6,
+    fontSize: 14,
+    fontWeight: '600',
   },
 }
