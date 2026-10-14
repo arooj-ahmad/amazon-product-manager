@@ -3,7 +3,7 @@
 # Shopify Webhooks — subscription events + product events
 # + ✅ NAYA: products/delete webhook handler
 # + ✅ FIXED: ASIN/SKU match (primary) + GID + numeric + LIKE (fallback)
-# + ✅ FIXED: SHOPIFY_WEBHOOK_SECRET use for HMAC (fallback to API_SECRET)
+# + ✅ FIXED: Multiple secrets tried for HMAC (webhook + api secret)
 # ============================================
 
 import base64
@@ -26,37 +26,49 @@ router = APIRouter(prefix="/api/webhooks", tags=["Webhooks"])
 
 
 # ============================================
-# VERIFY SHOPIFY WEBHOOK HMAC
+# VERIFY SHOPIFY WEBHOOK HMAC — Multiple Secrets
 # ============================================
 def verify_webhook_hmac(body: bytes, hmac_header: str) -> bool:
     """
     Shopify webhook signature verify karein.
-    
-    Uses SHOPIFY_WEBHOOK_SECRET (Shopify Admin → Settings → Webhooks)
-    Falls back to SHOPIFY_API_SECRET (OAuth app secret) if not set.
+
+    Multiple secrets try karta hai:
+    1. SHOPIFY_WEBHOOK_SECRET (Shopify Admin → Settings → Webhooks)
+    2. SHOPIFY_API_SECRET (OAuth app secret)
+
+    Jo bhi match ho jaye → pass.
     """
     if not hmac_header:
         return False
 
-    # ✅ Webhook signing secret use karo, fallback to API secret
-    secret = (
-        settings.SHOPIFY_WEBHOOK_SECRET
-        or settings.SHOPIFY_API_SECRET
-    )
+    secrets_to_try = list({
+        s for s in [
+            settings.SHOPIFY_WEBHOOK_SECRET,
+            settings.SHOPIFY_API_SECRET,
+        ] if s
+    })
 
-    if not secret:
+    if not secrets_to_try:
         logger.error("❌ No webhook secret configured in settings!")
         return False
 
-    computed = hmac.new(
-        secret.encode(),
-        body,
-        hashlib.sha256,
-    ).digest()
+    for secret in secrets_to_try:
+        computed = hmac.new(
+            secret.encode(),
+            body,
+            hashlib.sha256,
+        ).digest()
+        computed_b64 = base64.b64encode(computed).decode()
 
-    computed_b64 = base64.b64encode(computed).decode()
+        if hmac.compare_digest(computed_b64, hmac_header):
+            logger.debug("   ✅ HMAC verified")
+            return True
 
-    return hmac.compare_digest(computed_b64, hmac_header)
+    logger.warning(
+        f"   ❌ HMAC failed (tried {len(secrets_to_try)} secret(s), "
+        f"header_len={len(hmac_header) if hmac_header else 0})"
+    )
+    return False
 
 
 # ============================================
@@ -73,12 +85,10 @@ async def shopify_webhook(
     """Shopify webhook receiver — subscriptions + app events + product events"""
     body = await request.body()
 
-    # 1. Verify HMAC
     if not verify_webhook_hmac(body, x_shopify_hmac_sha256):
         logger.warning(f"❌ Invalid webhook HMAC from {x_shopify_shop_domain}")
         raise HTTPException(401, "Invalid HMAC")
 
-    # 2. Parse payload
     try:
         payload = json.loads(body)
     except Exception as e:
@@ -87,9 +97,7 @@ async def shopify_webhook(
 
     logger.info(f"📥 Webhook: {x_shopify_topic} from {x_shopify_shop_domain}")
 
-    # 3. Handle based on topic
     try:
-        # ── Subscription events ──
         if x_shopify_topic == "app_subscriptions/update":
             await _handle_subscription_update(
                 shop_domain=x_shopify_shop_domain,
@@ -107,7 +115,6 @@ async def shopify_webhook(
                 shop_domain=x_shopify_shop_domain,
                 db=db,
             )
-        # ── Product events ──
         elif x_shopify_topic == "products/delete":
             await _handle_product_delete(
                 shop_domain=x_shopify_shop_domain,
@@ -211,7 +218,7 @@ async def _handle_product_delete(shop_domain, payload, db):
     Shopify se product delete hone par DB se bhi delete karo.
 
     Priority order:
-    1. ✅ ASIN/SKU match — sabse reliable (webhook variants[].sku se)
+    1. ✅ ASIN/SKU match — sabse reliable
     2. GID format match — gid://shopify/Product/{id}
     3. Numeric format match
     4. LIKE query fallback
@@ -223,7 +230,7 @@ async def _handle_product_delete(shop_domain, payload, db):
         logger.warning("⚠️ Product delete webhook: no id")
         return
 
-    # ✅ NAYA: Webhook payload se SKU (ASIN) nikaalo
+    # ✅ Webhook payload se SKU (ASIN) nikaalo
     variants = payload.get("variants") or []
     sku_from_webhook = None
     if isinstance(variants, list):
@@ -242,7 +249,7 @@ async def _handle_product_delete(shop_domain, payload, db):
 
     product = None
 
-    # ── Strategy 1: ✅ ASIN/SKU match (PRIMARY) ──
+    # ── Strategy 1: ASIN/SKU match ──
     if sku_from_webhook:
         product = (
             db.query(Product)
@@ -273,7 +280,7 @@ async def _handle_product_delete(shop_domain, payload, db):
         if product:
             logger.info(f"   ✅ Matched via numeric: {shopify_id}")
 
-    # ── Strategy 4: LIKE query (universal fallback) ──
+    # ── Strategy 4: LIKE query ──
     if not product:
         product = (
             db.query(Product)
@@ -311,7 +318,6 @@ async def _handle_product_update(shop_domain, payload, db):
     if not shopify_id:
         return
 
-    # SKU se ASIN nikaalo
     variants = payload.get("variants") or []
     sku_from_webhook = None
     if isinstance(variants, list):
@@ -325,7 +331,6 @@ async def _handle_product_update(shop_domain, payload, db):
 
     product = None
 
-    # Strategy 1: ASIN/SKU
     if sku_from_webhook:
         product = (
             db.query(Product)
@@ -333,7 +338,6 @@ async def _handle_product_update(shop_domain, payload, db):
             .first()
         )
 
-    # Strategy 2: GID
     if not product:
         product_gid = f"gid://shopify/Product/{shopify_id}"
         product = (
@@ -342,7 +346,6 @@ async def _handle_product_update(shop_domain, payload, db):
             .first()
         )
 
-    # Strategy 3: Numeric
     if not product:
         product = (
             db.query(Product)
@@ -350,7 +353,6 @@ async def _handle_product_update(shop_domain, payload, db):
             .first()
         )
 
-    # Strategy 4: LIKE
     if not product:
         product = (
             db.query(Product)
@@ -361,7 +363,6 @@ async def _handle_product_update(shop_domain, payload, db):
     if not product:
         return
 
-    # Update fields
     new_title = payload.get("title")
     if new_title and new_title != product.title:
         product.title = new_title[:500]
@@ -370,7 +371,6 @@ async def _handle_product_update(shop_domain, payload, db):
     if new_status:
         product.shopify_status = new_status
 
-    # Variants se price update karo
     if variants:
         first_variant = variants[0]
         new_price = first_variant.get("price")
