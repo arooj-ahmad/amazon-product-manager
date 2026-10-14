@@ -9,11 +9,12 @@
 # + ✅ NAYA: Availability check with fallback
 # + ✅ NAYA: Categories (Collections) + Tags (Features/Specs)
 # + ✅ NAYA: Standard metafields fields (model, dimensions, etc.)
-# + ✅ FIXED: Tags — CLEAN & PROFESSIONAL (no duplicates, no garbage)
+# + ✅ FIXED: Tags — Sirf REAL tags (system-generated hata diye)
 # + ✅ FIXED: Description — clean (no "> See more product details")
 # + ✅ NAYA: Markup type "both" — Fixed + Percent
 # + ✅ FIXED v2: package_dimensions se item_weight + item_dimensions extract
 # + ✅ FIXED v3: tax_rate support in calculate_final_price
+# + ✅ FIXED v4: parse_tags — sirf real tags + categories + 1 color
 # ============================================
 
 import logging
@@ -74,19 +75,13 @@ def parse_price(value) -> Optional[float]:
 
 
 # ============================================
-# ✅ NAYA: PACKAGE DIMENSIONS PARSE
+# ✅ PACKAGE DIMENSIONS PARSE
 # ============================================
 def parse_package_dimensions(package_dims_str: str) -> dict:
     """
     Parse package_dimensions string like:
     "7.09 x 5.91 x 0.39 inches; 7.05 ounces"
     "10 x 5 x 3 cm; 500 g"
-
-    Returns:
-        {
-            "item_dimensions": "7.09 x 5.91 x 0.39 inches",
-            "item_weight": "7.05 ounces"
-        }
     """
     result = {}
 
@@ -97,7 +92,7 @@ def parse_package_dimensions(package_dims_str: str) -> dict:
     if not s:
         return result
 
-    # ── Step 1: Dimensions part nikaalo ──
+    # Dimensions part
     dims_match = re.search(
         r"([\d.]+)\s*x\s*([\d.]+)\s*x\s*([\d.]+)\s*(inches|inch|in|cm|centimeters|centimeter|mm|millimeters|millimeter)?",
         s,
@@ -106,7 +101,6 @@ def parse_package_dimensions(package_dims_str: str) -> dict:
     if dims_match:
         l, w, h = dims_match.group(1), dims_match.group(2), dims_match.group(3)
         unit = dims_match.group(4) or "inches"
-        # Normalize unit
         unit_lower = unit.lower()
         if unit_lower in ("in", "inch"):
             unit = "inches"
@@ -117,8 +111,7 @@ def parse_package_dimensions(package_dims_str: str) -> dict:
 
         result["item_dimensions"] = f"{l} x {w} x {h} {unit}"
 
-    # ── Step 2: Weight part nikaalo ──
-    # Formats: "7.05 ounces", "500 g", "1.5 lbs", "2.2 kg"
+    # Weight part
     weight_match = re.search(
         r"([\d.]+)\s*(ounces?|oz|pounds?|lbs?|lb|grams?|g|kilograms?|kg|milligrams?|mg)",
         s,
@@ -260,7 +253,6 @@ def parse_categories(raw: dict) -> list[str]:
 
 # ============================================
 # ✅ STANDARD METAFIELDS FIELDS
-# + ✅ FIXED v2: package_dimensions se item_weight + item_dimensions
 # ============================================
 def parse_standard_fields(raw: dict) -> dict:
     """
@@ -278,13 +270,11 @@ def parse_standard_fields(raw: dict) -> dict:
     fields["country_of_origin"] = raw.get("country_of_origin")
     fields["date_first_available"] = raw.get("date_first_available")
 
-    # ✅ NAYA: Package dimensions se item_weight + item_dimensions extract karo
+    # ✅ Package dimensions se item_weight + item_dimensions extract karo
     package_dims_raw = raw.get("package_dimensions") or ""
     if package_dims_raw and isinstance(package_dims_raw, str):
-        # Store the raw package dimensions
         fields["package_dimensions"] = package_dims_raw.strip()
 
-        # Parse dimensions + weight from the string
         parsed = parse_package_dimensions(package_dims_raw)
 
         if parsed.get("item_dimensions"):
@@ -391,7 +381,7 @@ def parse_standard_fields(raw: dict) -> dict:
             elif field_type == "ean":
                 fields["ean"] = value_str
 
-    # ✅ Fallback: Agar item_weight ya item_dimensions abhi bhi khaali hain
+    # Fallback
     if not fields.get("item_weight") and package_dims_raw:
         parsed = parse_package_dimensions(package_dims_raw)
         if parsed.get("item_weight"):
@@ -414,17 +404,27 @@ def parse_standard_fields(raw: dict) -> dict:
 
 
 # ============================================
-# ✅ TAGS PARSE — Clean & Professional
+# ✅ FIXED v4: TAGS PARSE — Sirf REAL tags
+# Only: categories + real Amazon tags + 1 color
+# Removed: Rating, Model, Part Number, ASIN, Brand, etc.
 # ============================================
 def parse_tags(raw: dict, categories: list[str]) -> list[str]:
-    """Amazon response se CLEAN aur USEFUL tags nikalta hai."""
+    """
+    Amazon response se SIRF REAL tags nikalta hai:
+    - Categories (Toys & Games, Vehicles, Trucks, Robots)
+    - Amazon ke asli tags (raw.get("tags") se)
+    - Ek real color (product_details se)
+
+    System-generated tags (Rating, Model, Part Number, ASIN, Brand, etc.)
+    bilkul add nahi honge.
+    """
     tags: list[str] = []
     seen_lower: set = set()
 
     def _add(tag: str):
         if not tag:
             return
-        tag = tag.strip()
+        tag = str(tag).strip()
         if not tag:
             return
         if len(tag) > 80:
@@ -437,16 +437,19 @@ def parse_tags(raw: dict, categories: list[str]) -> list[str]:
         seen_lower.add(low)
         tags.append(tag)
 
-    COLOR_KEYWORDS = {
-        "red", "blue", "green", "yellow", "black", "white",
-        "orange", "purple", "pink", "brown", "gray", "grey",
-        "silver", "gold", "beige", "navy", "teal", "cyan",
-        "magenta", "maroon", "olive", "lime", "aqua", "violet",
-        "multicolor", "multi", "dark blue", "light blue",
-        "dark green", "light green", "dark red", "light pink",
-        "rose gold", "space gray", "space grey",
-    }
+    # ── 1. Categories (Toys & Games, Vehicles, Trucks) ──
+    for cat in categories:
+        if cat and len(cat) < 60:
+            _add(cat)
 
+    # ── 2. Amazon ke REAL tags (agar raw me hain) ──
+    raw_tags = raw.get("tags") or []
+    if isinstance(raw_tags, list):
+        for t in raw_tags:
+            if isinstance(t, str) and t.strip():
+                _add(t.strip())
+
+    # ── 3. Sirf EK real color from product_details ──
     product_details = raw.get("product_details") or []
     if isinstance(product_details, list):
         for item in product_details:
@@ -455,112 +458,32 @@ def parse_tags(raw: dict, categories: list[str]) -> list[str]:
             field_type = (item.get("type") or "").strip().lower()
             value = (item.get("value") or "").strip()
             if field_type in ("color", "colour") and value:
-                if value.lower() not in seen_lower:
-                    _add(f"Color: {value}")
-            elif field_type in ("material", "material type") and value:
-                _add(f"Material: {value}")
-            elif field_type == "style" and value:
-                _add(f"Style: {value}")
-            elif field_type == "theme" and value:
-                _add(f"Theme: {value}")
+                _add(f"Color: {value}")
+                break  # Sirf ek color
 
-    features = raw.get("features") or []
-    if isinstance(features, list):
-        for f in features:
-            if not isinstance(f, str):
-                continue
-            f_lower = f.lower()
-            for color in COLOR_KEYWORDS:
-                if color in f_lower and f_lower.startswith(color):
-                    _add(f"Color: {color.title()}")
-                    break
-
-    brand = raw.get("brand")
-    if brand and isinstance(brand, str) and brand.strip():
-        _add(f"Brand: {brand.strip()}")
-
-    manufacturer = raw.get("manufacturer")
-    if manufacturer and isinstance(manufacturer, str) and manufacturer.strip():
-        if manufacturer.strip().lower() != (brand or "").strip().lower():
-            _add(f"Manufacturer: {manufacturer.strip()}")
-
-    rating = raw.get("rating")
-    if rating is not None:
-        try:
-            r = float(rating)
-            if 0 < r <= 5:
-                _add(f"Rating: {r:.1f} stars")
-        except (ValueError, TypeError):
-            pass
-
-    for cat in categories:
-        if cat and len(cat) < 60:
-            _add(cat)
-
-    SPEC_LABELS = {
-        "material": "Material", "material type": "Material",
-        "fabric type": "Fabric", "style": "Style", "style name": "Style",
-        "theme": "Theme", "pattern": "Pattern", "size": "Size",
-        "department": "Department",
-        "age range description": "Age Range", "recommended age": "Age Range",
-        "manufacturer recommended age": "Age Range",
-        "power source": "Power Source",
-        "battery type": "Battery", "batteries required": "Battery",
-        "number of pieces": "Pieces", "unit count": "Unit Count",
-        "number of items": "Items", "item package quantity": "Pack Qty",
-        "special feature": "Feature", "special features": "Feature",
-        "additional features": "Feature", "operation mode": "Operation",
-        "toy vehicle form": "Form", "educational objective": "Educational",
-        "specific uses for product": "Uses", "included components": "Includes",
-        "model number": "Model", "model name": "Model Name",
-        "part number": "Part Number", "manufacturer part number": "Part Number",
-    }
-
-    USELESS_VALUES = {
-        "", "no", "none", "n/a", "na", "0", "null",
-        "not applicable", "false", "-",
-    }
-
-    seen_specs = set()
+    # ── 4. Sirf EK real size from product_details ──
     if isinstance(product_details, list):
         for item in product_details:
             if not isinstance(item, dict):
                 continue
             field_type = (item.get("type") or "").strip().lower()
             value = (item.get("value") or "").strip()
+            if field_type == "size" and value:
+                _add(f"Size: {value}")
+                break
 
-            if not value:
+    # ── 5. Sirf EK real theme ──
+    if isinstance(product_details, list):
+        for item in product_details:
+            if not isinstance(item, dict):
                 continue
-            if value.lower() in USELESS_VALUES:
-                continue
-            if field_type in ("color", "colour"):
-                continue
+            field_type = (item.get("type") or "").strip().lower()
+            value = (item.get("value") or "").strip()
+            if field_type == "theme" and value:
+                _add(f"Theme: {value}")
+                break
 
-            label = SPEC_LABELS.get(field_type)
-            if not label:
-                continue
-            if label in seen_specs:
-                continue
-            seen_specs.add(label)
-
-            value = re.sub(r"\s+", " ", value)
-            if len(value) > 50:
-                value = value[:47] + "..."
-
-            _add(f"{label}: {value}")
-
-    asin = raw.get("asin")
-    if asin and isinstance(asin, str):
-        _add(f"ASIN: {asin.strip()}")
-
-    unit_count = raw.get("unit_count")
-    if unit_count:
-        uc = str(unit_count).strip()
-        uc_clean = re.sub(r"\s*(count|pcs|pieces|pack)\s*", "", uc, flags=re.IGNORECASE)
-        if uc_clean and "Unit Count" not in seen_specs:
-            _add(f"Unit Count: {uc_clean}")
-
-    tags = tags[:25]
+    tags = tags[:15]
 
     logger.info(f"✅ Parsed tags ({len(tags)}): {tags}")
     return tags
@@ -871,7 +794,6 @@ async def fetch_product_from_brightdata(amazon_url: str) -> dict:
 
 # ============================================
 # ✅ FIXED v3: CALCULATE FINAL PRICE
-# + ✅ NAYA: tax_rate support
 # ============================================
 def calculate_final_price(
     amazon_price: Optional[float],
@@ -901,7 +823,6 @@ def calculate_final_price(
     extra_percent = extra_percent or 0.0
     tax_rate = tax_rate or 0.0
 
-    # ── Step 1: Markup apply karo ──
     if markup_type == "percent":
         subtotal = amazon_price * (1 + markup / 100.0)
     elif markup_type == "both":
@@ -910,7 +831,6 @@ def calculate_final_price(
     else:
         subtotal = amazon_price + markup
 
-    # ✅ Step 2: Tax apply karo
     final_price = subtotal * (1 + tax_rate / 100.0)
 
     if is_manual_override and admin_price is not None:
