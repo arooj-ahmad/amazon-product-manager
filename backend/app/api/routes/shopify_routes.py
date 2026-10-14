@@ -2,23 +2,21 @@
 # app/api/routes/shopify_routes.py
 # Shopify OAuth + Product Push + Embedded App
 # + ✅ FIXED: refresh_store_token HAR BAAR call hota hai
-# + ✅ FIXED: expires_at = calculate (Shopify ab expiring mandatory)
+# + ✅ FIXED: expires_at = calculate
 # + ✅ FIXED: exchange_code_for_token dict return karta hai
 # + ✅ FIXED: /callback bhi expiring token handle kare
 # + ✅ NAYA: categories + tags Shopify pe push
 # + ✅ NAYA: Smart markup cap (max $50 fixed, max 500% percent)
 # + ✅ NAYA: Multiple variants support (Color + Size)
-# + ✅ NAYA: App uninstalled cleanup (subscription_staus)
-# + ✅ NAYA: All standard metafields passed to shopify_product
-# + ✅ FIXED v2: PRICE FLOW — variant price $0.00 issue solved
-# + ✅ FIXED v3: DATA + PRODUCT MERGE — Bright Data ke saare
-#               standard fields Shopify tak pahunchte hain
-# + ✅ NAYA: Collections — fetch + add product to collections
-# + ✅ NAYA: Manual Cron Trigger — /trigger-price-update
-# + ✅ NAYA: Markup type "both" — Fixed + Percent
-# + ✅ FIXED v4: /collections me auto-refresh (401 problem solved)
-# + ✅ FIXED v5: /app/add-product ab STORE DEFAULT markup use karta hai
-#               (frontend se markup bhejna band kiya)
+# + ✅ NAYA: All standard metafields passed
+# + ✅ FIXED v2: PRICE FLOW
+# + ✅ FIXED v3: DATA + PRODUCT MERGE
+# + ✅ NAYA: Collections — fetch + add product
+# + ✅ NAYA: Manual Cron Trigger
+# + ✅ NAYA: Markup type "both"
+# + ✅ FIXED v4: /collections me auto-refresh
+# + ✅ FIXED v5: STORE DEFAULT markup use
+# + ✅ FIXED v6: Weight → Shopify variant mapping
 # ============================================
 
 import logging
@@ -69,7 +67,6 @@ router = APIRouter(prefix="/api/shopify", tags=["Shopify"])
 # HELPER: 401 check
 # ============================================
 def _is_auth_error(result: dict) -> bool:
-    """Check karo ki GraphQL result me 401/403 error hai ya nahi."""
     if not isinstance(result, dict):
         return False
     for err in result.get("errors", []) or []:
@@ -79,18 +76,13 @@ def _is_auth_error(result: dict) -> bool:
 
 
 # ============================================
-# HELPER: Store ka valid access token (auto-refresh)
+# HELPER: Valid access token (auto-refresh)
 # ============================================
 async def _get_valid_access_token(
     store: ShopifyStore,
     db: Session,
     force_refresh: bool = False,
 ) -> str:
-    """
-    Store ka access token return karta hai.
-    Agar expire ho raha hai (10 min buffer) ya force_refresh=True,
-    to refresh karta hai aur DB me save karta hai.
-    """
     now = datetime.now(timezone.utc)
     buffer = timedelta(minutes=10)
 
@@ -126,13 +118,9 @@ async def _get_valid_access_token(
 
 
 # ============================================
-# ✅ NAYA: Store ka saved markup nikaalo (with defaults)
+# HELPER: Store default markup
 # ============================================
 def _get_store_markup(store: ShopifyStore) -> tuple:
-    """
-    Store se saved markup return karo.
-    Returns: (markup_value, markup_type, extra_percent)
-    """
     markup_val = float(getattr(store, "default_markup", None) or 2.0)
     markup_type = getattr(store, "default_markup_type", None) or "fixed"
     extra_pct = float(getattr(store, "default_extra_percent", None) or 0.0)
@@ -144,21 +132,12 @@ def _get_store_markup(store: ShopifyStore) -> tuple:
 
 
 # ============================================
-# ✅ FIXED v4: Build product_data with metafields
-# + ✅ NAYA: "both" markup type support
+# HELPER: Build product_data
 # ============================================
 def _build_product_data_for_shopify(data: dict, product=None) -> dict:
-    """
-    Bright Data data + product data → Shopify product_data.
-    Dono sources ko merge karta hai.
-    """
     base = {}
 
-    # ═══════════════════════════════════════════
-    # STEP 1: Base fields — product (DB) se, ya `data` se
-    # ═══════════════════════════════════════════
     if product:
-        # Price resolution
         product_price = product.price
         if product_price is None or float(product_price or 0) <= 0:
             amazon = float(product.amazon_price or 0)
@@ -204,6 +183,10 @@ def _build_product_data_for_shopify(data: dict, product=None) -> dict:
             "manufacturer": getattr(product, "manufacturer", None),
             "department": getattr(product, "department", None),
             "country_of_origin": getattr(product, "country_of_origin", None),
+            # ✅ NAYA: weight fields
+            "item_weight": getattr(product, "item_weight", None),
+            "package_dimensions": getattr(product, "package_dimensions", None),
+            "item_dimensions": getattr(product, "item_dimensions", None),
         }
     else:
         base = {
@@ -227,9 +210,6 @@ def _build_product_data_for_shopify(data: dict, product=None) -> dict:
             "tags": data.get("tags", []),
         }
 
-    # ═══════════════════════════════════════════
-    # STEP 2: STANDARD FIELDS — dono sources se merge
-    # ═══════════════════════════════════════════
     standard_fields = [
         "model_number", "item_model_number", "model_name",
         "part_number", "upc", "ean", "isbn",
@@ -247,14 +227,12 @@ def _build_product_data_for_shopify(data: dict, product=None) -> dict:
         "hard_disk", "graphics_coprocessor", "warranty",
     ]
 
-    # Source A: Bright Data `data`
     if data:
         for field in standard_fields:
             val = data.get(field)
             if val is not None and str(val).strip() and str(val).strip() != "None":
                 base[field] = str(val).strip()
 
-    # Source B: product.specifications
     if product:
         specs = product.specifications or {}
         if isinstance(specs, str):
@@ -271,7 +249,6 @@ def _build_product_data_for_shopify(data: dict, product=None) -> dict:
                 if val is not None and str(val).strip() and str(val).strip() != "None":
                     base[field] = str(val).strip()
 
-        # Source C: product columns
         for field in standard_fields:
             if field in base:
                 continue
@@ -279,7 +256,6 @@ def _build_product_data_for_shopify(data: dict, product=None) -> dict:
             if val is not None and str(val).strip() and str(val).strip() != "None":
                 base[field] = str(val).strip()
 
-    # STEP 3: product_details
     base["product_details"] = (data.get("product_details") if data else None) or []
 
     filled = [f for f in standard_fields if f in base]
@@ -293,10 +269,9 @@ def _build_product_data_for_shopify(data: dict, product=None) -> dict:
 
 
 # ============================================
-# HELPER: EXTRACT ALL VARIATIONS
+# HELPER: Extract all variations
 # ============================================
 def extract_all_variations(data: dict) -> list:
-    """Saare variation options nikalo — Color + Size dono."""
     attrs = data.get("variant_attributes") or []
 
     variations = []
@@ -330,18 +305,14 @@ def extract_all_variations(data: dict) -> list:
     return variations
 
 
-# ============================================
-# HELPER: VARIATION TITLE NIKALO (Single)
-# ============================================
 def extract_variation_info(data: dict) -> tuple:
-    """Legacy function — single variation."""
     variations = extract_all_variations(data)
     first = variations[0]
     return (first["name"], first["value"])
 
 
 # ============================================
-# HELPER: CHECK IF VARIANT EXISTS
+# HELPER: Check if variant exists
 # ============================================
 async def check_variant_exists_in_shopify(
     shop: str,
@@ -349,7 +320,6 @@ async def check_variant_exists_in_shopify(
     shopify_product_id: str,
     variation_values: list,
 ) -> bool:
-    """Check karo ki variant already exists kya."""
     try:
         query = """
         query getProductVariants($id: ID!) {
@@ -404,10 +374,9 @@ async def check_variant_exists_in_shopify(
 
 
 # ============================================
-# ✅ FIXED v2: SMART MARKUP CAP
+# HELPER: Smart markup cap
 # ============================================
 def apply_markup_cap(markup: float, markup_type: str) -> float:
-    """Markup ko safe limits mein cap karo."""
     try:
         markup = float(markup)
     except (ValueError, TypeError):
@@ -571,17 +540,13 @@ def get_store_id_by_domain(
 
 
 # ============================================
-# ✅ FETCH SHOPIFY COLLECTIONS (auto-refresh)
+# FETCH SHOPIFY COLLECTIONS
 # ============================================
 @router.get("/collections")
 async def get_shopify_collections(
     shop_domain: str = Query(..., description="Shopify store domain"),
     db: Session = Depends(get_db),
 ):
-    """
-    Shopify store ki saari collections fetch karo.
-    Token expire hone par automatically refresh karta hai.
-    """
     store = (
         db.query(ShopifyStore)
         .filter(ShopifyStore.shop_domain == shop_domain)
@@ -655,14 +620,13 @@ async def get_shopify_collections(
 
 
 # ============================================
-# ✅ TRIGGER CRON JOB MANUALLY
+# TRIGGER CRON JOB MANUALLY
 # ============================================
 @router.post("/trigger-price-update")
 async def trigger_price_update(
     authorization: str = Header(...),
     db: Session = Depends(get_db),
 ):
-    """Manually price update cron job trigger karo."""
     if not authorization or not authorization.startswith("Bearer "):
         raise HTTPException(status_code=401, detail="Missing authorization")
 
@@ -714,7 +678,8 @@ async def trigger_price_update(
 
 
 # ============================================
-# PUSH PRODUCT TO SHOPIFY (Admin Panel Se)
+# PUSH PRODUCT TO SHOPIFY
+# ✅ FIXED v6: Weight pass karo variant me
 # ============================================
 @router.post("/push-product/{product_id}")
 async def push_product_to_shopify(
@@ -777,6 +742,15 @@ async def push_product_to_shopify(
             f"➕ Adding variant to existing: {existing_parent.shopify_product_id}"
         )
 
+        # ✅ NAYA: product_data se weight nikaalo
+        _temp_product_data = _build_product_data_for_shopify(
+            data={}, product=product
+        )
+        _weight = (
+            _temp_product_data.get("item_weight")
+            or _temp_product_data.get("package_weight")
+        )
+
         result = await add_variant_to_existing_product(
             shop=store.shop_domain,
             access_token=access_token,
@@ -785,6 +759,7 @@ async def push_product_to_shopify(
                 "price": product.price,
                 "sku": product.asin,
                 "stock": product.stock_quantity or 0,
+                "weight": _weight,  # ✅ NAYA
             },
             all_options=all_variations,
         )
@@ -858,14 +833,12 @@ async def push_product_to_shopify(
 
 
 # ============================================
-# ✅ ADD PRODUCT FROM SHOPIFY APP
-# ✅ FIXED v5: Ab STORE DEFAULT markup use karta hai
-#              (frontend se markup bhejna optional hai)
+# ADD PRODUCT FROM SHOPIFY APP
+# ✅ FIXED v6: Weight pass karo variant me
 # ============================================
 @router.post("/app/add-product")
 async def add_product_from_shopify_app(
     amazon_url: str = Body(..., embed=True),
-    # ✅ Ye 3 fields ab OPTIONAL hain — agar nahi bheji to store default use hoga
     markup: float = Body(None, embed=True),
     markup_type: str = Body(None, embed=True),
     extra_percent: float = Body(None, embed=True),
@@ -993,9 +966,6 @@ async def add_product_from_shopify_app(
             logger.warning("⚠️ Variant exists — new product")
             existing_parent = None
 
-    # ✅ FIXED v5: STORE DEFAULT markup use karo
-    # Agar frontend se markup bheja gaya, to wo use karo (backward compat)
-    # Warna store ka saved markup use karo
     if markup is not None and markup > 0:
         user_markup = float(markup)
         user_markup_type = (
@@ -1025,6 +995,11 @@ async def add_product_from_shopify_app(
     )
 
     logger.info(f"💰 Final price: ${final_price}")
+
+    # ✅ NAYA: weight extract karo
+    weight_str = data.get("item_weight") or data.get("package_weight")
+    if weight_str:
+        logger.info(f"⚖️ Weight available: {weight_str}")
 
     new_product = Product(
         asin=asin,
@@ -1087,6 +1062,8 @@ async def add_product_from_shopify_app(
                         "price": final_price,
                         "sku": asin,
                         "stock": new_product.stock_quantity or 0,
+                        # ✅ NAYA: weight pass karo
+                        "weight": weight_str,
                     },
                     all_options=all_variations,
                 )

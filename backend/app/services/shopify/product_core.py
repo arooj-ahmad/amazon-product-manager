@@ -1,9 +1,11 @@
 # ============================================
 # app/services/shopify/product_core.py
 # Product create (simple + variants) + delete + search
+# + ✅ NAYA: Weight mapping to Shopify variant
 # ============================================
 
 import logging
+import re
 from typing import Optional
 
 from app.services.shopify_helpers import (
@@ -27,6 +29,88 @@ from app.services.shopify.product_variants import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+# ============================================
+# ✅ NAYA: Parse weight string → (value, unit)
+# ============================================
+def _parse_weight(weight_str) -> tuple:
+    """
+    Parse weight string like "1.5 pounds", "680 g", "2.2 kg", "16 ounces".
+    Returns: (float_value_in_lbs, "POUNDS") or (None, None)
+    """
+    if not weight_str:
+        return None, None
+
+    s = str(weight_str).strip().lower()
+    if not s or s == "none":
+        return None, None
+
+    # Extract number
+    match = re.search(r"([\d.]+)", s)
+    if not match:
+        return None, None
+
+    try:
+        value = float(match.group(1))
+    except ValueError:
+        return None, None
+
+    # Detect unit and convert to pounds
+    if "kg" in s or "kilogram" in s:
+        value = value * 2.20462  # kg → lbs
+        unit = "POUNDS"
+    elif "gram" in s or " g" in s or s.endswith("g"):
+        value = value * 0.00220462  # g → lbs
+        unit = "POUNDS"
+    elif "ounce" in s or " oz" in s or s.endswith("oz"):
+        value = value * 0.0625  # oz → lbs
+        unit = "POUNDS"
+    elif "milligram" in s or " mg" in s:
+        value = value * 0.00000220462
+        unit = "POUNDS"
+    elif "pound" in s or " lb" in s or s.endswith("lb"):
+        unit = "POUNDS"
+    else:
+        # Assume pounds if no unit
+        unit = "POUNDS"
+
+    return round(value, 4), unit
+
+
+# ============================================
+# ✅ NAYA: Build inventoryItem with weight
+# ============================================
+def _build_inventory_item(product_data: dict, sku: str) -> dict:
+    """
+    Build inventoryItem dict with SKU, tracked, and weight (if available).
+    """
+    inventory_item = {
+        "sku": sku,
+        "tracked": True,
+    }
+
+    # Weight from Amazon data
+    weight_str = (
+        product_data.get("item_weight")
+        or product_data.get("package_weight")
+        or product_data.get("shipping_weight")
+    )
+
+    weight_value, weight_unit = _parse_weight(weight_str)
+
+    if weight_value and weight_value > 0:
+        inventory_item["measurement"] = {
+            "weight": {
+                "value": weight_value,
+                "unit": weight_unit,
+            }
+        }
+        logger.info(
+            f"   ⚖️ Weight mapped: {weight_str} → {weight_value} {weight_unit}"
+        )
+
+    return inventory_item
 
 
 # ============================================
@@ -104,10 +188,7 @@ async def create_shopify_product(
             {
                 "optionValues": variant_values,
                 "price": str(price_float or 0),
-                "inventoryItem": {
-                    "sku": asin_value,
-                    "tracked": True,
-                },
+                "inventoryItem": _build_inventory_item(product_data, asin_value),
             }
         ]
         logger.info(
@@ -130,7 +211,14 @@ async def create_shopify_product(
                 id
                 title
                 price
-                inventoryItem { id sku tracked }
+                inventoryItem {
+                  id
+                  sku
+                  tracked
+                  measurement {
+                    weight { value unit }
+                  }
+                }
               }
             }
           }
@@ -247,6 +335,8 @@ async def create_shopify_product_with_variants(
             product_title=product_title,
             categories=categories,
         )
+
+    asin_value = str(product_data.get("asin", "") or "").strip() or "NO-SKU"
 
     input_data = {
         "title": product_data.get("title") or "Untitled Product",

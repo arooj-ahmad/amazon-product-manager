@@ -1,12 +1,84 @@
 # app/services/shopify/product_variants.py
 # Variant + Option management
+# + ✅ NAYA: Weight mapping support
+# + ✅ NAYA: Measurement in variant input
 
 import logging
+import re
 
 from app.services.shopify_helpers import shopify_graphql
 from app.services.shopify_inventory import set_inventory_quantity
 
 logger = logging.getLogger(__name__)
+
+
+# ============================================
+# ✅ NAYA: Parse weight string → (value, unit)
+# ============================================
+def _parse_weight(weight_str) -> tuple:
+    """
+    Parse weight string like "1.5 pounds", "680 g", "2.2 kg", "16 ounces".
+    Returns: (float_value_in_lbs, "POUNDS") or (None, None)
+    """
+    if not weight_str:
+        return None, None
+
+    s = str(weight_str).strip().lower()
+    if not s or s == "none":
+        return None, None
+
+    # Extract first number
+    match = re.search(r"([\d.]+)", s)
+    if not match:
+        return None, None
+
+    try:
+        value = float(match.group(1))
+    except ValueError:
+        return None, None
+
+    # Detect unit and convert to pounds (Shopify accepts POUNDS/GRAMS/KILOGRAMS/OUNCES)
+    if "kg" in s or "kilogram" in s:
+        unit = "KILOGRAMS"
+    elif "gram" in s or s.endswith("g") or " g" in s:
+        unit = "GRAMS"
+    elif "ounce" in s or " oz" in s or s.endswith("oz"):
+        unit = "OUNCES"
+    elif "milligram" in s or " mg" in s:
+        # Convert milligrams to grams
+        value = value / 1000
+        unit = "GRAMS"
+    else:
+        # Default: pounds
+        unit = "POUNDS"
+
+    return round(value, 4), unit
+
+
+# ============================================
+# ✅ NAYA: Build measurement input from variant_data
+# ============================================
+def _build_measurement(variant_data: dict) -> dict:
+    """
+    Build Shopify measurement input from variant_data.
+    Returns dict with 'weight' key, or empty dict if no weight.
+    """
+    weight_str = (
+        variant_data.get("weight")
+        or variant_data.get("item_weight")
+        or variant_data.get("package_weight")
+    )
+
+    weight_value, weight_unit = _parse_weight(weight_str)
+
+    if weight_value and weight_value > 0:
+        return {
+            "weight": {
+                "value": weight_value,
+                "unit": weight_unit,
+            }
+        }
+    return {}
 
 
 # ============================================
@@ -20,8 +92,9 @@ async def update_variant_with_tracked(
     price: float,
     sku: str = "",
     compare_at_price: float = None,
+    weight: str = None,
 ) -> bool:
-    """Variant update karo — price + SKU + compare_at_price ke saath."""
+    """Variant update — price + SKU + compare_at_price + weight."""
     mutation = """
     mutation productVariantsBulkUpdate(
       $productId: ID!,
@@ -32,7 +105,14 @@ async def update_variant_with_tracked(
           id
           price
           compareAtPrice
-          inventoryItem { id sku tracked }
+          inventoryItem {
+            id
+            sku
+            tracked
+            measurement {
+              weight { value unit }
+            }
+          }
         }
         userErrors { field message }
       }
@@ -42,6 +122,16 @@ async def update_variant_with_tracked(
     inventory_item_input = {"tracked": True}
     if sku:
         inventory_item_input["sku"] = sku
+
+    # ✅ NAYA: Add weight measurement if provided
+    if weight:
+        measurement = _build_measurement({"weight": weight})
+        if measurement:
+            inventory_item_input["measurement"] = measurement
+            logger.info(
+                f"   ⚖️ Weight mapped: {weight} → "
+                f"{measurement['weight']['value']} {measurement['weight']['unit']}"
+            )
 
     variant_input = {
         "id": variant_id,
@@ -82,10 +172,13 @@ async def update_variant_with_tracked(
 
     if updated:
         v = updated[0]
+        measurement = v.get("inventoryItem", {}).get("measurement") or {}
+        weight_data = measurement.get("weight") or {}
         logger.info(
             f"✅ Variant updated: price=${v.get('price')}, "
             f"compare_at=${v.get('compareAtPrice')}, "
-            f"sku={v.get('inventoryItem', {}).get('sku', 'N/A')}"
+            f"sku={v.get('inventoryItem', {}).get('sku', 'N/A')}, "
+            f"weight={weight_data.get('value', 'N/A')} {weight_data.get('unit', '')}"
         )
         return True
 
@@ -247,7 +340,7 @@ async def add_variant_to_existing_product(
     variant_data: dict,
     all_options: list = None,
 ) -> dict:
-    """Existing product mein naya variant add karo."""
+    """Existing product mein naya variant add karo (weight ke saath)."""
     if not all_options:
         option_name = variant_data.get("option_name") or "Style"
         option_value = variant_data.get("title") or "Default"
@@ -280,13 +373,38 @@ async def add_variant_to_existing_product(
 
     sku_value = variant_data.get("sku", "") or ""
 
+    # ✅ NAYA: Build inventory item with weight
+    inventory_item_input = {"tracked": True}
+    if sku_value:
+        inventory_item_input["sku"] = sku_value
+
+    measurement = _build_measurement(variant_data)
+    if measurement:
+        inventory_item_input["measurement"] = measurement
+        logger.info(
+            f"   ⚖️ Weight mapped: "
+            f"{measurement['weight']['value']} {measurement['weight']['unit']}"
+        )
+
     mutation = """
     mutation productVariantsBulkCreate(
       $productId: ID!,
       $variants: [ProductVariantsBulkInput!]!
     ) {
       productVariantsBulkCreate(productId: $productId, variants: $variants) {
-        productVariants { id title price inventoryItem { id sku tracked } }
+        productVariants {
+          id
+          title
+          price
+          inventoryItem {
+            id
+            sku
+            tracked
+            measurement {
+              weight { value unit }
+            }
+          }
+        }
         userErrors { field message }
       }
     }
@@ -295,11 +413,8 @@ async def add_variant_to_existing_product(
     variants_input = {
         "optionValues": option_values,
         "price": str(variant_data.get("price", 0)),
-        "inventoryItem": {"tracked": True},
+        "inventoryItem": inventory_item_input,
     }
-
-    if sku_value:
-        variants_input["inventoryItem"]["sku"] = sku_value
 
     variables = {"productId": product_id, "variants": [variants_input]}
 
@@ -329,9 +444,13 @@ async def add_variant_to_existing_product(
 
     if created:
         v = created[0]
+        measurement_resp = v.get("inventoryItem", {}).get("measurement") or {}
+        weight_data = measurement_resp.get("weight") or {}
+
         logger.info(
             f"✅ Variant added: {v.get('title')} — ${v.get('price')} "
-            f"— SKU: {v.get('inventoryItem', {}).get('sku', 'N/A')}"
+            f"— SKU: {v.get('inventoryItem', {}).get('sku', 'N/A')} "
+            f"— Weight: {weight_data.get('value', 'N/A')} {weight_data.get('unit', '')}"
         )
 
         inv_item_id = v.get("inventoryItem", {}).get("id")

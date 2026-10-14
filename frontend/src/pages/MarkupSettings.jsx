@@ -1,39 +1,29 @@
 // ============================================
 // frontend/src/pages/MarkupSettings.jsx
 // Markup Settings Page — DEFAULT MARKUP ONLY
-// Ye page sirf store ka default markup set karta hai
-// jo har naye product par apply hoga.
-// Bulk update + products table → Products page par hain.
+// Sets the store's default markup that applies to
+// every new product added to Shopify.
 // ============================================
 
 import { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { getCountries, getStoreIdByDomain } from '../api/pricing'
+import { getCountries } from '../api/pricing'
 
 const API_URL =
   (import.meta.env.VITE_API_URL || '').trim() ||
   'https://amazon-product-manager-production.up.railway.app'
 
 // ============================================
-// Shop domain nikaalo
+// Detect Shopify store domain
 // ============================================
 function getShopDomain() {
   const params = new URLSearchParams(window.location.search)
   const shop = params.get('shop')
-  if (shop) {
-    console.log(`✅ Shop domain from ?shop=: ${shop}`)
-    return shop
-  }
+  if (shop) return shop
 
   const pathMatch = window.location.pathname.match(/\/store\/([^/]+)/)
-  if (pathMatch) {
-    const storeName = pathMatch[1]
-    const shopDomain = `${storeName}.myshopify.com`
-    console.log(`✅ Shop domain from admin URL: ${shopDomain}`)
-    return shopDomain
-  }
+  if (pathMatch) return `${pathMatch[1]}.myshopify.com`
 
-  console.warn('⚠️ Shop domain detect nahi ho saka')
   return null
 }
 
@@ -53,6 +43,13 @@ async function safeFetch(url, options = {}) {
   return { ok: res.ok, status: res.status, data }
 }
 
+// Format markup for display
+function formatMarkup(markup, type, extra) {
+  if (type === 'percent') return `+${markup}%`
+  if (type === 'both') return `+$${markup} + ${extra}%`
+  return `+$${markup}`
+}
+
 // ============================================
 // Main Component
 // ============================================
@@ -63,11 +60,8 @@ export default function MarkupSettings() {
   const [loading, setLoading] = useState(true)
   const [message, setMessage] = useState(null)
   const [shopDomain, setShopDomain] = useState(null)
-
-  // Store ka saved default markup
   const [savedDefault, setSavedDefault] = useState(null)
 
-  // Form data
   const [formData, setFormData] = useState({
     country_id: '',
     markup_type: 'fixed',
@@ -89,25 +83,21 @@ export default function MarkupSettings() {
       const domain = getShopDomain()
       if (!domain) {
         throw new Error(
-          'Shop domain detect nahi ho saka. URL mein ?shop= ya /store/... hona chahiye.'
+          'Unable to detect store domain. Open this app from Shopify Admin.'
         )
       }
       setShopDomain(domain)
 
-      // Sirf countries load karo (store ID ki zaroorat nahi — save me shop_domain se hoga)
       const countriesData = await getCountries()
       setCountries(countriesData || [])
 
-      // Store ka saved default markup load karo
+      // Load saved default markup
       try {
         const defRes = await safeFetch(
           `${API_URL}/api/markup/store-default?shop_domain=${encodeURIComponent(domain)}`
         )
         if (defRes.ok && defRes.data) {
           setSavedDefault(defRes.data)
-          console.log('✅ Saved default markup:', defRes.data)
-
-          // Form me current values prefill karo
           setFormData({
             country_id: '',
             markup_type: defRes.data.markup_type || 'fixed',
@@ -119,10 +109,10 @@ export default function MarkupSettings() {
           })
         }
       } catch (err) {
-        console.warn('⚠️ Could not load saved default:', err)
+        console.warn('Could not load saved default markup:', err)
       }
     } catch (err) {
-      setMessage({ type: 'error', text: `❌ ${err.message}` })
+      setMessage({ type: 'error', text: `Error: ${err.message}` })
     } finally {
       setLoading(false)
     }
@@ -138,29 +128,25 @@ export default function MarkupSettings() {
   }
 
   const handleSaveDefault = async () => {
-    // Validation
     if (!formData.markup_value || parseFloat(formData.markup_value) <= 0) {
-      setMessage({
-        type: 'error',
-        text: '❌ Please enter a markup value',
-      })
+      setMessage({ type: 'error', text: 'Please enter a markup value.' })
       return
     }
 
     if (!shopDomain) {
-      setMessage({ type: 'error', text: '❌ Shop domain missing' })
+      setMessage({ type: 'error', text: 'Store domain is missing.' })
       return
     }
 
+    const preview = formatMarkup(
+      formData.markup_value,
+      formData.markup_type,
+      formData.extra_percent || 0
+    )
+
     if (
       !window.confirm(
-        `Default markup set karein: ${
-          formData.markup_type === 'percent'
-            ? `+${formData.markup_value}%`
-            : formData.markup_type === 'both'
-              ? `+$${formData.markup_value} + ${formData.extra_percent || 0}%`
-              : `+$${formData.markup_value}`
-        }? Ye har naye product par apply hoga.`
+        `Set default markup to ${preview}? This will apply to all new products.`
       )
     ) {
       return
@@ -188,14 +174,13 @@ export default function MarkupSettings() {
         setSavedDefault(defRes.data)
         setMessage({
           type: 'success',
-          text: '✅ Default markup save ho gaya! Ab har naya product par apply hoga.',
+          text: 'Default markup saved. It will now apply to every new product.',
         })
-        console.log('✅ Store default markup saved:', defRes.data)
       } else {
-        throw new Error(defRes.data?.detail || 'Save failed')
+        throw new Error(defRes.data?.detail || 'Failed to save default markup.')
       }
     } catch (err) {
-      setMessage({ type: 'error', text: `❌ ${err.message}` })
+      setMessage({ type: 'error', text: `Error: ${err.message}` })
     } finally {
       setSaving(false)
     }
@@ -204,7 +189,7 @@ export default function MarkupSettings() {
   if (loading) {
     return (
       <div style={styles.centerBox}>
-        <p style={{ color: '#637381' }}>⏳ Loading...</p>
+        <p style={{ color: '#637381', fontSize: 14 }}>Loading...</p>
       </div>
     )
   }
@@ -216,120 +201,111 @@ export default function MarkupSettings() {
           type="button"
           onClick={() => navigate('/shopify-app')}
           style={styles.backBtn}
-          onMouseEnter={(e) => {
-            e.currentTarget.style.background = '#f6f6f7'
-            e.currentTarget.style.transform = 'translateX(-2px)'
-          }}
-          onMouseLeave={(e) => {
-            e.currentTarget.style.background = 'white'
-            e.currentTarget.style.transform = 'translateX(0)'
-          }}
         >
           ← Back to Dashboard
         </button>
 
-        <h1 style={styles.h1}>⚙️ Markup Settings</h1>
+        <h1 style={styles.h1}>Markup Settings</h1>
         <p style={styles.subtitle}>
-          Yahan jo markup set karenge, wo{' '}
-          <strong>har naye product par automatically apply</strong> hoga.
+          Configure the default markup that applies to{' '}
+          <strong>every new product</strong> you add.
         </p>
 
-        {/* Current default markup banner */}
+        {/* Current Default Markup Banner */}
         {savedDefault && (
           <div style={styles.defaultBanner}>
-            <span style={styles.defaultIcon}>💾</span>
-            <div>
-              <strong style={styles.defaultTitle}>
-                Current Default Markup:
-              </strong>{' '}
-              <span style={styles.defaultValue}>
-                {savedDefault.markup_type === 'percent'
-                  ? `+${savedDefault.markup}%`
-                  : savedDefault.markup_type === 'both'
-                    ? `+$${savedDefault.markup} + ${savedDefault.extra_percent}%`
-                    : `+$${savedDefault.markup}`}
-              </span>
-              <p style={styles.defaultHint}>
-                Ye markup har naye product par apply hoga.
-              </p>
+            <div style={styles.bannerIcon}>💾</div>
+            <div style={styles.bannerContent}>
+              <div style={styles.bannerTitle}>Current Default Markup</div>
+              <div style={styles.bannerValue}>
+                {formatMarkup(
+                  savedDefault.markup,
+                  savedDefault.markup_type,
+                  savedDefault.extra_percent
+                )}
+              </div>
+              <div style={styles.bannerHint}>
+                This will apply to all new products added to your store.
+              </div>
             </div>
           </div>
         )}
 
-        {/* Default Markup Form */}
+        {/* Set Default Markup Form */}
         <div style={styles.card}>
           <div style={styles.cardHeader}>
-            <span style={styles.cardIcon}>💰</span>
+            <div style={styles.cardIconBox}>
+              <span style={styles.cardIcon}>💰</span>
+            </div>
             <div>
               <h3 style={styles.cardTitle}>Set Default Markup</h3>
               <p style={styles.cardSubtitle}>
-                Ye markup har naye product par apply hoga
+                Choose how you want to price new products
               </p>
             </div>
           </div>
 
           <div style={styles.formRow}>
-            <select
-              value={formData.country_id}
-              onChange={(e) => handleCountryChange(e.target.value)}
-              style={styles.input}
-              disabled={saving}
-            >
-              <option value="">Country (optional)</option>
-              {countries.map((c) => (
-                <option key={c.id} value={c.id}>
-                  {c.name} ({c.default_tax_rate}% {c.tax_label})
-                </option>
-              ))}
-            </select>
+            <div style={styles.fieldGroup}>
+              <label style={styles.label}>Markup Type</label>
+              <select
+                value={formData.markup_type}
+                onChange={(e) =>
+                  setFormData({ ...formData, markup_type: e.target.value })
+                }
+                style={styles.select}
+                disabled={saving}
+              >
+                <option value="fixed">Fixed Amount ($)</option>
+                <option value="percent">Percentage (%)</option>
+                <option value="both">Fixed + Percentage</option>
+              </select>
+            </div>
 
-            <select
-              value={formData.markup_type}
-              onChange={(e) =>
-                setFormData({ ...formData, markup_type: e.target.value })
-              }
-              style={styles.input}
-              disabled={saving}
-            >
-              <option value="fixed">$ Fixed</option>
-              <option value="percent">% Percent</option>
-              <option value="both">$ + % (Both)</option>
-            </select>
-
-            <input
-              type="number"
-              step="0.01"
-              min="0"
-              value={formData.markup_value}
-              onChange={(e) =>
-                setFormData({ ...formData, markup_value: e.target.value })
-              }
-              style={styles.input}
-              disabled={saving}
-              placeholder={
-                formData.markup_type === 'percent'
-                  ? 'e.g. 10'
-                  : 'e.g. 2.00'
-              }
-            />
-
-            {formData.markup_type === 'both' && (
+            <div style={styles.fieldGroup}>
+              <label style={styles.label}>
+                {formData.markup_type === 'percent'
+                  ? 'Percentage (%)'
+                  : formData.markup_type === 'both'
+                    ? 'Fixed Amount ($)'
+                    : 'Amount ($)'}
+              </label>
               <input
                 type="number"
                 step="0.01"
                 min="0"
-                max="500"
-                value={formData.extra_percent}
+                value={formData.markup_value}
                 onChange={(e) =>
-                  setFormData({
-                    ...formData,
-                    extra_percent: e.target.value,
-                  })
+                  setFormData({ ...formData, markup_value: e.target.value })
                 }
                 style={styles.input}
                 disabled={saving}
-                placeholder="Extra %"
+                placeholder={
+                  formData.markup_type === 'percent' ? 'e.g. 10' : 'e.g. 5.00'
+                }
               />
+            </div>
+
+            {formData.markup_type === 'both' && (
+              <div style={styles.fieldGroup}>
+                <label style={styles.label}>Additional Percentage (%)</label>
+                <input
+                  type="number"
+                  step="0.01"
+                  min="0"
+                  max="500"
+                  value={formData.extra_percent}
+                  onChange={(e) =>
+                    setFormData({
+                      ...formData,
+                      extra_percent: e.target.value,
+                    })
+                  }
+                  style={styles.input}
+                  disabled={saving}
+                  placeholder="e.g. 10"
+                />
+              </div>
             )}
           </div>
 
@@ -337,22 +313,22 @@ export default function MarkupSettings() {
             type="button"
             onClick={handleSaveDefault}
             disabled={
-              saving || !formData.markup_value || parseFloat(formData.markup_value) <= 0
+              saving ||
+              !formData.markup_value ||
+              parseFloat(formData.markup_value) <= 0
             }
             style={{
               ...styles.primaryBtn,
               background:
-                saving || !formData.markup_value
-                  ? '#babfc3'
-                  : '#008060',
+                saving || !formData.markup_value ? '#b5b5b5' : '#008060',
               cursor:
                 saving || !formData.markup_value
                   ? 'not-allowed'
                   : 'pointer',
-              marginTop: 16,
+              marginTop: 20,
             }}
           >
-            {saving ? '⏳ Saving...' : '💾 Save as Default'}
+            {saving ? 'Saving...' : 'Save as Default'}
           </button>
         </div>
 
@@ -371,7 +347,7 @@ export default function MarkupSettings() {
           </div>
         )}
 
-        {/* Info card — Products page ka link */}
+        {/* Info Card — Products Page Link */}
         <div style={styles.infoCard}>
           <div style={styles.infoIconBox}>
             <span style={styles.infoIcon}>📦</span>
@@ -379,16 +355,15 @@ export default function MarkupSettings() {
           <div style={styles.infoContent}>
             <h3 style={styles.infoTitle}>Product-wise Pricing</h3>
             <p style={styles.infoText}>
-              Existing products ka markup change karne ke liye, ya{' '}
-              <strong>Bulk Update</strong> karne ke liye{' '}
-              <strong>Products</strong> page par jaayein.
+              To edit existing products or run a bulk update, go to the
+              Products page.
             </p>
             <button
               type="button"
               onClick={() => navigate('/products')}
               style={styles.infoBtn}
             >
-              📦 Go to Products →
+              Go to Products →
             </button>
           </div>
         </div>
@@ -402,53 +377,26 @@ export default function MarkupSettings() {
 // ============================================
 const styles = {
   page: {
-    padding: '20px',
-    fontFamily: 'Inter, -apple-system, sans-serif',
+    padding: '24px',
+    fontFamily:
+      'Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     background: '#f6f6f7',
     minHeight: '100vh',
   },
   container: { maxWidth: '900px', margin: '0 auto' },
   centerBox: { padding: '60px 20px', textAlign: 'center' },
+
   h1: {
     fontSize: '24px',
     fontWeight: '700',
     color: '#202223',
-    marginBottom: '4px',
+    marginBottom: '6px',
   },
-  subtitle: { color: '#637381', fontSize: '14px', marginBottom: '20px' },
-
-  defaultBanner: {
-    display: 'flex',
-    alignItems: 'flex-start',
-    gap: '12px',
-    padding: '14px 18px',
-    marginBottom: '20px',
-    background: '#f0fdf4',
-    border: '1px solid #86efac',
-    borderRadius: '8px',
-  },
-  defaultIcon: {
-    fontSize: '20px',
-    flexShrink: 0,
-  },
-  defaultTitle: {
-    color: '#166534',
-    fontSize: '13px',
-  },
-  defaultValue: {
-    color: '#15803d',
+  subtitle: {
+    color: '#637381',
     fontSize: '14px',
-    fontWeight: '700',
-    background: 'white',
-    padding: '2px 10px',
-    borderRadius: '4px',
-    border: '1px solid #86efac',
-    marginLeft: '4px',
-  },
-  defaultHint: {
-    color: '#65a30d',
-    fontSize: '12px',
-    margin: '4px 0 0 0',
+    marginBottom: '24px',
+    lineHeight: '1.5',
   },
 
   backBtn: {
@@ -456,7 +404,7 @@ const styles = {
     alignItems: 'center',
     gap: '6px',
     padding: '8px 16px',
-    marginBottom: '16px',
+    marginBottom: '20px',
     background: 'white',
     color: '#202223',
     border: '1px solid #e1e3e5',
@@ -464,27 +412,74 @@ const styles = {
     fontSize: '13px',
     fontWeight: '600',
     cursor: 'pointer',
-    transition: 'all 0.15s ease',
   },
 
-  // ✅ Card styles
+  // Banner
+  defaultBanner: {
+    display: 'flex',
+    alignItems: 'flex-start',
+    gap: '14px',
+    padding: '16px 20px',
+    marginBottom: '20px',
+    background: '#f0fdf4',
+    border: '1px solid #86efac',
+    borderRadius: '10px',
+  },
+  bannerIcon: {
+    fontSize: '22px',
+    lineHeight: 1,
+  },
+  bannerContent: { flex: 1 },
+  bannerTitle: {
+    fontSize: '12px',
+    fontWeight: '600',
+    color: '#166534',
+    textTransform: 'uppercase',
+    letterSpacing: '0.4px',
+    marginBottom: '4px',
+  },
+  bannerValue: {
+    display: 'inline-block',
+    fontSize: '16px',
+    fontWeight: '700',
+    color: '#15803d',
+    background: 'white',
+    padding: '4px 12px',
+    borderRadius: '6px',
+    border: '1px solid #86efac',
+    marginBottom: '6px',
+  },
+  bannerHint: {
+    fontSize: '12px',
+    color: '#65a30d',
+  },
+
+  // Card
   card: {
     background: 'white',
-    padding: 24,
-    borderRadius: 8,
-    marginBottom: 20,
+    padding: '24px',
+    borderRadius: '10px',
+    marginBottom: '20px',
     border: '1px solid #e1e3e5',
-    boxShadow: '0 1px 2px rgba(0,0,0,0.05)',
+    boxShadow: '0 1px 2px rgba(0,0,0,0.04)',
   },
   cardHeader: {
     display: 'flex',
     alignItems: 'center',
     gap: '12px',
-    marginBottom: 16,
+    marginBottom: '20px',
   },
-  cardIcon: {
-    fontSize: '24px',
+  cardIconBox: {
+    width: '40px',
+    height: '40px',
+    borderRadius: '8px',
+    background: '#fff7ed',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    flexShrink: 0,
   },
+  cardIcon: { fontSize: '20px' },
   cardTitle: {
     fontSize: '15px',
     fontWeight: '700',
@@ -497,28 +492,55 @@ const styles = {
     margin: 0,
   },
 
+  // Form
   formRow: {
     display: 'flex',
-    gap: 12,
+    gap: '16px',
     flexWrap: 'wrap',
-    alignItems: 'center',
+  },
+  fieldGroup: {
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '6px',
+    flex: '1 1 180px',
+    minWidth: '160px',
+  },
+  label: {
+    fontSize: '12px',
+    fontWeight: '600',
+    color: '#637381',
+    textTransform: 'uppercase',
+    letterSpacing: '0.3px',
+  },
+  select: {
+    padding: '10px 12px',
+    border: '1px solid #babfc3',
+    borderRadius: '6px',
+    fontSize: '14px',
+    background: 'white',
+    color: '#202223',
+    outline: 'none',
   },
   input: {
     padding: '10px 12px',
     border: '1px solid #babfc3',
-    borderRadius: 6,
-    fontSize: 14,
+    borderRadius: '6px',
+    fontSize: '14px',
     background: 'white',
-    minWidth: 100,
+    color: '#202223',
+    outline: 'none',
   },
 
+  // Messages
   messageBox: {
     padding: '12px 16px',
-    borderRadius: 6,
-    fontSize: 14,
-    marginBottom: 16,
+    borderRadius: '6px',
+    fontSize: '13px',
+    marginBottom: '20px',
+    fontWeight: '500',
   },
 
+  // Info card
   infoCard: {
     display: 'flex',
     alignItems: 'flex-start',
@@ -526,30 +548,26 @@ const styles = {
     padding: '20px',
     background: 'white',
     border: '1px solid #e1e3e5',
-    borderRadius: 8,
-    boxShadow: '0 1px 2px rgba(0,0,0,0.05)',
+    borderRadius: '10px',
+    boxShadow: '0 1px 2px rgba(0,0,0,0.04)',
   },
   infoIconBox: {
     width: '48px',
     height: '48px',
     borderRadius: '8px',
-    background: 'linear-gradient(135deg, #ede9fe 0%, #ddd6fe 100%)',
+    background: '#ede9fe',
     display: 'flex',
     alignItems: 'center',
     justifyContent: 'center',
     flexShrink: 0,
   },
-  infoIcon: {
-    fontSize: '24px',
-  },
-  infoContent: {
-    flex: 1,
-  },
+  infoIcon: { fontSize: '24px' },
+  infoContent: { flex: 1 },
   infoTitle: {
     fontSize: '15px',
     fontWeight: '700',
     color: '#202223',
-    margin: '0 0 4px 0',
+    margin: '0 0 6px 0',
   },
   infoText: {
     fontSize: '13px',
@@ -575,8 +593,8 @@ const styles = {
     color: 'white',
     border: 'none',
     padding: '12px 24px',
-    borderRadius: 6,
-    fontSize: 14,
+    borderRadius: '6px',
+    fontSize: '14px',
     fontWeight: '600',
   },
 }
