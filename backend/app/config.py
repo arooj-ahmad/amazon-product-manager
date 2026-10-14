@@ -69,6 +69,11 @@ class Settings(BaseSettings):
     SHOPIFY_REDIRECT_URI: str = "https://example.com/api/shopify/callback"
     SHOPIFY_API_VERSION: str = "2025-01"
 
+    # ✅ NAYA: Shopify Webhook Signing Secret
+    # Ye Shopify Admin → Settings → Notifications → Webhooks page se milta hai.
+    # Ye SHOPIFY_API_SECRET se ALAG hota hai.
+    SHOPIFY_WEBHOOK_SECRET: str = ""
+
     # ✅ Shopify Store URL & Access Token (Admin API)
     SHOPIFY_SHOP_URL: str = ""           # e.g., "amazon-product-manager.myshopify.com"
     SHOPIFY_ACCESS_TOKEN: str = ""       # shpat_... (Admin API)
