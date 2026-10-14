@@ -2,9 +2,8 @@
 // frontend/src/App.jsx
 // Final routes — user + admin + Footer
 // + HashRouter (Shopify iframe compatible)
-// + ✅ FIX: External hash + path listener (sidebar navigation)
-// + ✅ NAYA: PriceUpdater page (Manual Price Update)
-// + ✅ NAYA: ProductsPricing page (Product-wise pricing)
+// + ✅ FIX: External hash + path listener
+// + ✅ NAYA: RouteLoader (nprogress) — page change par loading bar
 // ============================================
 
 import {
@@ -17,6 +16,7 @@ import {
   useNavigate,
 } from 'react-router-dom'
 import { useEffect, useRef } from 'react'
+import NProgress from 'nprogress'   // ✅ NAYA
 import Navbar from './components/Navbar'
 import Footer from './components/Footer'
 
@@ -28,12 +28,39 @@ import ProductsPricing from './pages/ProductsPricing'
 import PrivacyPolicy from './pages/PrivacyPolicy'
 import TermsOfService from './pages/TermsOfService'
 
+// ✅ NProgress config
+NProgress.configure({
+  showSpinner: false,     // Spinner band (sirf bar)
+  minimum: 0.1,
+  speed: 300,
+  trickleSpeed: 200,
+})
+
 // ============================================
-// External navigation listener
-// Shopify iframe me 2 tarah ke URL changes hote hain:
-//   1. HashRouter ke through: URL me # aata hai
-//   2. Shopify App Bridge ke through: URL path badalta hai (bina #)
-// Dono ko handle karta hai + polling backup.
+// ✅ NAYA: RouteLoader — page change par bar dikhao
+// ============================================
+function RouteLoader() {
+  const location = useLocation()
+
+  useEffect(() => {
+    NProgress.start()
+
+    // Chhota delay — agar route jaldi load ho to bar complete dikhe
+    const timer = setTimeout(() => {
+      NProgress.done()
+    }, 400)
+
+    return () => {
+      clearTimeout(timer)
+      NProgress.done()
+    }
+  }, [location.pathname])
+
+  return null
+}
+
+// ============================================
+// External navigation listener (unchanged)
 // ============================================
 function HashChangeListener() {
   const navigate = useNavigate()
@@ -48,7 +75,6 @@ function HashChangeListener() {
 
       const currentPath = location.pathname
 
-      // A) HASH check (HashRouter ka standard)
       const hash = window.location.hash.replace(/^#/, '')
       if (hash && hash !== currentPath) {
         console.log(`🔄 Hash navigation: ${hash}`)
@@ -56,7 +82,6 @@ function HashChangeListener() {
         return
       }
 
-      // B) PATH check (Shopify App Bridge ke ui-nav-menu se)
       const fullPath = window.location.pathname
 
       const shopifyMatch = fullPath.match(/\/apps\/[^/]+\/(.+)$/)
@@ -73,10 +98,8 @@ function HashChangeListener() {
     }
 
     syncFromUrl()
-
     window.addEventListener('hashchange', syncFromUrl)
     window.addEventListener('popstate', syncFromUrl)
-
     const intervalId = setInterval(syncFromUrl, 300)
 
     return () => {
@@ -99,7 +122,7 @@ function Layout({ children }) {
     '/markup-settings',
     '/shopify-app',
     '/price-updater',
-    '/products',              // ✅ NAYA
+    '/products',
   ]
   const isFullScreen = FULL_SCREEN_ROUTES.some((path) =>
     location.pathname.startsWith(path)
@@ -121,41 +144,26 @@ function Layout({ children }) {
 function App() {
   return (
     <HashRouter>
+      <RouteLoader />         {/* ✅ NAYA: Page change par loading bar */}
       <HashChangeListener />
       <Layout>
         <Routes>
-          {/* USER ROUTES */}
           <Route path="/" element={<Navigate to="/shopify-app" replace />} />
-
-          {/* MARKUP SETTINGS — full screen */}
           <Route path="/markup-settings" element={<MarkupSettings />} />
-
-          {/* PRODUCTS PRICING — full screen */}
           <Route path="/products" element={<ProductsPricing />} />
-
-          {/* MANUAL PRICE UPDATE — full screen */}
           <Route path="/price-updater" element={<PriceUpdater />} />
-
-          {/* Product by slug */}
           <Route path="/product/:slug" element={<ProductDetail />} />
-
-          {/* Product by ID (fallback) */}
           <Route path="/product/id/:id" element={<ProductDetail />} />
-
-          {/* APP ROUTES */}
           <Route path="/shopify-app" element={<ShopifyApp />} />
           <Route
             path="/admin/dashboard"
             element={<Navigate to="/shopify-app" replace />}
           />
-
           <Route path="/shopify-app/privacy" element={<PrivacyPolicy />} />
           <Route path="/shopify-app/terms" element={<TermsOfService />} />
-
           <Route path="/privacy" element={<PrivacyPolicy />} />
           <Route path="/terms" element={<TermsOfService />} />
 
-          {/* 404 */}
           <Route
             path="*"
             element={

@@ -19,7 +19,9 @@ html {
   scroll-behavior: smooth;
 }
 
-/* Loading spinner */
+/* ============================================
+   Loading spinner
+   ============================================ */
 @keyframes spin {
   to {
     transform: rotate(360deg);
@@ -30,7 +32,9 @@ html {
   animation: spin 1s linear infinite;
 }
 
-/* Line clamp utilities */
+/* ============================================
+   Line clamp utilities
+   ============================================ */
 @layer utilities {
   .line-clamp-2 {
     display: -webkit-box;
@@ -46,7 +50,9 @@ html {
   }
 }
 
-/* Custom scrollbar */
+/* ============================================
+   Custom scrollbar
+   ============================================ */
 ::-webkit-scrollbar {
   width: 8px;
   height: 8px;
@@ -89,4 +95,56 @@ html {
 ::selection {
   background: #ff9900;
   color: #0f1111;
+}
+
+/* ============================================
+   ✅ NAYA: Route Loading Bar (NProgress Style)
+   Page change hone par top pe orange bar dikhta hai
+   ============================================ */
+#nprogress {
+  pointer-events: none;
+}
+
+#nprogress .bar {
+  background: #ff9900;
+  position: fixed;
+  z-index: 9999;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 3px;
+}
+
+/* Glow effect */
+#nprogress .peg {
+  display: block;
+  position: absolute;
+  right: 0px;
+  width: 100px;
+  height: 100%;
+  box-shadow: 0 0 10px #ff9900, 0 0 5px #ff9900;
+  opacity: 1;
+  transform: rotate(3deg) translate(0px, -4px);
+}
+
+/* Remove spinner if showing */
+#nprogress .spinner {
+  display: none;
+}
+
+/* ============================================
+   ✅ NAYA: Custom RouteLoader Progress Bar (Backup)
+   Agar aap NProgress use nahi kar rahe to ye kaam karega
+   ============================================ */
+.route-loader-bar {
+  position: fixed;
+  top: 0;
+  left: 0;
+  height: 3px;
+  background: linear-gradient(90deg, #ff9900 0%, #e88b00 100%);
+  box-shadow: 0 0 10px #ff9900, 0 0 5px #ff9900;
+  transition: width 0.3s ease-out, opacity 0.2s ease-out;
+  border-radius: 0 2px 2px 0;
+  z-index: 9999;
+  pointer-events: none;
 }

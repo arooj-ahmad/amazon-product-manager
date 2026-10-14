@@ -22,6 +22,7 @@
 # + ✅ FIXED v2: STORE DEFAULT markup use karo (product.markup nahi)
 # + ✅ FIXED v3: STORE DEFAULT tax bhi use karo
 # + ✅ FIXED v4: Final price change pe bhi Shopify pe push karo
+# + ✅ FIXED v5: None checks in sync_shopify_product (crash fix)
 # ============================================
 
 import logging
@@ -138,15 +139,18 @@ async def find_shopify_product_by_title(
             shop, access_token, query, {"query": search_term}
         )
 
-        edges = (
-            result.get("data", {})
-            .get("products", {})
-            .get("edges", [])
-        )
+        if not result:
+            logger.warning(f"⚠️ Title search returned None for: {search_term}")
+            return None
+
+        data = result.get("data") or {}
+        products_data = data.get("products") or {}
+        edges = products_data.get("edges") or []
 
         if edges:
-            shopify_id = edges[0]["node"]["id"]
-            found_title = edges[0]["node"]["title"]
+            first_node = edges[0].get("node") or {}
+            shopify_id = first_node.get("id")
+            found_title = first_node.get("title", "")
             logger.info(
                 f"✅ Shopify product found by title: "
                 f"'{found_title[:50]}...' → {shopify_id}"
@@ -162,7 +166,8 @@ async def find_shopify_product_by_title(
 
 
 # ============================================
-# ✅ HELPER: SHOPIFY STATUS + INVENTORY SYNC
+# ✅ FIXED v5: SHOPIFY STATUS + INVENTORY SYNC
+# + None checks added (crash fix)
 # ============================================
 async def sync_shopify_product(
     product: Product,
@@ -265,6 +270,13 @@ async def sync_shopify_product(
             shop, access_token, query, {"id": shopify_id}
         )
 
+        # ✅ FIX: result None check
+        if not result:
+            logger.warning(
+                f"⚠️ Inventory query returned None for ASIN={product.asin}"
+            )
+            return
+
         if "errors" in result:
             logger.error(
                 f"❌ Inventory query error for ASIN={product.asin}: "
@@ -272,12 +284,11 @@ async def sync_shopify_product(
             )
             return
 
-        edges = (
-            result.get("data", {})
-            .get("product", {})
-            .get("variants", {})
-            .get("edges", [])
-        )
+        # ✅ FIX: Safe navigation with None checks
+        data = result.get("data") or {}
+        product_data = data.get("product") or {}
+        variants_data = product_data.get("variants") or {}
+        edges = variants_data.get("edges") or []
 
         if not edges:
             logger.warning(
@@ -286,11 +297,12 @@ async def sync_shopify_product(
             return
 
         for edge in edges:
-            inventory_item_id = (
-                edge.get("node", {})
-                .get("inventoryItem", {})
-                .get("id")
-            )
+            if not isinstance(edge, dict):
+                continue
+
+            node = edge.get("node") or {}
+            inventory_item = node.get("inventoryItem") or {}
+            inventory_item_id = inventory_item.get("id")
 
             if not inventory_item_id:
                 logger.warning(
