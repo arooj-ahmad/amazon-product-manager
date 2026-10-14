@@ -1,13 +1,29 @@
 // src/pages/PriceUpdater.jsx
 // Manual Price Update page
-import { useNavigate } from 'react-router-dom'
+// + ✅ FIXED: Navigation via window.location.hash (iframe compatible)
+
 import { useShopifyApp } from '../hooks/useShopifyApp'
-import { styles, theme } from '../styles/theme'
+import { styles } from '../styles/theme'
 import CronRunner from '../components/CronRunner'
 
-export default function PriceUpdater() {
-  const navigate = useNavigate()
+// ============================================
+// ✅ NAYA: Shopify iframe-compatible navigation
+// HashRouter + iframe me navigate() unreliable hai,
+// isliye window.location.hash use karo.
+// ============================================
+function navigateTo(path) {
+  const targetHash = `#${path}`
+  console.log(`🧭 Navigating to: ${targetHash}`)
 
+  if (window.location.hash === targetHash) {
+    // Force re-dispatch
+    window.dispatchEvent(new HashChangeEvent('hashchange'))
+  } else {
+    window.location.hash = targetHash
+  }
+}
+
+export default function PriceUpdater() {
   // Sirf jo zaroori hai wahi destructure karo
   const {
     cronRunning,
@@ -15,13 +31,17 @@ export default function PriceUpdater() {
     handleRunCron,
   } = useShopifyApp()
 
+  const handleBackToDashboard = () => {
+    navigateTo('/shopify-app')
+  }
+
   return (
     <div style={styles.page}>
       <div style={styles.container}>
         {/* Back button */}
         <button
           type="button"
-          onClick={() => navigate('/shopify-app')}
+          onClick={handleBackToDashboard}
           style={{
             display: 'inline-flex',
             alignItems: 'center',

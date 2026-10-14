@@ -2,13 +2,13 @@
 // frontend/src/pages/ProductsPricing.jsx
 // Product-wise Pricing Editor
 // + ✅ Bulk Update section (top)
-// + ✅ NAYA: Saved default markup auto-fill
-// + ✅ NAYA: Current default banner
+// + ✅ Saved default markup auto-fill
+// + ✅ Current default banner
 // + Search + Products table
+// + ✅ FIXED: Navigation via window.location.hash
 // ============================================
 
 import { useState, useEffect } from 'react'
-import { useNavigate } from 'react-router-dom'
 import {
   getCountries,
   updatePricing,
@@ -21,7 +21,7 @@ const API_URL =
   'https://amazon-product-manager-production.up.railway.app'
 
 // ============================================
-// Shop domain nikaalo
+// Detect Shopify store domain
 // ============================================
 function getShopDomain() {
   const params = new URLSearchParams(window.location.search)
@@ -34,6 +34,21 @@ function getShopDomain() {
   }
 
   return null
+}
+
+// ============================================
+// ✅ NAYA: Shopify iframe-compatible navigation
+// ============================================
+function navigateTo(path) {
+  const targetHash = `#${path}`
+  console.log(`🧭 Navigating to: ${targetHash}`)
+
+  if (window.location.hash === targetHash) {
+    // Force re-dispatch
+    window.dispatchEvent(new HashChangeEvent('hashchange'))
+  } else {
+    window.location.hash = targetHash
+  }
 }
 
 async function safeFetch(url, options = {}) {
@@ -61,9 +76,6 @@ function formatCurrency(amount, country) {
   }
 }
 
-// ============================================
-// Format markup display
-// ============================================
 function formatMarkup(markup, type, extra) {
   if (type === 'percent') return `+${markup}%`
   if (type === 'both') return `+$${markup} + ${extra}%`
@@ -74,8 +86,6 @@ function formatMarkup(markup, type, extra) {
 // Main Component
 // ============================================
 export default function ProductsPricing() {
-  const navigate = useNavigate()
-
   const [products, setProducts] = useState([])
   const [countries, setCountries] = useState([])
   const [loading, setLoading] = useState(true)
@@ -84,13 +94,9 @@ export default function ProductsPricing() {
   const [storeId, setStoreId] = useState(null)
   const [shopDomain, setShopDomain] = useState(null)
 
-  // ✅ NAYA: Store ka saved default markup
   const [savedDefault, setSavedDefault] = useState(null)
-
-  // ✅ Search
   const [searchTerm, setSearchTerm] = useState('')
 
-  // ✅ Bulk Update state
   const [bulkData, setBulkData] = useState({
     country_id: '',
     markup_type: 'fixed',
@@ -122,8 +128,7 @@ export default function ProductsPricing() {
 
       await loadProducts(sid)
 
-      // ✅ NAYA: Store ka saved default markup load karo
-      // aur Bulk Update form me pre-fill karo
+      // Load default markup
       try {
         const defRes = await safeFetch(
           `${API_URL}/api/markup/store-default?shop_domain=${encodeURIComponent(domain)}`
@@ -132,7 +137,6 @@ export default function ProductsPricing() {
           console.log('✅ Loaded default markup:', defRes.data)
           setSavedDefault(defRes.data)
 
-          // Bulk Update form me pre-fill karo
           setBulkData({
             country_id: '',
             markup_type: defRes.data.markup_type || 'fixed',
@@ -164,7 +168,6 @@ export default function ProductsPricing() {
     setProducts(productsRes.data || [])
   }
 
-  // ✅ Bulk Update handlers
   const handleBulkCountryChange = (countryId) => {
     const country = countries.find((c) => c.id === parseInt(countryId))
     setBulkData({
@@ -206,7 +209,6 @@ export default function ProductsPricing() {
         text: `✅ ${res.updated} products update ho gaye! (Shopify: ${res.shopify_updated || 0})`,
       })
 
-      // Products refresh karo
       await loadProducts(storeId)
     } catch (err) {
       setMessage({ type: 'error', text: `❌ ${err.message}` })
@@ -215,7 +217,11 @@ export default function ProductsPricing() {
     }
   }
 
-  // Filtered products
+  // ✅ NAYA: Navigation handler
+  const handleBackToDashboard = () => {
+    navigateTo('/shopify-app')
+  }
+
   const filteredProducts = products.filter((p) => {
     if (!searchTerm.trim()) return true
     const term = searchTerm.toLowerCase()
@@ -238,7 +244,7 @@ export default function ProductsPricing() {
       <div style={styles.container}>
         <button
           type="button"
-          onClick={() => navigate('/shopify-app')}
+          onClick={handleBackToDashboard}
           style={styles.backBtn}
         >
           ← Back to Dashboard
@@ -262,7 +268,7 @@ export default function ProductsPricing() {
           </div>
         )}
 
-        {/* ✅ NAYA: Current default markup banner */}
+        {/* Current default markup banner */}
         {savedDefault && (
           <div style={styles.infoBanner}>
             <span style={styles.infoIcon}>💾</span>
@@ -283,7 +289,7 @@ export default function ProductsPricing() {
           </div>
         )}
 
-        {/* ✅ Bulk Update Section */}
+        {/* Bulk Update Section */}
         <div style={styles.bulkCard}>
           <div style={styles.bulkHeader}>
             <span style={styles.bulkIcon}>🔄</span>
@@ -733,7 +739,6 @@ const styles = {
     cursor: 'pointer',
   },
 
-  // ✅ NAYA: Info banner styles
   infoBanner: {
     display: 'flex',
     alignItems: 'center',
@@ -764,7 +769,6 @@ const styles = {
     color: '#65a30d',
   },
 
-  // Bulk Update card styles
   bulkCard: {
     background: 'white',
     padding: 20,
