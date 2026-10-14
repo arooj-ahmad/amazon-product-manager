@@ -1,6 +1,5 @@
 # app/services/shopify/metafields.py
 # Metafield definitions + builder + setter
-# + ✅ FIXED: best_sellers_rank aur amazon_price exclude kiye
 
 import logging
 
@@ -12,7 +11,6 @@ logger = logging.getLogger(__name__)
 
 # ============================================
 # ✅ METAFIELD DEFINITIONS MAP
-# Note: best_sellers_rank aur amazon_price exclude hain
 # ============================================
 METAFIELD_DEFINITIONS = {
     # Core
@@ -21,6 +19,7 @@ METAFIELD_DEFINITIONS = {
     "manufacturer": ("Manufacturer", "single_line_text_field", "Manufacturer name"),
     "rating": ("Rating", "number_decimal", "Amazon rating (0-5)"),
     "reviews_count": ("Reviews Count", "number_integer", "Number of reviews"),
+    "amazon_price": ("Amazon Price", "number_decimal", "Price on Amazon"),
     "availability": ("Availability", "single_line_text_field", "Stock availability"),
     "model_number": ("Model Number", "single_line_text_field", "Model number"),
     "item_model_number": ("Item Model Number", "single_line_text_field", "Item model number"),
@@ -40,6 +39,7 @@ METAFIELD_DEFINITIONS = {
     "department": ("Department", "single_line_text_field", "Department"),
     "country_of_origin": ("Country of Origin", "single_line_text_field", "Country of origin"),
     "date_first_available": ("Date First Available", "single_line_text_field", "Date first available"),
+    "best_sellers_rank": ("Best Sellers Rank", "single_line_text_field", "Best sellers rank"),
     "language": ("Language", "single_line_text_field", "Language"),
     "reading_age": ("Reading Age", "single_line_text_field", "Reading age"),
     "unit_count": ("Unit Count", "single_line_text_field", "Unit count"),
@@ -249,13 +249,9 @@ async def ensure_metafield_definitions(
 
 # ============================================
 # Build ALL Metafields
-# + ✅ FIXED: best_sellers_rank aur amazon_price exclude
 # ============================================
 def _build_all_metafields(product_data: dict) -> list:
-    """
-    Amazon product data se SAARE standard metafields build karo.
-    Note: best_sellers_rank aur amazon_price exclude hain.
-    """
+    """Amazon product data se SAARE standard metafields build karo."""
     metafields = []
     seen_keys = set()
 
@@ -296,7 +292,12 @@ def _build_all_metafields(product_data: dict) -> list:
         except (ValueError, TypeError):
             pass
 
-    # ❌ amazon_price HATA DIYA
+    amazon_price = product_data.get("amazon_price")
+    if amazon_price is not None:
+        try:
+            _add("amazon_price", str(float(amazon_price)), "number_decimal")
+        except (ValueError, TypeError):
+            pass
 
     _add("availability", product_data.get("availability"))
 
@@ -323,9 +324,7 @@ def _build_all_metafields(product_data: dict) -> list:
     _add("department", product_data.get("department"))
     _add("country_of_origin", product_data.get("country_of_origin"))
     _add("date_first_available", product_data.get("date_first_available"))
-
-    # ❌ best_sellers_rank HATA DIYA
-
+    _add("best_sellers_rank", product_data.get("best_sellers_rank"))
     _add("language", product_data.get("language"))
     _add("reading_age", product_data.get("reading_age"))
     _add("unit_count", product_data.get("unit_count"))
@@ -356,8 +355,7 @@ def _build_all_metafields(product_data: dict) -> list:
 
     _add("warranty", product_data.get("warranty"), "multi_line_text_field")
 
-    # AUTO-MAP (product_details se)
-    # ✅ best_sellers_rank aur amazon_price skip
+    # AUTO-MAP
     product_details = product_data.get("product_details") or []
     if isinstance(product_details, list):
         for item in product_details:
@@ -366,15 +364,6 @@ def _build_all_metafields(product_data: dict) -> list:
             field_type = item.get("type") or ""
             field_value = item.get("value")
             if not field_type or field_value is None:
-                continue
-
-            # ✅ Skip best_sellers_rank aur amazon_price
-            field_type_lower = field_type.strip().lower()
-            if field_type_lower in (
-                "best sellers rank",
-                "amazon price",
-                "price",
-            ):
                 continue
 
             key = _slugify_key(field_type)
