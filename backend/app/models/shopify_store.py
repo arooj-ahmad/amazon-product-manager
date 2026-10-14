@@ -3,13 +3,14 @@
 # Shopify store tokens database model
 # + ✅ FIXED: access_token nullable=True (NULL allow karta hai)
 # + ✅ NAYE COLUMNS — Expiring offline tokens ke liye
-# + ✅ refresh_token, expires_at, refresh_token_expires_at
+# + ✅ NAYE COLUMNS — Store default markup (v5)
 # ============================================
 
 from sqlalchemy import (
     BigInteger,
     Column,
     DateTime,
+    Numeric,        # ✅ NAYA — decimal values ke liye
     String,
     Text,
     func,
@@ -41,6 +42,12 @@ class ShopifyStore(Base):
     refresh_token = Column(Text, nullable=True)
     expires_at = Column(DateTime(timezone=True), nullable=True)
     refresh_token_expires_at = Column(DateTime(timezone=True), nullable=True)
+
+    # ✅ NAYE COLUMNS — Store default markup (v5)
+    # Ye markup har naye product par apply hoga
+    default_markup = Column(Numeric(10, 2), nullable=True, default=2.00)
+    default_markup_type = Column(String(20), nullable=True, default="fixed")
+    default_extra_percent = Column(Numeric(10, 2), nullable=True, default=0.00)
 
     def __repr__(self):
         return f"<ShopifyStore {self.shop_domain}>"
