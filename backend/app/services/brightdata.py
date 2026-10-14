@@ -12,9 +12,11 @@
 # + ✅ FIXED: Tags — CLEAN & PROFESSIONAL (no duplicates, no garbage)
 # + ✅ FIXED: Description — clean (no "> See more product details")
 # + ✅ NAYA: Markup type "both" — Fixed + Percent
+# + ✅ FIXED v2: package_dimensions se item_weight + item_dimensions extract
 # ============================================
 
 import logging
+import re
 from typing import Optional
 
 import httpx
@@ -37,8 +39,6 @@ class BrightDataError(Exception):
 # ============================================
 def extract_asin_from_url(url: str) -> Optional[str]:
     """Amazon URL se ASIN nikalta hai."""
-    import re
-
     patterns = [
         r"/dp/([A-Z0-9]{10})",
         r"/gp/product/([A-Z0-9]{10})",
@@ -70,6 +70,65 @@ def parse_price(value) -> Optional[float]:
         return float(value)
     except (ValueError, TypeError):
         return None
+
+
+# ============================================
+# ✅ NAYA: PACKAGE DIMENSIONS PARSE
+# ============================================
+def parse_package_dimensions(package_dims_str: str) -> dict:
+    """
+    Parse package_dimensions string like:
+    "7.09 x 5.91 x 0.39 inches; 7.05 ounces"
+    "10 x 5 x 3 cm; 500 g"
+
+    Returns:
+        {
+            "item_dimensions": "7.09 x 5.91 x 0.39 inches",
+            "item_weight": "7.05 ounces"
+        }
+    """
+    result = {}
+
+    if not package_dims_str or not isinstance(package_dims_str, str):
+        return result
+
+    s = package_dims_str.strip()
+    if not s:
+        return result
+
+    # ── Step 1: Dimensions part nikaalo ──
+    dims_match = re.search(
+        r"([\d.]+)\s*x\s*([\d.]+)\s*x\s*([\d.]+)\s*(inches|inch|in|cm|centimeters|centimeter|mm|millimeters|millimeter)?",
+        s,
+        re.IGNORECASE,
+    )
+    if dims_match:
+        l, w, h = dims_match.group(1), dims_match.group(2), dims_match.group(3)
+        unit = dims_match.group(4) or "inches"
+        # Normalize unit
+        unit_lower = unit.lower()
+        if unit_lower in ("in", "inch"):
+            unit = "inches"
+        elif unit_lower in ("centimeter", "centimeters"):
+            unit = "cm"
+        elif unit_lower in ("millimeter", "millimeters"):
+            unit = "mm"
+
+        result["item_dimensions"] = f"{l} x {w} x {h} {unit}"
+
+    # ── Step 2: Weight part nikaalo ──
+    # Formats: "7.05 ounces", "500 g", "1.5 lbs", "2.2 kg"
+    weight_match = re.search(
+        r"([\d.]+)\s*(ounces?|oz|pounds?|lbs?|lb|grams?|g|kilograms?|kg|milligrams?|mg)",
+        s,
+        re.IGNORECASE,
+    )
+    if weight_match:
+        weight_value = weight_match.group(1)
+        weight_unit = weight_match.group(2)
+        result["item_weight"] = f"{weight_value} {weight_unit}"
+
+    return result
 
 
 # ============================================
@@ -200,6 +259,7 @@ def parse_categories(raw: dict) -> list[str]:
 
 # ============================================
 # ✅ STANDARD METAFIELDS FIELDS
+# + ✅ FIXED v2: package_dimensions se item_weight + item_dimensions
 # ============================================
 def parse_standard_fields(raw: dict) -> dict:
     """
@@ -217,6 +277,23 @@ def parse_standard_fields(raw: dict) -> dict:
     fields["country_of_origin"] = raw.get("country_of_origin")
     fields["date_first_available"] = raw.get("date_first_available")
 
+    # ✅ NAYA: Package dimensions se item_weight + item_dimensions extract karo
+    package_dims_raw = raw.get("package_dimensions") or ""
+    if package_dims_raw and isinstance(package_dims_raw, str):
+        # Store the raw package dimensions
+        fields["package_dimensions"] = package_dims_raw.strip()
+
+        # Parse dimensions + weight from the string
+        parsed = parse_package_dimensions(package_dims_raw)
+
+        if parsed.get("item_dimensions"):
+            fields["item_dimensions"] = parsed["item_dimensions"]
+            logger.info(f"   📐 Extracted item_dimensions: {parsed['item_dimensions']}")
+
+        if parsed.get("item_weight"):
+            fields["item_weight"] = parsed["item_weight"]
+            logger.info(f"   ⚖️ Extracted item_weight: {parsed['item_weight']}")
+
     # ── Product Details se specific fields ──
     product_details = raw.get("product_details") or []
     if isinstance(product_details, list):
@@ -232,7 +309,7 @@ def parse_standard_fields(raw: dict) -> dict:
 
             if field_type in ("item dimensions", "item dimensions l x w x h", "product dimensions"):
                 fields["item_dimensions"] = value_str
-            elif field_type in ("item weight", "item weight", "shipping weight"):
+            elif field_type in ("item weight", "shipping weight"):
                 fields["item_weight"] = value_str
             elif field_type == "package dimensions":
                 fields["package_dimensions"] = value_str
@@ -313,6 +390,19 @@ def parse_standard_fields(raw: dict) -> dict:
             elif field_type == "ean":
                 fields["ean"] = value_str
 
+    # ✅ Fallback: Agar item_weight ya item_dimensions abhi bhi khaali hain
+    if not fields.get("item_weight") and package_dims_raw:
+        parsed = parse_package_dimensions(package_dims_raw)
+        if parsed.get("item_weight"):
+            fields["item_weight"] = parsed["item_weight"]
+            logger.info(f"   ⚖️ Fallback item_weight: {parsed['item_weight']}")
+
+    if not fields.get("item_dimensions") and package_dims_raw:
+        parsed = parse_package_dimensions(package_dims_raw)
+        if parsed.get("item_dimensions"):
+            fields["item_dimensions"] = parsed["item_dimensions"]
+            logger.info(f"   📐 Fallback item_dimensions: {parsed['item_dimensions']}")
+
     fields = {
         k: v for k, v in fields.items()
         if v is not None and str(v).strip() and str(v).strip() != "None"
@@ -327,8 +417,6 @@ def parse_standard_fields(raw: dict) -> dict:
 # ============================================
 def parse_tags(raw: dict, categories: list[str]) -> list[str]:
     """Amazon response se CLEAN aur USEFUL tags nikalta hai."""
-    import re
-
     tags: list[str] = []
     seen_lower: set = set()
 
@@ -481,14 +569,9 @@ def parse_tags(raw: dict, categories: list[str]) -> list[str]:
 # ✅ CLEAN DESCRIPTION — Amazon UI garbage remove
 # ============================================
 def clean_description(description: str) -> str:
-    """
-    Amazon description se UI garbage hataata hai.
-    Examples: "> See more product details", "› Read more", etc.
-    """
+    """Amazon description se UI garbage hataata hai."""
     if not description or not isinstance(description, str):
         return ""
-
-    import re
 
     garbage_patterns = [
         r"[>›»]\s*See\s+more\s+product\s+details\.?",
@@ -581,6 +664,10 @@ async def fetch_product_from_brightdata(amazon_url: str) -> dict:
     logger.info("=" * 60)
     logger.info("=== BRIGHT DATA RAW RESPONSE ===")
     logger.info(f"ALL KEYS: {list(raw.keys())}")
+    logger.info(f"--- DIMENSIONS / WEIGHT ---")
+    logger.info(f"package_dimensions: {raw.get('package_dimensions')}")
+    logger.info(f"item_weight (raw): {raw.get('item_weight')}")
+    logger.info(f"item_dimensions (raw): {raw.get('item_dimensions')}")
     logger.info(f"--- AVAILABILITY FIELDS ---")
     logger.info(f"add_to_cart_available: {raw.get('add_to_cart_available')}")
     logger.info(f"buybox_available: {raw.get('buybox_available')}")
@@ -589,13 +676,6 @@ async def fetch_product_from_brightdata(amazon_url: str) -> dict:
     logger.info(f"--- PRICE FIELDS ---")
     logger.info(f"final_price: {raw.get('final_price')}")
     logger.info(f"list_price: {raw.get('list_price')}")
-    logger.info(f"--- CATEGORY FIELDS ---")
-    logger.info(f"category_tree: {raw.get('category_tree')}")
-    logger.info(f"--- STANDARD FIELDS ---")
-    logger.info(f"model_number: {raw.get('model_number')}")
-    logger.info(f"manufacturer: {raw.get('manufacturer')}")
-    logger.info(f"department: {raw.get('department')}")
-    logger.info(f"country_of_origin: {raw.get('country_of_origin')}")
     logger.info("=" * 60)
 
     # Extract fields
@@ -663,7 +743,6 @@ async def fetch_product_from_brightdata(amazon_url: str) -> dict:
     if rating_raw is not None:
         try:
             if isinstance(rating_raw, str):
-                import re
                 match = re.search(r"(\d+\.?\d*)", rating_raw)
                 if match:
                     rating_value = float(match.group(1))
@@ -684,7 +763,6 @@ async def fetch_product_from_brightdata(amazon_url: str) -> dict:
     if reviews_raw is not None:
         try:
             if isinstance(reviews_raw, str):
-                import re
                 match = re.search(r"(\d[\d,]*)", reviews_raw)
                 if match:
                     reviews_count = int(match.group(1).replace(",", ""))
@@ -792,7 +870,6 @@ async def fetch_product_from_brightdata(amazon_url: str) -> dict:
 
 # ============================================
 # ✅ FIXED v2: CALCULATE FINAL PRICE
-# + ✅ NAYA: "both" markup type support
 # ============================================
 def calculate_final_price(
     amazon_price: Optional[float],
@@ -800,7 +877,7 @@ def calculate_final_price(
     markup_type: str = "fixed",
     admin_price: Optional[float] = None,
     is_manual_override: bool = False,
-    extra_percent: float = 0.0,   # ✅ NAYA: fixed + percent ke liye
+    extra_percent: float = 0.0,
 ) -> Optional[float]:
     """
     Final website price calculate karta hai.
@@ -819,11 +896,9 @@ def calculate_final_price(
     if markup_type == "percent":
         auto_price = amazon_price * (1 + markup / 100.0)
     elif markup_type == "both":
-        # ✅ Fixed add karo, phir percent apply karo
         base_price = amazon_price + markup
         auto_price = base_price * (1 + extra_percent / 100.0)
     else:
-        # default: fixed
         auto_price = amazon_price + markup
 
     if is_manual_override and admin_price is not None:
