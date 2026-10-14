@@ -6,7 +6,7 @@
 # + Inventory quantity sync (har variant)
 # + Shopify price update (HAR CHANGE PE — increase ya decrease)
 # + SAARE products process (draft bhi)
-# + price hamesha amazon_price + markup update
+# + price hamesha amazon_price + STORE DEFAULT markup
 # + Shopify metafields update
 # + ✅ NAYA: shopify_status field DB mein save
 # + ✅ NAYA: SKU na mile toh title se Shopify product dhoondo
@@ -19,6 +19,7 @@
 # + ✅ FIXED: set_inventory_quantity ka result check hota hai
 # + ✅ FIXED: Inventory error par warning log hoti hai
 # + ✅ NAYA: Markup type "both" — Fixed + Percent
+# + ✅ FIXED v2: STORE DEFAULT markup use karo (product.markup nahi)
 # ============================================
 
 import logging
@@ -79,6 +80,27 @@ def _get_store_for_product(
     if not store:
         store = db.query(ShopifyStore).first()
     return store
+
+
+# ============================================
+# ✅ NAYA: Store ka default markup nikaalo
+# ============================================
+def _get_store_default_markup(store: ShopifyStore) -> tuple:
+    """
+    Store ka saved default markup return karo.
+    Returns: (markup_value, markup_type, extra_percent)
+    """
+    if not store:
+        return 2.0, "fixed", 0.0
+
+    markup_val = float(getattr(store, "default_markup", None) or 2.0)
+    markup_type = getattr(store, "default_markup_type", None) or "fixed"
+    extra_pct = float(getattr(store, "default_extra_percent", None) or 0.0)
+
+    if markup_type not in ("fixed", "percent", "both"):
+        markup_type = "fixed"
+
+    return markup_val, markup_type, extra_pct
 
 
 # ============================================
@@ -418,6 +440,7 @@ async def sync_shopify_price(product: Product, new_price: float, db: Session):
 
 # ============================================
 # JOB: UPDATE ALL PRICES
+# + ✅ FIXED v2: STORE DEFAULT markup use karo
 # ============================================
 async def update_all_prices():
     """SAARE products ke prices update karta hai (24h)."""
@@ -442,6 +465,12 @@ async def update_all_prices():
 
         for product in products:
             try:
+                # ✅ NAYA: Store ka default markup nikaalo
+                store = _get_store_for_product(db, product)
+                store_markup, store_markup_type, store_extra_pct = (
+                    _get_store_default_markup(store)
+                )
+
                 amazon_url = f"https://www.amazon.com/dp/{product.asin}"
                 data = await fetch_product_from_brightdata(amazon_url)
 
@@ -491,16 +520,30 @@ async def update_all_prices():
                 old_amazon = product.amazon_price or 0
                 old_price = product.price
 
-                # ✅ FIXED: "both" markup type support
+                # ✅ FIXED v2: STORE DEFAULT markup use karo
                 new_final_price = calculate_final_price(
                     amazon_price=new_amazon_price,
-                    markup=product.markup or 2.0,
-                    markup_type=getattr(product, "markup_type", "fixed") or "fixed",
-                    extra_percent=getattr(product, "extra_percent", 0.0) or 0.0,   # ✅ NAYA
+                    markup=store_markup,
+                    markup_type=store_markup_type,
+                    extra_percent=store_extra_pct,
+                )
+
+                logger.info(
+                    f"   💰 Price calculated: "
+                    f"amazon=${new_amazon_price}, "
+                    f"markup={store_markup} ({store_markup_type}), "
+                    f"extra={store_extra_pct}%, "
+                    f"final=${new_final_price}"
                 )
 
                 product.amazon_price = new_amazon_price
                 product.price = new_final_price
+
+                # ✅ NAYA: Product me bhi updated markup save karo
+                product.markup = store_markup
+                product.markup_type = store_markup_type
+                if hasattr(product, "extra_percent"):
+                    product.extra_percent = store_extra_pct
 
                 # Metadata update
                 if data.get("title") and data["title"] != product.title:
