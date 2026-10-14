@@ -2,7 +2,7 @@
 # app/api/routes/webhooks.py
 # Shopify Webhooks — subscription events + product events
 # + ✅ NAYA: products/delete webhook handler
-# + ✅ FIXED: Universal match (GID + numeric + LIKE query)
+# + ✅ FIXED: ASIN/SKU match (primary) + GID + numeric + LIKE (fallback)
 # ============================================
 
 import base64
@@ -188,19 +188,17 @@ async def _handle_app_uninstalled(shop_domain, db):
 
 
 # ============================================
-# ✅ PRODUCT DELETE HANDLER — Universal Match
+# ✅ PRODUCT DELETE HANDLER — ASIN/SKU Primary Match
 # ============================================
 async def _handle_product_delete(shop_domain, payload, db):
     """
     Shopify se product delete hone par DB se bhi delete karo.
 
-    DB mein format: gid://shopify/Product/15407641821220
-    Webhook payload: { "id": 15407641821220 }
-
-    3 strategies try karta hai:
-    1. GID format match
-    2. Numeric format match
-    3. LIKE query (universal — koi bhi format match kare)
+    Priority order:
+    1. ✅ ASIN/SKU match — sabse reliable (webhook variants[].sku se)
+    2. GID format match — gid://shopify/Product/{id}
+    3. Numeric format match
+    4. LIKE query fallback
     """
     shopify_id = payload.get("id")
     product_title = payload.get("title", "Unknown")
@@ -209,25 +207,47 @@ async def _handle_product_delete(shop_domain, payload, db):
         logger.warning("⚠️ Product delete webhook: no id")
         return
 
+    # ✅ NAYA: Webhook payload se SKU (ASIN) nikaalo
+    variants = payload.get("variants") or []
+    sku_from_webhook = None
+    if isinstance(variants, list):
+        for variant in variants:
+            if not isinstance(variant, dict):
+                continue
+            sku = variant.get("sku")
+            if sku and str(sku).strip() and str(sku).strip() != "None":
+                sku_from_webhook = str(sku).strip()
+                break
+
     logger.info(
         f"🗑️ Shopify product deleted: {product_title} "
-        f"(id={shopify_id})"
+        f"(id={shopify_id}, sku={sku_from_webhook})"
     )
 
     product = None
 
-    # ── Strategy 1: GID format (DB mein yahi saved hai) ──
-    product_gid = f"gid://shopify/Product/{shopify_id}"
-    product = (
-        db.query(Product)
-        .filter(Product.shopify_product_id == product_gid)
-        .first()
-    )
+    # ── Strategy 1: ✅ ASIN/SKU match (PRIMARY) ──
+    if sku_from_webhook:
+        product = (
+            db.query(Product)
+            .filter(Product.asin == sku_from_webhook)
+            .first()
+        )
+        if product:
+            logger.info(f"   ✅ Matched via ASIN/SKU: {sku_from_webhook}")
 
-    if product:
-        logger.info(f"   ✅ Matched via GID: {product_gid}")
+    # ── Strategy 2: GID format ──
+    if not product:
+        product_gid = f"gid://shopify/Product/{shopify_id}"
+        product = (
+            db.query(Product)
+            .filter(Product.shopify_product_id == product_gid)
+            .first()
+        )
+        if product:
+            logger.info(f"   ✅ Matched via GID: {product_gid}")
 
-    # ── Strategy 2: Numeric format ──
+    # ── Strategy 3: Numeric format ──
     if not product:
         product = (
             db.query(Product)
@@ -237,7 +257,7 @@ async def _handle_product_delete(shop_domain, payload, db):
         if product:
             logger.info(f"   ✅ Matched via numeric: {shopify_id}")
 
-    # ── Strategy 3: LIKE query (universal fallback) ──
+    # ── Strategy 4: LIKE query (universal fallback) ──
     if not product:
         product = (
             db.query(Product)
@@ -259,33 +279,54 @@ async def _handle_product_delete(shop_domain, payload, db):
     else:
         logger.info(
             f"ℹ️ Webhook: product not found in DB "
-            f"(shopify_id={shopify_id}, tried GID + numeric + LIKE)"
+            f"(shopify_id={shopify_id}, sku={sku_from_webhook})"
         )
 
 
 # ============================================
-# ✅ PRODUCT UPDATE HANDLER
+# ✅ PRODUCT UPDATE HANDLER — ASIN/SKU Primary Match
 # ============================================
 async def _handle_product_update(shop_domain, payload, db):
     """
     Shopify se product update hone par DB update karo.
-    Sirf title, status, price update karta hai.
+    Priority: ASIN/SKU → GID → numeric → LIKE
     """
     shopify_id = payload.get("id")
     if not shopify_id:
         return
 
+    # SKU se ASIN nikaalo
+    variants = payload.get("variants") or []
+    sku_from_webhook = None
+    if isinstance(variants, list):
+        for variant in variants:
+            if not isinstance(variant, dict):
+                continue
+            sku = variant.get("sku")
+            if sku and str(sku).strip() and str(sku).strip() != "None":
+                sku_from_webhook = str(sku).strip()
+                break
+
     product = None
 
-    # GID format
-    product_gid = f"gid://shopify/Product/{shopify_id}"
-    product = (
-        db.query(Product)
-        .filter(Product.shopify_product_id == product_gid)
-        .first()
-    )
+    # Strategy 1: ASIN/SKU
+    if sku_from_webhook:
+        product = (
+            db.query(Product)
+            .filter(Product.asin == sku_from_webhook)
+            .first()
+        )
 
-    # Numeric format
+    # Strategy 2: GID
+    if not product:
+        product_gid = f"gid://shopify/Product/{shopify_id}"
+        product = (
+            db.query(Product)
+            .filter(Product.shopify_product_id == product_gid)
+            .first()
+        )
+
+    # Strategy 3: Numeric
     if not product:
         product = (
             db.query(Product)
@@ -293,7 +334,7 @@ async def _handle_product_update(shop_domain, payload, db):
             .first()
         )
 
-    # LIKE query
+    # Strategy 4: LIKE
     if not product:
         product = (
             db.query(Product)
@@ -314,7 +355,6 @@ async def _handle_product_update(shop_domain, payload, db):
         product.shopify_status = new_status
 
     # Variants se price update karo
-    variants = payload.get("variants", [])
     if variants:
         first_variant = variants[0]
         new_price = first_variant.get("price")
