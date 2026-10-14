@@ -3,6 +3,7 @@
 # Shopify Webhooks — subscription events + product events
 # + ✅ NAYA: products/delete webhook handler
 # + ✅ FIXED: ASIN/SKU match (primary) + GID + numeric + LIKE (fallback)
+# + ✅ FIXED: SHOPIFY_WEBHOOK_SECRET use for HMAC (fallback to API_SECRET)
 # ============================================
 
 import base64
@@ -28,12 +29,27 @@ router = APIRouter(prefix="/api/webhooks", tags=["Webhooks"])
 # VERIFY SHOPIFY WEBHOOK HMAC
 # ============================================
 def verify_webhook_hmac(body: bytes, hmac_header: str) -> bool:
-    """Shopify webhook signature verify karein"""
+    """
+    Shopify webhook signature verify karein.
+    
+    Uses SHOPIFY_WEBHOOK_SECRET (Shopify Admin → Settings → Webhooks)
+    Falls back to SHOPIFY_API_SECRET (OAuth app secret) if not set.
+    """
     if not hmac_header:
         return False
 
+    # ✅ Webhook signing secret use karo, fallback to API secret
+    secret = (
+        settings.SHOPIFY_WEBHOOK_SECRET
+        or settings.SHOPIFY_API_SECRET
+    )
+
+    if not secret:
+        logger.error("❌ No webhook secret configured in settings!")
+        return False
+
     computed = hmac.new(
-        settings.SHOPIFY_API_SECRET.encode(),
+        secret.encode(),
         body,
         hashlib.sha256,
     ).digest()
