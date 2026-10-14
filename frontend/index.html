@@ -7,20 +7,20 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Amazon Product Manager</title>
 
-  <!-- ========================================
-         SHOPIFY APP BRIDGE
-         Shopify Admin ke andar communicate karne ke liye
-    ======================================== -->
   <meta name="shopify-api-key" content="8786a53fe09e5cef26ca2b3299efc33c" />
   <script src="https://cdn.shopify.com/shopifycloud/app-bridge.js"></script>
   <script src="https://cdn.shopify.com/shopifycloud/polaris.js"></script>
 </head>
 
 <body>
-  <!-- ✅ NAYA: Shopify Sidebar Navigation Menu -->
+  <!-- ✅ Shopify Sidebar Navigation Menu
+       `target="_self"` — taaki iframe ke andar navigate ho
+       `data-` attributes hataye — Shopify auto-convert kar raha hai
+  -->
   <ui-nav-menu>
-    <a href="/" rel="home">🏠 Dashboard</a>
-    <a href="/markup-settings">⚙️ Markup Settings</a>
+    <a href="shopify-app" rel="home">🏠 Dashboard</a>
+    <a href="markup-settings">⚙️ Markup Settings</a>
+    <a href="price-updater">💹 Manual Price Update</a>
   </ui-nav-menu>
 
   <div id="root"></div>

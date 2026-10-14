@@ -4,7 +4,6 @@ import { styles, theme } from '../styles/theme'
 import Header from '../components/Header'
 import AddProductForm from '../components/AddProductForm'
 import CollectionsSelector from '../components/CollectionsSelector'
-import CronRunner from '../components/CronRunner'
 import InfoBox from '../components/InfoBox'
 import PlanCard from '../components/PlanCard'
 
@@ -21,8 +20,6 @@ export default function ShopifyApp() {
 
     collections, selectedCollections, collectionsLoading,
     toggleCollection, clearCollections, refreshCollections,
-
-    cronRunning, cronMessage, handleRunCron,
   } = useShopifyApp()
 
   // Loading
@@ -105,12 +102,6 @@ export default function ShopifyApp() {
           onToggle={toggleCollection}
           onClear={clearCollections}
           onRefresh={refreshCollections}
-        />
-
-        <CronRunner
-          cronRunning={cronRunning}
-          cronMessage={cronMessage}
-          onRunCron={handleRunCron}
         />
 
         <InfoBox />

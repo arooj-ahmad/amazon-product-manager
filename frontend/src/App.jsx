@@ -2,7 +2,8 @@
 // frontend/src/App.jsx
 // Final routes — user + admin + Footer
 // + HashRouter (Shopify iframe compatible)
-// + ✅ FIX: External hash change listener (event + polling)
+// + ✅ FIX: External hash + path listener (sidebar navigation)
+// + ✅ NAYA: PriceUpdater page (Manual Price Update)
 // ============================================
 
 import {
@@ -21,52 +22,76 @@ import Footer from './components/Footer'
 import ProductDetail from './pages/ProductDetail'
 import ShopifyApp from './pages/ShopifyApp'
 import MarkupSettings from './pages/MarkupSettings'
+import PriceUpdater from './pages/PriceUpdater'
 import PrivacyPolicy from './pages/PrivacyPolicy'
 import TermsOfService from './pages/TermsOfService'
 
 // ============================================
-// ✅ FIXED: External hash change listener
-// Shopify iframe me `hashchange` event reliably fire nahi hota,
-// isliye event + polling dono use kar rahe hain.
-// lastHashRef se infinite loop bhi rok diya.
+// ✅ FIXED: External navigation listener
+// Shopify iframe me 2 tarah ke URL changes hote hain:
+//   1. HashRouter ke through: URL me # aata hai
+//   2. Shopify App Bridge ke through: URL path badalta hai (bina #)
+// Dono ko handle karta hai + polling backup.
 // ============================================
 function HashChangeListener() {
   const navigate = useNavigate()
   const location = useLocation()
-  const lastHashRef = useRef(window.location.hash)
+  const lastUrlRef = useRef('')
 
   useEffect(() => {
-    const syncFromHash = () => {
-      const currentHash = window.location.hash
-      const rawHash = currentHash.replace(/^#/, '') || '/shopify-app'
+    const syncFromUrl = () => {
+      const currentUrl = window.location.href
+      if (currentUrl === lastUrlRef.current) return
+      lastUrlRef.current = currentUrl
+
       const currentPath = location.pathname
 
-      // ✅ Sirf tab navigate karo jab:
-      //   1. External hash change hua ho (lastHashRef se different)
-      //   2. Aur current route se different ho
-      if (
-        currentHash !== lastHashRef.current &&
-        rawHash !== currentPath
-      ) {
-        console.log(`🔄 External hash change detected: ${rawHash}`)
-        lastHashRef.current = currentHash
-        navigate(rawHash)
+      // ─────────────────────────────────
+      // A) Pehle HASH check karo (HashRouter ka standard)
+      // ─────────────────────────────────
+      const hash = window.location.hash.replace(/^#/, '')
+      if (hash && hash !== currentPath) {
+        console.log(`🔄 Hash navigation: ${hash}`)
+        navigate(hash)
+        return
+      }
+
+      // ─────────────────────────────────
+      // B) Agar hash nahi hai, to PATH check karo
+      //    Shopify App Bridge ke ui-nav-menu se aata hai
+      //    Example: /store/xxx/apps/amzscout-2/markup-settings
+      //    → app route: /markup-settings
+      // ─────────────────────────────────
+      const fullPath = window.location.pathname
+
+      // Shopify embedded URL se app path nikaalo
+      const shopifyMatch = fullPath.match(/\/apps\/[^/]+\/(.+)$/)
+      const appPath = shopifyMatch
+        ? `/${shopifyMatch[1]}`
+        : fullPath === '/'
+          ? '/'
+          : fullPath
+
+      // Sirf tab navigate karo jab app path current route se different ho
+      if (appPath && appPath !== currentPath) {
+        console.log(`🔄 Path navigation: ${appPath}`)
+        navigate(appPath)
       }
     }
 
     // Initial sync
-    syncFromHash()
+    syncFromUrl()
 
-    // Event-based (fast path)
-    window.addEventListener('hashchange', syncFromHash)
-    window.addEventListener('popstate', syncFromHash)
+    // Event-based (fast)
+    window.addEventListener('hashchange', syncFromUrl)
+    window.addEventListener('popstate', syncFromUrl)
 
-    // ✅ Polling backup — Shopify iframe ke liye ZAROORI
-    const intervalId = setInterval(syncFromHash, 300)
+    // ✅ Polling backup (Shopify iframe ke liye ZAROORI)
+    const intervalId = setInterval(syncFromUrl, 300)
 
     return () => {
-      window.removeEventListener('hashchange', syncFromHash)
-      window.removeEventListener('popstate', syncFromHash)
+      window.removeEventListener('hashchange', syncFromUrl)
+      window.removeEventListener('popstate', syncFromUrl)
       clearInterval(intervalId)
     }
   }, [navigate, location.pathname])
@@ -80,7 +105,11 @@ function HashChangeListener() {
 function Layout({ children }) {
   const location = useLocation()
 
-  const FULL_SCREEN_ROUTES = ['/markup-settings', '/shopify-app']
+  const FULL_SCREEN_ROUTES = [
+    '/markup-settings',
+    '/shopify-app',
+    '/price-updater',
+  ]
   const isFullScreen = FULL_SCREEN_ROUTES.some((path) =>
     location.pathname.startsWith(path)
   )
@@ -109,6 +138,9 @@ function App() {
 
           {/* MARKUP SETTINGS — full screen */}
           <Route path="/markup-settings" element={<MarkupSettings />} />
+
+          {/* MANUAL PRICE UPDATE — full screen */}
+          <Route path="/price-updater" element={<PriceUpdater />} />
 
           {/* Product by slug */}
           <Route path="/product/:slug" element={<ProductDetail />} />
