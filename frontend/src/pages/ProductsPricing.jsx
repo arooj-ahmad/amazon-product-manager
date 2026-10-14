@@ -1,7 +1,9 @@
 // ============================================
 // frontend/src/pages/ProductsPricing.jsx
 // Product-wise Pricing Editor
-// + ✅ NAYA: Bulk Update section (top)
+// + ✅ Bulk Update section (top)
+// + ✅ NAYA: Saved default markup auto-fill
+// + ✅ NAYA: Current default banner
 // + Search + Products table
 // ============================================
 
@@ -60,6 +62,15 @@ function formatCurrency(amount, country) {
 }
 
 // ============================================
+// Format markup display
+// ============================================
+function formatMarkup(markup, type, extra) {
+  if (type === 'percent') return `+${markup}%`
+  if (type === 'both') return `+$${markup} + ${extra}%`
+  return `+$${markup}`
+}
+
+// ============================================
 // Main Component
 // ============================================
 export default function ProductsPricing() {
@@ -72,6 +83,9 @@ export default function ProductsPricing() {
   const [message, setMessage] = useState(null)
   const [storeId, setStoreId] = useState(null)
   const [shopDomain, setShopDomain] = useState(null)
+
+  // ✅ NAYA: Store ka saved default markup
+  const [savedDefault, setSavedDefault] = useState(null)
 
   // ✅ Search
   const [searchTerm, setSearchTerm] = useState('')
@@ -107,6 +121,33 @@ export default function ProductsPricing() {
       setCountries(countriesData || [])
 
       await loadProducts(sid)
+
+      // ✅ NAYA: Store ka saved default markup load karo
+      // aur Bulk Update form me pre-fill karo
+      try {
+        const defRes = await safeFetch(
+          `${API_URL}/api/markup/store-default?shop_domain=${encodeURIComponent(domain)}`
+        )
+        if (defRes.ok && defRes.data) {
+          console.log('✅ Loaded default markup:', defRes.data)
+          setSavedDefault(defRes.data)
+
+          // Bulk Update form me pre-fill karo
+          setBulkData({
+            country_id: '',
+            markup_type: defRes.data.markup_type || 'fixed',
+            markup_value: defRes.data.markup
+              ? String(defRes.data.markup)
+              : '',
+            extra_percent: defRes.data.extra_percent
+              ? String(defRes.data.extra_percent)
+              : '',
+            tax_rate: '0',
+          })
+        }
+      } catch (err) {
+        console.warn('⚠️ Could not load default markup:', err)
+      }
     } catch (err) {
       setMessage({ type: 'error', text: `❌ ${err.message}` })
     } finally {
@@ -218,6 +259,27 @@ export default function ProductsPricing() {
             }}
           >
             ⚠️ Store ID detect nahi ho saka.
+          </div>
+        )}
+
+        {/* ✅ NAYA: Current default markup banner */}
+        {savedDefault && (
+          <div style={styles.infoBanner}>
+            <span style={styles.infoIcon}>💾</span>
+            <div style={styles.infoText}>
+              <strong>Current Default Markup:</strong>{' '}
+              <span style={styles.infoValue}>
+                {formatMarkup(
+                  savedDefault.markup,
+                  savedDefault.markup_type,
+                  savedDefault.extra_percent
+                )}
+              </span>
+              <span style={styles.infoHint}>
+                {' '}
+                — ye markup naye products par apply hoga
+              </span>
+            </div>
           </div>
         )}
 
@@ -671,7 +733,38 @@ const styles = {
     cursor: 'pointer',
   },
 
-  // ✅ Bulk Update card styles
+  // ✅ NAYA: Info banner styles
+  infoBanner: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: '10px',
+    padding: '12px 16px',
+    marginBottom: '16px',
+    background: '#f0fdf4',
+    border: '1px solid #86efac',
+    borderRadius: 8,
+  },
+  infoIcon: {
+    fontSize: '18px',
+  },
+  infoText: {
+    fontSize: '13px',
+    color: '#166534',
+  },
+  infoValue: {
+    background: 'white',
+    padding: '2px 10px',
+    borderRadius: 4,
+    border: '1px solid #86efac',
+    fontWeight: '700',
+    color: '#15803d',
+    marginLeft: '4px',
+  },
+  infoHint: {
+    color: '#65a30d',
+  },
+
+  // Bulk Update card styles
   bulkCard: {
     background: 'white',
     padding: 20,
