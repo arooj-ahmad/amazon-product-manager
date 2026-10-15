@@ -33,6 +33,19 @@ html {
 }
 
 /* ============================================
+   ✅ NAYA: Indeterminate progress bar animation
+   CronRunner me use hoti hai (jab total unknown ho)
+   ============================================ */
+@keyframes indeterminate {
+  0% {
+    transform: translateX(-100%);
+  }
+  100% {
+    transform: translateX(250%);
+  }
+}
+
+/* ============================================
    Line clamp utilities
    ============================================ */
 @layer utilities {

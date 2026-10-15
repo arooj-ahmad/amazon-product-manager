@@ -6,7 +6,9 @@
 // ✅ FIXED v4: Fake progress hata diya — real polling /price-update-status se
 // ✅ FIXED v4: Async trigger (/trigger-price-update-async) use karta hai
 // ✅ FIXED v4: Polling cleanup on unmount
+// ✅ FIXED v5: Cron state ab ZUSTAND global store me hai (page change pe survive)
 import { useState, useEffect, useCallback, useRef } from 'react'
+import { usePriceUpdateStore } from '../store/priceUpdateStore'
 
 const API_URL =
   (import.meta.env.VITE_API_URL || '').trim() ||
@@ -106,21 +108,20 @@ export function useShopifyApp() {
   const [selectedCollections, setSelectedCollections] = useState(new Set())
   const [collectionsLoading, setCollectionsLoading] = useState(false)
 
-  // ✅ Cron job state
-  const [cronRunning, setCronRunning] = useState(false)
-  const [cronMessage, setCronMessage] = useState(null)
-
-  // ✅ Cron progress state (real — backend se)
-  const [cronProgress, setCronProgress] = useState({
-    running: false,
-    step: 0,
-    total: 0,
-    currentProduct: null,
-    summary: null,
-  })
+  // ✅ GLOBAL: Cron state ab Zustand store se aata hai
+  // (page change pe bhi survive karta hai)
+  const {
+    cronRunning,
+    cronMessage,
+    cronProgress,
+    setCronRunning,
+    setCronMessage,
+    setCronProgress,
+    startPolling,
+    stopPolling,
+  } = usePriceUpdateStore()
 
   const bridgeCheckRef = useRef(null)
-  const pollIntervalRef = useRef(null)   // ✅ NAYA: polling interval ref
 
   // ========================================
   // 1. Load billing data
@@ -315,97 +316,13 @@ export function useShopifyApp() {
   }, [shopDomain, loadCollections])
 
   // ========================================
-  // ✅ NAYA: Polling helpers
-  // ========================================
-  const stopPolling = useCallback(() => {
-    if (pollIntervalRef.current) {
-      clearInterval(pollIntervalRef.current)
-      pollIntervalRef.current = null
-    }
-  }, [])
-
-  const startStatusPolling = useCallback((idToken) => {
-    stopPolling()
-
-    pollIntervalRef.current = setInterval(async () => {
-      try {
-        const res = await safeFetch(
-          `${API_URL}/api/shopify/price-update-status`,
-          {
-            method: 'GET',
-            headers: { Authorization: `Bearer ${idToken}` },
-          }
-        )
-
-        if (!res.ok) return
-
-        const data = res.data || {}
-
-        // ✅ Job abhi bhi chal raha hai
-        if (data.running) {
-          setCronProgress((prev) => ({
-            ...prev,
-            running: true,
-            currentProduct: 'Processing products...',
-          }))
-          return
-        }
-
-        // ✅ Job khatam — polling band karo
-        stopPolling()
-
-        const summary = data.summary || {}
-
-        setCronProgress({
-          running: false,
-          step: summary.total || 0,
-          total: summary.total || 0,
-          currentProduct: null,
-          summary: summary,
-        })
-
-        setCronRunning(false)
-
-        if (summary.error) {
-          setCronMessage({
-            type: 'error',
-            text: `❌ ${summary.error}`,
-          })
-          showToast('Price update failed!', true)
-        } else {
-          setCronMessage({
-            type: 'success',
-            text: `✅ Updated: ${summary.updated || 0}, Skipped: ${summary.skipped || 0}, Errors: ${summary.errors || 0}`,
-          })
-          showToast('Price update completed!')
-        }
-
-        // ✅ 30 sec baad summary clear karo
-        setTimeout(() => {
-          setCronMessage(null)
-          setCronProgress({
-            running: false,
-            step: 0,
-            total: 0,
-            currentProduct: null,
-            summary: null,
-          })
-        }, 30000)
-      } catch (err) {
-        console.error('Polling error:', err)
-      }
-    }, 3000) // har 3 second
-  }, [stopPolling])
-
-  // ========================================
-  // ✅ FIXED: Trigger Cron Job Manually — real polling
+  // ✅ Trigger Cron Job Manually — GLOBAL polling
   // ========================================
   const handleRunCron = useCallback(async () => {
     if (cronRunning) return
 
     setCronRunning(true)
     setCronMessage(null)
-
     setCronProgress({
       running: true,
       step: 0,
@@ -436,8 +353,8 @@ export function useShopifyApp() {
 
       console.log('✅ Async trigger accepted:', res.data)
 
-      // ✅ Polling start karo (agar already running tha toh bhi)
-      startStatusPolling(idToken)
+      // ✅ GLOBAL polling start karo (Zustand store ke through)
+      startPolling(API_URL, idToken)
     } catch (err) {
       console.error('❌ Cron trigger failed:', err)
 
@@ -459,17 +376,22 @@ export function useShopifyApp() {
       showToast('Price update failed!', true)
       setCronRunning(false)
     }
-  }, [cronRunning, startStatusPolling, stopPolling])
+  }, [
+    cronRunning,
+    startPolling,
+    stopPolling,
+    setCronRunning,
+    setCronMessage,
+    setCronProgress,
+  ])
 
-  // ✅ Cleanup on unmount — polling band karo
+  // ✅ Cleanup on unmount — SIRF bridgeCheck (polling global store me hai)
   useEffect(() => {
     return () => {
       if (bridgeCheckRef.current) {
         clearInterval(bridgeCheckRef.current)
       }
-      if (pollIntervalRef.current) {
-        clearInterval(pollIntervalRef.current)
-      }
+      // ❌ Polling ko unmount pe band NAHI karo — global store handle karega
     }
   }, [])
 
@@ -698,7 +620,7 @@ export function useShopifyApp() {
     loadCollections,
     refreshCollections,
 
-    // ✅ Cron job + progress
+    // ✅ Cron job + progress (global store se aata hai)
     cronRunning,
     cronMessage,
     cronProgress,

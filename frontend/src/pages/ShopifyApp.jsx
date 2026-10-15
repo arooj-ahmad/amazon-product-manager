@@ -3,15 +3,26 @@
 // ✅ NAYA: Store saved markup info banner
 // ✅ NAYA v2: Tax + country bhi banner me dikhate hain
 // ✅ NAYA v3: Circle spinner loader (consistent with other pages)
+// ✅ NAYA v4: Global price update indicator (Zustand store se)
 
 import { useShopifyApp } from '../hooks/useShopifyApp'
+import { usePriceUpdateStore } from '../store/priceUpdateStore'
 import { styles, theme } from '../styles/theme'
 import Header from '../components/Header'
 import AddProductForm from '../components/AddProductForm'
 import CollectionsSelector from '../components/CollectionsSelector'
 import InfoBox from '../components/InfoBox'
 import PlanCard from '../components/PlanCard'
-import Loader from '../components/Loader'   // ✅ NAYA
+import Loader from '../components/Loader'
+
+// ============================================
+// ✅ Shopify iframe-compatible navigation
+// ============================================
+function navigateTo(path) {
+  const targetHash = `#${path}`
+  if (window.location.hash === targetHash) return
+  window.location.hash = targetHash
+}
 
 export default function ShopifyApp() {
   const {
@@ -28,6 +39,9 @@ export default function ShopifyApp() {
     collections, selectedCollections, collectionsLoading,
     toggleCollection, clearCollections, refreshCollections,
   } = useShopifyApp()
+
+  // ✅ Global cron state (page change pe bhi live rehta hai)
+  const { cronRunning, cronProgress } = usePriceUpdateStore()
 
   // ✅ FIXED: Circle spinner loader
   if (checkingSub) {
@@ -78,6 +92,28 @@ export default function ShopifyApp() {
           shopDomain={shopDomain}
           subscription={subscription}
         />
+
+        {/* ✅ Global price update indicator */}
+        {cronRunning && (
+          <div style={styles2.updateBanner}>
+            <span style={styles2.updateIcon}>⏳</span>
+            <div style={styles2.updateContent}>
+              <span style={styles2.updateText}>
+                Price update chal raha hai background me...
+              </span>
+              <span style={styles2.updateHint}>
+                {cronProgress?.currentProduct || 'Processing products...'}
+              </span>
+            </div>
+            <button
+              type="button"
+              onClick={() => navigateTo('/price-updater')}
+              style={styles2.updateBtn}
+            >
+              View Progress →
+            </button>
+          </div>
+        )}
 
         {/* Store saved markup + tax info banner */}
         <StoreMarkupBanner
@@ -226,5 +262,49 @@ const styles2 = {
   text: {
     color: '#64748b',
     fontSize: '13px',
+  },
+
+  // ✅ Global Update Banner (naya)
+  updateBanner: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: '12px',
+    padding: '12px 16px',
+    marginBottom: '16px',
+    background: 'linear-gradient(135deg, #fef3c7 0%, #fde68a 100%)',
+    border: '1px solid #fbbf24',
+    borderRadius: '8px',
+  },
+  updateIcon: {
+    fontSize: '20px',
+    flexShrink: 0,
+    animation: 'spin 1.5s linear infinite',
+  },
+  updateContent: {
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '2px',
+    flex: 1,
+  },
+  updateText: {
+    color: '#92400e',
+    fontWeight: '600',
+    fontSize: '13px',
+  },
+  updateHint: {
+    color: '#a16207',
+    fontSize: '12px',
+  },
+  updateBtn: {
+    padding: '6px 14px',
+    background: '#92400e',
+    color: 'white',
+    border: 'none',
+    borderRadius: '6px',
+    fontSize: '12px',
+    fontWeight: '600',
+    cursor: 'pointer',
+    whiteSpace: 'nowrap',
+    transition: 'all 0.15s ease',
   },
 }
