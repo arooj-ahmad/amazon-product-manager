@@ -18,6 +18,7 @@
 # + ✅ FIXED v5: STORE DEFAULT markup use
 # + ✅ FIXED v6: Weight → Shopify variant mapping
 # + ✅ FIXED v7: STORE DEFAULT tax bhi use karo
+# + ✅ FIXED v8: /trigger-price-update me summary return karo
 # ============================================
 
 import logging
@@ -120,7 +121,6 @@ async def _get_valid_access_token(
 
 # ============================================
 # HELPER: Store default markup + tax
-# + ✅ FIXED v7: tax_rate bhi return karo
 # ============================================
 def _get_store_markup(store: ShopifyStore) -> tuple:
     """
@@ -627,6 +627,7 @@ async def get_shopify_collections(
 
 # ============================================
 # TRIGGER CRON JOB MANUALLY
+# ✅ FIXED v8: Summary bhi return karo
 # ============================================
 @router.post("/trigger-price-update")
 async def trigger_price_update(
@@ -668,12 +669,14 @@ async def trigger_price_update(
         )
 
     try:
-        await run_price_update_now()
+        # ✅ NAYA: Summary return karo
+        summary = await run_price_update_now()
         logger.info(f"✅ Price update completed for {shop_domain}")
         return {
             "success": True,
             "message": "Price update completed successfully",
             "shop_domain": shop_domain,
+            "summary": summary,   # ✅ NAYA
         }
     except Exception as e:
         logger.error(f"❌ Price update failed: {e}")
@@ -838,7 +841,6 @@ async def push_product_to_shopify(
 
 # ============================================
 # ADD PRODUCT FROM SHOPIFY APP
-# ✅ FIXED v7: STORE DEFAULT tax bhi use karo
 # ============================================
 @router.post("/app/add-product")
 async def add_product_from_shopify_app(
@@ -970,14 +972,14 @@ async def add_product_from_shopify_app(
             logger.warning("⚠️ Variant exists — new product")
             existing_parent = None
 
-    # ✅ FIXED v7: STORE DEFAULT markup + tax use karo
+    # ✅ STORE DEFAULT markup + tax use karo
     if markup is not None and markup > 0:
         user_markup = float(markup)
         user_markup_type = (
             markup_type if markup_type in ("fixed", "percent", "both") else "fixed"
         )
         user_extra = float(extra_percent or 0.0)
-        user_tax_rate = 0.0  # frontend se tax nahi aata
+        user_tax_rate = 0.0
         logger.info(f"💰 Using frontend markup: {user_markup} ({user_markup_type})")
     else:
         user_markup, user_markup_type, user_extra, user_tax_rate = (
@@ -995,13 +997,12 @@ async def add_product_from_shopify_app(
         f"extra_percent={user_extra}, tax_rate={user_tax_rate}%"
     )
 
-    # ✅ FIXED v7: tax_rate pass karo
     final_price = calculate_final_price(
         amazon_price=data["amazon_price"],
         markup=user_markup,
         markup_type=user_markup_type,
         extra_percent=user_extra,
-        tax_rate=user_tax_rate,  # ✅ NAYA
+        tax_rate=user_tax_rate,
     )
 
     logger.info(f"💰 Final price: ${final_price}")

@@ -23,6 +23,7 @@
 # + ✅ FIXED v3: STORE DEFAULT tax bhi use karo
 # + ✅ FIXED v4: Final price change pe bhi Shopify pe push karo
 # + ✅ FIXED v5: None checks in sync_shopify_product (crash fix)
+# + ✅ FIXED v6: summary return karo (frontend progress ke liye)
 # ============================================
 
 import logging
@@ -167,7 +168,6 @@ async def find_shopify_product_by_title(
 
 # ============================================
 # ✅ FIXED v5: SHOPIFY STATUS + INVENTORY SYNC
-# + None checks added (crash fix)
 # ============================================
 async def sync_shopify_product(
     product: Product,
@@ -270,7 +270,6 @@ async def sync_shopify_product(
             shop, access_token, query, {"id": shopify_id}
         )
 
-        # ✅ FIX: result None check
         if not result:
             logger.warning(
                 f"⚠️ Inventory query returned None for ASIN={product.asin}"
@@ -284,7 +283,6 @@ async def sync_shopify_product(
             )
             return
 
-        # ✅ FIX: Safe navigation with None checks
         data = result.get("data") or {}
         product_data = data.get("product") or {}
         variants_data = product_data.get("variants") or {}
@@ -455,7 +453,7 @@ async def sync_shopify_price(product: Product, new_price: float, db: Session):
 
 # ============================================
 # JOB: UPDATE ALL PRICES
-# ✅ FIXED v4: Final price change pe bhi push karo
+# ✅ FIXED v6: summary return karo
 # ============================================
 async def update_all_prices():
     """SAARE products ke prices update karta hai (24h)."""
@@ -467,7 +465,8 @@ async def update_all_prices():
 
     try:
         products = db.query(Product).all()
-        logger.info(f"Total products: {len(products)}")
+        total_products = len(products)
+        logger.info(f"Total products: {total_products}")
 
         updated_count = 0
         skipped_count = 0
@@ -478,9 +477,12 @@ async def update_all_prices():
         price_changed_count = 0
         price_recalculated_count = 0
 
-        for product in products:
+        # ✅ NAYA: Detailed results list
+        results = []
+
+        for index, product in enumerate(products, start=1):
             try:
-                # ✅ NAYA: Store ka default markup + tax nikaalo
+                # ✅ Store ka default markup + tax nikaalo
                 store = _get_store_for_product(db, product)
                 (
                     store_markup,
@@ -533,18 +535,25 @@ async def update_all_prices():
                     db.commit()
                     db.refresh(product)
                     error_count += 1
+                    results.append({
+                        "index": index,
+                        "asin": product.asin,
+                        "title": (product.title or "")[:60],
+                        "status": "error",
+                        "error": "Price not available",
+                    })
                     continue
 
                 old_amazon = product.amazon_price or 0
                 old_price = product.price
 
-                # ✅ FIXED v3: STORE DEFAULT markup + tax use karo
+                # ✅ STORE DEFAULT markup + tax use karo
                 new_final_price = calculate_final_price(
                     amazon_price=new_amazon_price,
                     markup=store_markup,
                     markup_type=store_markup_type,
                     extra_percent=store_extra_pct,
-                    tax_rate=store_tax_rate,  # ✅ tax support
+                    tax_rate=store_tax_rate,
                 )
 
                 logger.info(
@@ -559,7 +568,7 @@ async def update_all_prices():
                 product.amazon_price = new_amazon_price
                 product.price = new_final_price
 
-                # ✅ NAYA: Product me bhi updated markup save karo
+                # Product me bhi updated markup save karo
                 product.markup = store_markup
                 product.markup_type = store_markup_type
                 if hasattr(product, "extra_percent"):
@@ -588,7 +597,7 @@ async def update_all_prices():
 
                 price_recalculated_count += 1
 
-                # ✅ FIXED v4: Push karo agar Amazon price YA final price change hui
+                # ✅ Push karo agar Amazon price YA final price change hui
                 price_changed = (
                     new_amazon_price != old_amazon
                     or new_final_price != old_price
@@ -608,20 +617,53 @@ async def update_all_prices():
                     )
                     price_changed_count += 1
                     updated_count += 1
+
+                    # ✅ NAYA: Result entry
+                    results.append({
+                        "index": index,
+                        "asin": product.asin,
+                        "title": (product.title or "")[:60],
+                        "status": "updated",
+                        "old_price": old_price,
+                        "new_price": new_final_price,
+                    })
                 else:
                     logger.info(
                         f"[NO CHANGE] ASIN={product.asin} "
                         f"(price: ${new_amazon_price}, "
                         f"available: {new_availability})"
                     )
+                    skipped_count += 1
+
+                    # ✅ NAYA: Result entry
+                    results.append({
+                        "index": index,
+                        "asin": product.asin,
+                        "title": (product.title or "")[:60],
+                        "status": "skipped",
+                    })
 
             except BrightDataError as e:
                 logger.error(f"[ERROR] ASIN={product.asin}: {e}")
                 error_count += 1
+                results.append({
+                    "index": index,
+                    "asin": product.asin,
+                    "title": (product.title or "")[:60],
+                    "status": "error",
+                    "error": str(e)[:200],
+                })
                 continue
             except Exception as e:
                 logger.error(f"[UNEXPECTED] ASIN={product.asin}: {e}")
                 error_count += 1
+                results.append({
+                    "index": index,
+                    "asin": product.asin,
+                    "title": (product.title or "")[:60],
+                    "status": "error",
+                    "error": str(e)[:200],
+                })
                 continue
 
         logger.info("=" * 60)
@@ -637,8 +679,25 @@ async def update_all_prices():
         )
         logger.info("=" * 60)
 
+        # ✅ NAYA: Summary return karo
+        summary = {
+            "total": total_products,
+            "updated": updated_count,
+            "skipped": skipped_count,
+            "errors": error_count,
+            "out_of_stock": out_of_stock_count,
+            "back_in_stock": back_in_stock_count,
+            "shopify_synced": shopify_synced_count,
+            "price_changed": price_changed_count,
+            "price_recalculated": price_recalculated_count,
+            "results": results,
+        }
+
+        return summary
+
     except Exception as e:
         logger.error(f"Scheduler job failed: {e}")
+        return {"error": str(e)}
     finally:
         db.close()
 
@@ -676,4 +735,4 @@ def stop_scheduler():
 # ============================================
 async def run_price_update_now():
     """Immediately price update chalao (testing)."""
-    await update_all_prices()
+    return await update_all_prices()
