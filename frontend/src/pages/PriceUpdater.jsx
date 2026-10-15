@@ -2,11 +2,13 @@
 // Manual Price Update page
 // + ✅ FIXED: Navigation via window.location.hash (iframe compatible)
 // + ✅ NAYA: Circle spinner loader
+// + ✅ NAYA v2: cronProgress pass karo (progress bar + summary)
+// + ✅ FIXED: JSX comment syntax error hataya
 
 import { useShopifyApp } from '../hooks/useShopifyApp'
 import { styles } from '../styles/theme'
 import CronRunner from '../components/CronRunner'
-import Loader from '../components/Loader'   // ✅ NAYA
+import Loader from '../components/Loader'
 
 // ============================================
 // ✅ Shopify iframe-compatible navigation
@@ -26,15 +28,16 @@ export default function PriceUpdater() {
   const {
     cronRunning,
     cronMessage,
+    cronProgress,
     handleRunCron,
-    checkingSub,       // ✅ NAYA: loading state
+    checkingSub,
   } = useShopifyApp()
 
   const handleBackToDashboard = () => {
     navigateTo('/shopify-app')
   }
 
-  // ✅ NAYA: Loading spinner jab tak subscription check ho
+  // Loading spinner jab tak subscription check ho
   if (checkingSub) {
     return <Loader text="Loading price updater..." />
   }
@@ -68,9 +71,11 @@ export default function PriceUpdater() {
           Fetch latest Amazon prices and sync your Shopify products.
         </p>
 
+        {/* CronRunner with progress + summary */}
         <CronRunner
           cronRunning={cronRunning}
           cronMessage={cronMessage}
+          cronProgress={cronProgress}
           onRunCron={handleRunCron}
         />
       </div>
