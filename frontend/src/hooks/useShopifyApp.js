@@ -2,6 +2,10 @@
 // ✅ SIMPLIFIED: Markup state removed
 // ✅ NAYA: Backend se store ka saved markup load hota hai
 // ✅ NAYA v2: Tax + Country bhi load hote hain
+// ✅ NAYA v3: Cron progress (real-time UI feedback)
+// ✅ FIXED v4: Fake progress hata diya — real polling /price-update-status se
+// ✅ FIXED v4: Async trigger (/trigger-price-update-async) use karta hai
+// ✅ FIXED v4: Polling cleanup on unmount
 import { useState, useEffect, useCallback, useRef } from 'react'
 
 const API_URL =
@@ -80,7 +84,6 @@ export function useShopifyApp() {
     markup: 2.0,
     markupType: 'fixed',
     extraPercent: 0,
-    // ✅ NAYA: country + tax
     countryId: null,
     countryName: null,
     taxRate: 0,
@@ -107,7 +110,17 @@ export function useShopifyApp() {
   const [cronRunning, setCronRunning] = useState(false)
   const [cronMessage, setCronMessage] = useState(null)
 
+  // ✅ Cron progress state (real — backend se)
+  const [cronProgress, setCronProgress] = useState({
+    running: false,
+    step: 0,
+    total: 0,
+    currentProduct: null,
+    summary: null,
+  })
+
   const bridgeCheckRef = useRef(null)
+  const pollIntervalRef = useRef(null)   // ✅ NAYA: polling interval ref
 
   // ========================================
   // 1. Load billing data
@@ -197,7 +210,7 @@ export function useShopifyApp() {
   }, [loadBillingData])
 
   // ========================================
-  // ✅ NAYA: Store ka saved markup + country + tax load karo
+  // ✅ Store ka saved markup + country + tax load karo
   // ========================================
   const loadStoreMarkup = useCallback(async (domain) => {
     const actualDomain = resolveShopDomain(domain)
@@ -216,7 +229,6 @@ export function useShopifyApp() {
           markup: res.data.markup ?? 2.0,
           markupType: res.data.markup_type ?? 'fixed',
           extraPercent: res.data.extra_percent ?? 0,
-          // ✅ NAYA: country + tax
           countryId: res.data.country_id ?? null,
           countryName: res.data.country_name ?? null,
           taxRate: res.data.tax_rate ?? 0,
@@ -303,7 +315,90 @@ export function useShopifyApp() {
   }, [shopDomain, loadCollections])
 
   // ========================================
-  // ✅ Trigger Cron Job Manually
+  // ✅ NAYA: Polling helpers
+  // ========================================
+  const stopPolling = useCallback(() => {
+    if (pollIntervalRef.current) {
+      clearInterval(pollIntervalRef.current)
+      pollIntervalRef.current = null
+    }
+  }, [])
+
+  const startStatusPolling = useCallback((idToken) => {
+    stopPolling()
+
+    pollIntervalRef.current = setInterval(async () => {
+      try {
+        const res = await safeFetch(
+          `${API_URL}/api/shopify/price-update-status`,
+          {
+            method: 'GET',
+            headers: { Authorization: `Bearer ${idToken}` },
+          }
+        )
+
+        if (!res.ok) return
+
+        const data = res.data || {}
+
+        // ✅ Job abhi bhi chal raha hai
+        if (data.running) {
+          setCronProgress((prev) => ({
+            ...prev,
+            running: true,
+            currentProduct: 'Processing products...',
+          }))
+          return
+        }
+
+        // ✅ Job khatam — polling band karo
+        stopPolling()
+
+        const summary = data.summary || {}
+
+        setCronProgress({
+          running: false,
+          step: summary.total || 0,
+          total: summary.total || 0,
+          currentProduct: null,
+          summary: summary,
+        })
+
+        setCronRunning(false)
+
+        if (summary.error) {
+          setCronMessage({
+            type: 'error',
+            text: `❌ ${summary.error}`,
+          })
+          showToast('Price update failed!', true)
+        } else {
+          setCronMessage({
+            type: 'success',
+            text: `✅ Updated: ${summary.updated || 0}, Skipped: ${summary.skipped || 0}, Errors: ${summary.errors || 0}`,
+          })
+          showToast('Price update completed!')
+        }
+
+        // ✅ 30 sec baad summary clear karo
+        setTimeout(() => {
+          setCronMessage(null)
+          setCronProgress({
+            running: false,
+            step: 0,
+            total: 0,
+            currentProduct: null,
+            summary: null,
+          })
+        }, 30000)
+      } catch (err) {
+        console.error('Polling error:', err)
+      }
+    }, 3000) // har 3 second
+  }, [stopPolling])
+
+  // ========================================
+  // ✅ FIXED: Trigger Cron Job Manually — real polling
   // ========================================
   const handleRunCron = useCallback(async () => {
     if (cronRunning) return
@@ -311,13 +406,21 @@ export function useShopifyApp() {
     setCronRunning(true)
     setCronMessage(null)
 
+    setCronProgress({
+      running: true,
+      step: 0,
+      total: 0,
+      currentProduct: 'Starting price update...',
+      summary: null,
+    })
+
     try {
       const idToken = await getIdToken()
 
-      console.log('🚀 Triggering price update cron...')
+      console.log('🚀 Triggering async price update...')
 
       const res = await safeFetch(
-        `${API_URL}/api/shopify/trigger-price-update`,
+        `${API_URL}/api/shopify/trigger-price-update-async`,
         {
           method: 'POST',
           headers: {
@@ -331,17 +434,22 @@ export function useShopifyApp() {
         throw new Error(res.data.detail || `HTTP ${res.status}`)
       }
 
-      console.log('✅ Cron job completed:', res.data)
+      console.log('✅ Async trigger accepted:', res.data)
 
-      setCronMessage({
-        type: 'success',
-        text: `✅ ${res.data.message || 'Price update completed!'}`,
-      })
-
-      showToast('Price update completed!')
-      setTimeout(() => setCronMessage(null), 5000)
+      // ✅ Polling start karo (agar already running tha toh bhi)
+      startStatusPolling(idToken)
     } catch (err) {
       console.error('❌ Cron trigger failed:', err)
+
+      stopPolling()
+
+      setCronProgress({
+        running: false,
+        step: 0,
+        total: 0,
+        currentProduct: null,
+        summary: null,
+      })
 
       setCronMessage({
         type: 'error',
@@ -349,10 +457,21 @@ export function useShopifyApp() {
       })
 
       showToast('Price update failed!', true)
-    } finally {
       setCronRunning(false)
     }
-  }, [cronRunning])
+  }, [cronRunning, startStatusPolling, stopPolling])
+
+  // ✅ Cleanup on unmount — polling band karo
+  useEffect(() => {
+    return () => {
+      if (bridgeCheckRef.current) {
+        clearInterval(bridgeCheckRef.current)
+      }
+      if (pollIntervalRef.current) {
+        clearInterval(pollIntervalRef.current)
+      }
+    }
+  }, [])
 
   // ========================================
   // 3. Subscribe handler
@@ -475,7 +594,6 @@ export function useShopifyApp() {
 
   // ========================================
   // 4. Add product handler
-  // ✅ SIMPLIFIED: Markup backend se aata hai
   // ========================================
   const handleAddProduct = async (e) => {
     e.preventDefault()
@@ -491,7 +609,6 @@ export function useShopifyApp() {
       console.log('📤 Sending product with collections:', collectionIdsArray)
       console.log('💰 Will use store default markup + tax from backend')
 
-      // ✅ Markup/tax nahi bhej rahe — backend store ka saved markup + tax use karega
       const res = await safeFetch(
         `${API_URL}/api/shopify/app/add-product`,
         {
@@ -503,8 +620,6 @@ export function useShopifyApp() {
           body: JSON.stringify({
             amazon_url: amazonUrl.trim(),
             collection_ids: collectionIdsArray,
-            // ✅ markup, markup_type, extra_percent, tax_rate hata diye
-            // Backend store ka saved markup + tax use karega
           }),
         }
       )
@@ -566,7 +681,7 @@ export function useShopifyApp() {
 
     setAmazonUrl,
 
-    // ✅ NAYA: Store markup (read-only info)
+    // ✅ Store markup (read-only info)
     storeMarkup,
     storeMarkupLoading,
 
@@ -583,9 +698,10 @@ export function useShopifyApp() {
     loadCollections,
     refreshCollections,
 
-    // ✅ Cron job
+    // ✅ Cron job + progress
     cronRunning,
     cronMessage,
+    cronProgress,
     handleRunCron,
   }
 }

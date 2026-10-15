@@ -19,8 +19,11 @@
 # + ✅ FIXED v6: Weight → Shopify variant mapping
 # + ✅ FIXED v7: STORE DEFAULT tax bhi use karo
 # + ✅ FIXED v8: /trigger-price-update me summary return karo
+# + ✅ NAYA v9: /price-update-status (polling ke liye)
+# + ✅ NAYA v9: /trigger-price-update-async (background job)
 # ============================================
 
+import asyncio
 import logging
 from datetime import datetime, timedelta, timezone
 
@@ -58,7 +61,7 @@ from app.services.shopify import (
     shopify_graphql,
     refresh_shopify_token,
 )
-from app.services.scheduler import run_price_update_now
+from app.services.scheduler import run_price_update_now, last_run_status
 
 logger = logging.getLogger(__name__)
 
@@ -626,7 +629,7 @@ async def get_shopify_collections(
 
 
 # ============================================
-# TRIGGER CRON JOB MANUALLY
+# TRIGGER CRON JOB MANUALLY (sync — waits)
 # ✅ FIXED v8: Summary bhi return karo
 # ============================================
 @router.post("/trigger-price-update")
@@ -684,6 +687,82 @@ async def trigger_price_update(
             status_code=500,
             detail=f"Price update failed: {str(e)}",
         )
+
+
+# ============================================
+# ✅ NAYA v9: TRIGGER PRICE UPDATE (ASYNC — background)
+# Yeh endpoint turant return karta hai (Shopify App Bridge 30s timeout se bachne ke liye).
+# Frontend /price-update-status ko poll karega.
+# ============================================
+@router.post("/trigger-price-update-async")
+async def trigger_price_update_async(
+    authorization: str = Header(...),
+    db: Session = Depends(get_db),
+):
+    if not authorization or not authorization.startswith("Bearer "):
+        raise HTTPException(status_code=401, detail="Missing authorization")
+
+    token = authorization.replace("Bearer ", "").strip()
+    if not token:
+        raise HTTPException(status_code=401, detail="Empty ID token")
+
+    try:
+        payload = verify_id_token(token)
+    except ValueError as e:
+        raise HTTPException(status_code=401, detail=f"Invalid ID token: {str(e)}")
+
+    dest = payload.get("dest", "")
+    shop_domain = dest.replace("https://", "").split("/")[0]
+
+    if not shop_domain:
+        raise HTTPException(status_code=401, detail="Shop domain missing")
+
+    store = (
+        db.query(ShopifyStore)
+        .filter(ShopifyStore.shop_domain == shop_domain)
+        .first()
+    )
+
+    if not store:
+        raise HTTPException(
+            status_code=404, detail=f"Store {shop_domain} not connected"
+        )
+
+    # ✅ Agar pehle se chal raha hai toh dobara start mat karo
+    if last_run_status.get("running"):
+        return {
+            "success": True,
+            "message": "Price update already running",
+            "already_running": True,
+            "started_at": last_run_status.get("started_at"),
+        }
+
+    # ✅ Background me chalao (await nahi karo)
+    asyncio.create_task(run_price_update_now())
+
+    logger.info(f"🚀 Background price update started for {shop_domain}")
+
+    return {
+        "success": True,
+        "message": "Price update started in background",
+        "already_running": False,
+        "shop_domain": shop_domain,
+    }
+
+
+# ============================================
+# ✅ NAYA v9: PRICE UPDATE STATUS (polling ke liye)
+# Frontend is endpoint ko har 2-3 second me poll karega.
+# ============================================
+@router.get("/price-update-status")
+async def get_price_update_status():
+    return {
+        "success": True,
+        "running": last_run_status.get("running", False),
+        "started_at": last_run_status.get("started_at"),
+        "finished_at": last_run_status.get("finished_at"),
+        "summary": last_run_status.get("summary"),
+    }
 
 
 # ============================================

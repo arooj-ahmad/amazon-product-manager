@@ -4,6 +4,8 @@
 // + ✅ NAYA: Circle spinner loader
 // + ✅ NAYA v2: cronProgress pass karo (progress bar + summary)
 // + ✅ FIXED: JSX comment syntax error hataya
+// + ✅ FIXED v3: Duplicate navigation avoid karo
+// + ✅ FIXED v3: Error boundary safety
 
 import { useShopifyApp } from '../hooks/useShopifyApp'
 import { styles } from '../styles/theme'
@@ -15,13 +17,15 @@ import Loader from '../components/Loader'
 // ============================================
 function navigateTo(path) {
   const targetHash = `#${path}`
-  console.log(`🧭 Navigating to: ${targetHash}`)
 
+  // ✅ Agar already us page pe ho toh kuch mat karo
   if (window.location.hash === targetHash) {
-    window.dispatchEvent(new HashChangeEvent('hashchange'))
-  } else {
-    window.location.hash = targetHash
+    console.log(`🧭 Already on ${targetHash}`)
+    return
   }
+
+  console.log(`🧭 Navigating to: ${targetHash}`)
+  window.location.hash = targetHash
 }
 
 export default function PriceUpdater() {
@@ -45,6 +49,7 @@ export default function PriceUpdater() {
   return (
     <div style={styles.page}>
       <div style={styles.container}>
+        {/* Back Button */}
         <button
           type="button"
           onClick={handleBackToDashboard}
@@ -61,11 +66,19 @@ export default function PriceUpdater() {
             fontSize: '13px',
             fontWeight: '600',
             cursor: 'pointer',
+            transition: 'all 0.15s ease',
+          }}
+          onMouseEnter={(e) => {
+            e.currentTarget.style.background = '#f6f6f7'
+          }}
+          onMouseLeave={(e) => {
+            e.currentTarget.style.background = 'white'
           }}
         >
           ← Back to Dashboard
         </button>
 
+        {/* Page Header */}
         <h1 style={styles.h1}>💹 Manual Price Update</h1>
         <p style={styles.subtitle}>
           Fetch latest Amazon prices and sync your Shopify products.

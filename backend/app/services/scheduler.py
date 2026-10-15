@@ -24,6 +24,7 @@
 # + ✅ FIXED v4: Final price change pe bhi Shopify pe push karo
 # + ✅ FIXED v5: None checks in sync_shopify_product (crash fix)
 # + ✅ FIXED v6: summary return karo (frontend progress ke liye)
+# + ✅ FIXED v7: last_run_status (polling ke liye)
 # ============================================
 
 import logging
@@ -57,6 +58,17 @@ logger = logging.getLogger(__name__)
 # GLOBAL SCHEDULER INSTANCE
 # ============================================
 scheduler = AsyncIOScheduler()
+
+
+# ============================================
+# ✅ NAYA: Global status — frontend polling ke liye
+# ============================================
+last_run_status = {
+    "running": False,
+    "started_at": None,
+    "finished_at": None,
+    "summary": None,
+}
 
 
 # ============================================
@@ -453,13 +465,21 @@ async def sync_shopify_price(product: Product, new_price: float, db: Session):
 
 # ============================================
 # JOB: UPDATE ALL PRICES
-# ✅ FIXED v6: summary return karo
+# ✅ FIXED v7: last_run_status + summary
 # ============================================
 async def update_all_prices():
     """SAARE products ke prices update karta hai (24h)."""
+    global last_run_status
+
     logger.info("=" * 60)
     logger.info("PRICE UPDATE JOB STARTED")
     logger.info("=" * 60)
+
+    # ✅ NAYA: Status running set karo
+    last_run_status["running"] = True
+    last_run_status["started_at"] = datetime.now(timezone.utc).isoformat()
+    last_run_status["finished_at"] = None
+    last_run_status["summary"] = None
 
     db: Session = SessionLocal()
 
@@ -693,10 +713,21 @@ async def update_all_prices():
             "results": results,
         }
 
+        # ✅ NAYA: Status success set karo
+        last_run_status["running"] = False
+        last_run_status["finished_at"] = datetime.now(timezone.utc).isoformat()
+        last_run_status["summary"] = summary
+
         return summary
 
     except Exception as e:
         logger.error(f"Scheduler job failed: {e}")
+
+        # ✅ NAYA: Status error set karo
+        last_run_status["running"] = False
+        last_run_status["finished_at"] = datetime.now(timezone.utc).isoformat()
+        last_run_status["summary"] = {"error": str(e)}
+
         return {"error": str(e)}
     finally:
         db.close()
