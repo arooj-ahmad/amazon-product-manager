@@ -4,9 +4,11 @@
 // + ✅ FIXED: Indeterminate progress when total unknown
 // + ✅ FIXED: Elapsed time tracker
 // + ✅ FIXED: Empty results message
+// + ✅ NAYA v2: Dismiss button (✕) — summary manually hatane ke liye
 
 import { useState, useEffect } from 'react'
 import { theme } from '../styles/theme'
+import { usePriceUpdateStore } from '../store/priceUpdateStore'
 
 export default function CronRunner({
   cronRunning,
@@ -16,6 +18,9 @@ export default function CronRunner({
 }) {
   const { running, step, total, currentProduct, summary } =
     cronProgress || {}
+
+  // ✅ NAYA: Dismiss handler — Zustand store se
+  const { dismissSummary } = usePriceUpdateStore()
 
   // ✅ NAYA: Elapsed time tracker
   const [elapsed, setElapsed] = useState(0)
@@ -133,8 +138,19 @@ export default function CronRunner({
       {/* ✅ Summary (jab complete ho) */}
       {summary && !running && (
         <div style={styles.summaryBox}>
-          <div style={styles.summaryTitle}>
-            ✅ Price Update Complete
+          {/* ✅ NAYA: Header with dismiss button */}
+          <div style={styles.summaryHeader}>
+            <div style={styles.summaryTitle}>
+              ✅ Price Update Complete
+            </div>
+            <button
+              type="button"
+              onClick={dismissSummary}
+              style={styles.dismissBtn}
+              title="Dismiss summary"
+            >
+              ✕
+            </button>
           </div>
 
           <div style={styles.summaryGrid}>
@@ -380,12 +396,33 @@ const styles = {
     border: '1px solid #86efac',
     borderRadius: theme.radii.md,
   },
+
+  // ✅ NAYA: Summary header with dismiss button
+  summaryHeader: {
+    display: 'flex',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: '12px',
+  },
   summaryTitle: {
     fontSize: '14px',
     fontWeight: '700',
     color: '#166534',
-    marginBottom: '12px',
+    margin: 0,
   },
+  dismissBtn: {
+    background: 'transparent',
+    border: 'none',
+    color: '#166534',
+    fontSize: '18px',
+    fontWeight: '700',
+    cursor: 'pointer',
+    padding: '2px 8px',
+    borderRadius: '4px',
+    lineHeight: 1,
+    transition: 'background 0.15s ease',
+  },
+
   summaryGrid: {
     display: 'grid',
     gridTemplateColumns: 'repeat(4, 1fr)',

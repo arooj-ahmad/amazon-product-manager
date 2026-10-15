@@ -7,6 +7,7 @@
 // ✅ FIXED v4: Async trigger (/trigger-price-update-async) use karta hai
 // ✅ FIXED v4: Polling cleanup on unmount
 // ✅ FIXED v5: Cron state ab ZUSTAND global store me hai (page change pe survive)
+// ✅ FIXED v6: checkStatusOnce — page load pe backend se fresh status
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { usePriceUpdateStore } from '../store/priceUpdateStore'
 
@@ -119,6 +120,7 @@ export function useShopifyApp() {
     setCronProgress,
     startPolling,
     stopPolling,
+    checkStatusOnce,   // ✅ NAYA
   } = usePriceUpdateStore()
 
   const bridgeCheckRef = useRef(null)
@@ -166,12 +168,13 @@ export function useShopifyApp() {
 
   // ========================================
   // 2. App Bridge ready + shop domain
+  // ✅ FIXED v6: checkStatusOnce() bhi call karo
   // ========================================
   useEffect(() => {
     let attempts = 0
     const MAX_ATTEMPTS = 20
 
-    bridgeCheckRef.current = setInterval(() => {
+    bridgeCheckRef.current = setInterval(async () => {
       attempts++
       const bridge = getAppBridge()
 
@@ -191,6 +194,17 @@ export function useShopifyApp() {
 
         showToast('Amazon Product Manager loaded!')
         loadBillingData()
+
+        // ✅ NAYA v6: Backend se ek baar fresh status check karo
+        // (agar job background me chal rahi hai toh progress dikhe,
+        //  ya complete ho chuki hai toh summary dikhe)
+        try {
+          const idToken = await getIdToken()
+          await checkStatusOnce(API_URL, idToken)
+        } catch (err) {
+          console.warn('Initial status check failed:', err.message)
+        }
+
         return
       }
 
@@ -208,7 +222,7 @@ export function useShopifyApp() {
     return () => {
       if (bridgeCheckRef.current) clearInterval(bridgeCheckRef.current)
     }
-  }, [loadBillingData])
+  }, [loadBillingData, checkStatusOnce])
 
   // ========================================
   // ✅ Store ka saved markup + country + tax load karo

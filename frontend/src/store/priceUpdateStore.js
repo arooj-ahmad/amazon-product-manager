@@ -1,5 +1,7 @@
 // src/store/priceUpdateStore.js
 // ✅ Global state — page change pe bhi survive karta hai
+// ✅ FIXED v2: 30-sec auto-clear hata diya (summary persist rehti hai)
+// ✅ FIXED v2: checkStatusOnce() — page load pe backend se fresh status
 import { create } from 'zustand'
 
 export const usePriceUpdateStore = create((set, get) => ({
@@ -25,6 +27,20 @@ export const usePriceUpdateStore = create((set, get) => ({
           ? updater(state.cronProgress)
           : updater,
     })),
+
+  // ✅ NAYA: Manual dismiss (user "✕" click kare toh summary hatao)
+  dismissSummary: () => {
+    set({
+      cronMessage: null,
+      cronProgress: {
+        running: false,
+        step: 0,
+        total: 0,
+        currentProduct: null,
+        summary: null,
+      },
+    })
+  },
 
   // ── Polling ──
   startPolling: (apiUrl, idToken) => {
@@ -90,19 +106,10 @@ export const usePriceUpdateStore = create((set, get) => ({
           })
         }
 
-        // 30 sec baad auto-clear
-        setTimeout(() => {
-          set({
-            cronMessage: null,
-            cronProgress: {
-              running: false,
-              step: 0,
-              total: 0,
-              currentProduct: null,
-              summary: null,
-            },
-          })
-        }, 30000)
+        // ❌ 30 sec auto-clear HATA DIYA
+        // Ab summary tab tak rahegi jab tak:
+        //   1. User manually dismiss kare (✕ button)
+        //   2. Ya naya job trigger kare
       } catch (err) {
         console.error('Polling error:', err)
       }
@@ -116,6 +123,73 @@ export const usePriceUpdateStore = create((set, get) => ({
     if (id) {
       clearInterval(id)
       set({ pollIntervalId: null })
+    }
+  },
+
+  // ✅ NAYA: Ek baar backend se status check karo
+  // (page load pe call hoga — taaki agar job chal rahi ho toh
+  //  progress dikhe, ya agar complete ho chuki ho toh summary dikhe)
+  checkStatusOnce: async (apiUrl, idToken) => {
+    try {
+      const res = await fetch(
+        `${apiUrl}/api/shopify/price-update-status`,
+        {
+          method: 'GET',
+          headers: { Authorization: `Bearer ${idToken}` },
+        }
+      )
+
+      if (!res.ok) return
+
+      const data = await res.json()
+
+      // ✅ Case 1: Job abhi bhi chal rahi hai
+      if (data.running) {
+        set({
+          cronRunning: true,
+          cronProgress: {
+            running: true,
+            step: 0,
+            total: 0,
+            currentProduct: 'Processing products...',
+            summary: null,
+          },
+        })
+        // Polling start karo (agar nahi chal rahi)
+        if (!get().pollIntervalId) {
+          get().startPolling(apiUrl, idToken)
+        }
+        return
+      }
+
+      // ✅ Case 2: Job complete ho chuki + summary available
+      if (data.summary && !data.running) {
+        const summary = data.summary || {}
+
+        set({
+          cronRunning: false,
+          cronProgress: {
+            running: false,
+            step: summary.total || 0,
+            total: summary.total || 0,
+            currentProduct: null,
+            summary: summary,
+          },
+          cronMessage: summary.error
+            ? {
+                type: 'error',
+                text: `❌ ${summary.error}`,
+              }
+            : {
+                type: 'success',
+                text: `✅ Updated: ${summary.updated || 0}, Skipped: ${summary.skipped || 0}, Errors: ${summary.errors || 0}`,
+              },
+        })
+      }
+
+      // ✅ Case 3: Kuch nahi (fresh state) — kuch mat karo
+    } catch (err) {
+      console.error('checkStatusOnce error:', err)
     }
   },
 }))
