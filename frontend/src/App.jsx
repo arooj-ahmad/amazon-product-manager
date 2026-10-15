@@ -1,9 +1,10 @@
 // ============================================
 // frontend/src/App.jsx
-// Final routes — user + admin + Footer
+// Final routes — user + admin
 // + HashRouter (Shopify iframe compatible)
 // + ✅ FIX: External hash + path listener
 // + ✅ NAYA: RouteLoader (nprogress) — page change par loading bar
+// + ✅ FIXED v2: Footer poori tarah remove kar diya
 // ============================================
 
 import {
@@ -18,7 +19,6 @@ import {
 import { useEffect, useRef } from 'react'
 import NProgress from 'nprogress'   // ✅ NAYA
 import Navbar from './components/Navbar'
-import Footer from './components/Footer'
 
 import ProductDetail from './pages/ProductDetail'
 import ShopifyApp from './pages/ShopifyApp'
@@ -114,6 +114,7 @@ function HashChangeListener() {
 
 // ============================================
 // Layout wrapper — full screen vs normal
+// ✅ FIXED v2: Footer hata diya
 // ============================================
 function Layout({ children }) {
   const location = useLocation()
@@ -132,11 +133,11 @@ function Layout({ children }) {
     return <>{children}</>
   }
 
+  // ✅ FIXED: Footer hata diya — sirf Navbar + main content
   return (
     <div className="flex flex-col min-h-screen">
       <Navbar />
       <main className="flex-1">{children}</main>
-      <Footer />
     </div>
   )
 }
