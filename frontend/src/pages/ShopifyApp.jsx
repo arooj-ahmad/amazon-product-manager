@@ -1,10 +1,4 @@
 // src/pages/ShopifyApp.jsx
-// ✅ SIMPLIFIED: Markup props removed
-// ✅ NAYA: Store saved markup info banner
-// ✅ NAYA v2: Tax + country bhi banner me dikhate hain
-// ✅ NAYA v3: Circle spinner loader (consistent with other pages)
-// ✅ NAYA v4: Global price update indicator (Zustand store se)
-
 import { useShopifyApp } from '../hooks/useShopifyApp'
 import { usePriceUpdateStore } from '../store/priceUpdateStore'
 import { styles, theme } from '../styles/theme'
@@ -31,19 +25,14 @@ export default function ShopifyApp() {
     shopifyReady, shopDomain,
     subscription, plans, checkingSub,
     handleAddProduct, handleSubscribe, handleTestActivate,
-
-    // ✅ Store ka saved markup + country + tax
     storeMarkup,
     storeMarkupLoading,
-
     collections, selectedCollections, collectionsLoading,
     toggleCollection, clearCollections, refreshCollections,
   } = useShopifyApp()
 
-  // ✅ Global cron state (page change pe bhi live rehta hai)
   const { cronRunning, cronProgress } = usePriceUpdateStore()
 
-  // ✅ FIXED: Circle spinner loader
   if (checkingSub) {
     return <Loader text="Loading your store..." />
   }
@@ -53,28 +42,43 @@ export default function ShopifyApp() {
     return (
       <div style={styles.page}>
         <div style={styles.container}>
-          <h1 style={styles.h1}>🛒 Amazon Product Manager</h1>
-          <p style={styles.subtitle}>
-            Choose a plan to start adding Amazon products
-          </p>
+          <div style={localStyles.headerSection}>
+            <h1 style={localStyles.mainTitle}>🛒 Amazon Product Manager</h1>
+            <p style={localStyles.subtitle}>
+              Choose a plan to start adding Amazon products to your Shopify store
+            </p>
+          </div>
+
           {plans.length === 0 ? (
-            <div style={{ ...styles.messageBox, background: theme.colors.errorBg, color: theme.colors.errorText, border: `1px solid ${theme.colors.errorBorder}` }}>
+            <div style={localStyles.alertError}>
               No plans available. Please try again later.
             </div>
           ) : (
             <div style={styles.grid}>
               {plans.map((plan) => (
-                <PlanCard key={plan.key} plan={plan} onSubscribe={handleSubscribe} isSubscribing={isSubscribing} />
+                <PlanCard 
+                  key={plan.key} 
+                  plan={plan} 
+                  onSubscribe={handleSubscribe} 
+                  isSubscribing={isSubscribing} 
+                />
               ))}
             </div>
           )}
+
           {message && (
-            <div style={{ ...styles.messageBox, background: message.type === 'success' ? theme.colors.successBg : theme.colors.errorBg, color: message.type === 'success' ? theme.colors.success : theme.colors.errorText, border: `1px solid ${message.type === 'success' ? theme.colors.successBorder : theme.colors.errorBorder}` }}>
+            <div style={message.type === 'success' ? localStyles.alertSuccess : localStyles.alertError}>
               {message.text}
             </div>
           )}
-          <div style={{ marginTop: '24px', textAlign: 'center' }}>
-            <button type="button" onClick={handleTestActivate} disabled={isSubscribing} style={styles.testBtn}>
+
+          <div style={localStyles.testModeContainer}>
+            <button 
+              type="button" 
+              onClick={handleTestActivate} 
+              disabled={isSubscribing} 
+              style={localStyles.testBtn}
+            >
               ⚡ Test Mode: Skip directly to App Dashboard
             </button>
           </div>
@@ -95,20 +99,22 @@ export default function ShopifyApp() {
 
         {/* ✅ Global price update indicator */}
         {cronRunning && (
-          <div style={styles2.updateBanner}>
-            <span style={styles2.updateIcon}>⏳</span>
-            <div style={styles2.updateContent}>
-              <span style={styles2.updateText}>
-                Price update chal raha hai background me...
+          <div style={localStyles.updateBanner}>
+            <div style={localStyles.updateIconWrapper}>
+              <span style={localStyles.updateIcon}>⏳</span>
+            </div>
+            <div style={localStyles.updateContent}>
+              <span style={localStyles.updateText}>
+                Price update running in background
               </span>
-              <span style={styles2.updateHint}>
+              <span style={localStyles.updateHint}>
                 {cronProgress?.currentProduct || 'Processing products...'}
               </span>
             </div>
             <button
               type="button"
               onClick={() => navigateTo('/price-updater')}
-              style={styles2.updateBtn}
+              style={localStyles.updateBtn}
             >
               View Progress →
             </button>
@@ -146,55 +152,36 @@ export default function ShopifyApp() {
 
 // ============================================
 // Store Markup Banner
-// Dikhaata hai ki kaunsa markup + tax apply hoga
 // ============================================
 function StoreMarkupBanner({ storeMarkup, loading }) {
   if (loading) {
     return (
-      <div style={styles2.banner}>
-        <span style={styles2.icon}>💰</span>
-        <span style={styles2.text}>Loading your markup settings...</span>
+      <div style={localStyles.markupBanner}>
+        <span style={localStyles.markupIcon}>💰</span>
+        <span style={localStyles.markupText}>Loading your markup settings...</span>
       </div>
     )
   }
 
-  const {
-    markup,
-    markupType,
-    extraPercent,
-    taxRate,
-    countryName,
-  } = storeMarkup || {}
+  const { markup, markupType, extraPercent, taxRate, countryName } = storeMarkup || {}
 
-  // Markup text banao
   let markupText = ''
-  if (markupType === 'percent') {
-    markupText = `+${markup}%`
-  } else if (markupType === 'both') {
-    markupText = `+$${markup} + ${extraPercent}%`
-  } else {
-    markupText = `+$${markup}`
-  }
+  if (markupType === 'percent') markupText = `+${markup}%`
+  else if (markupType === 'both') markupText = `+$${markup} + ${extraPercent}%`
+  else markupText = `+$${markup}`
 
-  // Tax text banao
   const taxText = taxRate > 0 ? `+ ${taxRate}% tax` : ''
 
   return (
-    <div style={styles2.banner}>
-      <span style={styles2.icon}>💰</span>
-      <div style={styles2.content}>
-        <span style={styles2.label}>Saved Markup:</span>
-        <span style={styles2.value}>{markupText}</span>
-
-        {taxText && (
-          <span style={styles2.valueTax}>{taxText}</span>
-        )}
-        {countryName && (
-          <span style={styles2.valueCountry}>({countryName})</span>
-        )}
-
-        <span style={styles2.hint}>
-          Change karne ke liye sidebar me <strong>Markup Settings</strong> kholein
+    <div style={localStyles.markupBanner}>
+      <span style={localStyles.markupIcon}>💰</span>
+      <div style={localStyles.markupContent}>
+        <span style={localStyles.markupLabel}>Saved Markup:</span>
+        <span style={localStyles.markupValue}>{markupText}</span>
+        {taxText && <span style={localStyles.markupTax}>{taxText}</span>}
+        {countryName && <span style={localStyles.markupCountry}>({countryName})</span>}
+        <span style={localStyles.markupHint}>
+          Change settings in <strong>Markup Settings</strong> from sidebar
         </span>
       </div>
     </div>
@@ -202,82 +189,160 @@ function StoreMarkupBanner({ storeMarkup, loading }) {
 }
 
 // ============================================
-// Banner Styles
+// Local Styles (Professional & Clean)
 // ============================================
-const styles2 = {
-  banner: {
+const localStyles = {
+  // --- Header Section ---
+  headerSection: {
+    textAlign: 'center',
+    marginBottom: '32px',
+  },
+  mainTitle: {
+    fontSize: '28px',
+    fontWeight: '700',
+    color: theme.colors.textPrimary || '#0f172a',
+    margin: '0 0 8px 0',
+    letterSpacing: '-0.5px',
+  },
+  subtitle: {
+    fontSize: '15px',
+    color: theme.colors.textSecondary || '#64748b',
+    margin: 0,
+  },
+
+  // --- Alerts ---
+  alertSuccess: {
+    padding: '12px 16px',
+    marginTop: '16px',
+    background: '#f0fdf4',
+    color: '#166534',
+    border: '1px solid #bbf7d0',
+    borderRadius: '8px',
+    fontSize: '14px',
+    fontWeight: '500',
+    textAlign: 'center',
+  },
+  alertError: {
+    padding: '12px 16px',
+    marginTop: '16px',
+    background: '#fef2f2',
+    color: '#991b1b',
+    border: '1px solid #fecaca',
+    borderRadius: '8px',
+    fontSize: '14px',
+    fontWeight: '500',
+    textAlign: 'center',
+  },
+
+  // --- Test Mode ---
+  testModeContainer: {
+    marginTop: '32px',
+    textAlign: 'center',
+  },
+  testBtn: {
+    padding: '10px 20px',
+    background: 'transparent',
+    color: theme.colors.primary || '#3b82f6',
+    border: `1px dashed ${theme.colors.primary || '#3b82f6'}`,
+    borderRadius: '8px',
+    fontSize: '13px',
+    fontWeight: '600',
+    cursor: 'pointer',
+    transition: 'all 0.2s ease',
+    ':hover': {
+      background: '#eff6ff',
+    }
+  },
+
+  // --- Markup Banner ---
+  markupBanner: {
     display: 'flex',
     alignItems: 'center',
     gap: '12px',
-    padding: '12px 16px',
-    marginBottom: '16px',
-    background: '#eff6ff',
-    border: '1px solid #bfdbfe',
-    borderRadius: '8px',
+    padding: '14px 18px',
+    marginBottom: '20px',
+    background: '#f8fafc',
+    border: '1px solid #e2e8f0',
+    borderRadius: '10px',
+    boxShadow: '0 1px 2px rgba(0,0,0,0.02)',
   },
-  icon: {
-    fontSize: '20px',
+  markupIcon: {
+    fontSize: '22px',
     flexShrink: 0,
   },
-  content: {
+  markupContent: {
     display: 'flex',
     alignItems: 'center',
-    gap: '8px',
+    gap: '10px',
     flexWrap: 'wrap',
     fontSize: '13px',
   },
-  label: {
-    color: '#1e40af',
-    fontWeight: '500',
+  markupLabel: {
+    color: '#475569',
+    fontWeight: '600',
   },
-  value: {
-    color: '#1e3a8a',
+  markupValue: {
+    color: '#0f172a',
     fontWeight: '700',
     fontSize: '14px',
     background: 'white',
-    padding: '2px 10px',
-    borderRadius: '4px',
-    border: '1px solid #bfdbfe',
+    padding: '3px 12px',
+    borderRadius: '6px',
+    border: '1px solid #cbd5e1',
+    boxShadow: '0 1px 2px rgba(0,0,0,0.05)',
   },
-  valueTax: {
+  markupTax: {
     color: '#15803d',
     fontWeight: '700',
-    fontSize: '14px',
+    fontSize: '13px',
     background: '#f0fdf4',
-    padding: '2px 10px',
-    borderRadius: '4px',
+    padding: '3px 10px',
+    borderRadius: '6px',
     border: '1px solid #86efac',
   },
-  valueCountry: {
-    color: '#475569',
-    fontWeight: '600',
+  markupCountry: {
+    color: '#64748b',
+    fontWeight: '500',
     fontSize: '13px',
     fontStyle: 'italic',
   },
-  hint: {
-    color: '#64748b',
+  markupHint: {
+    color: '#94a3b8',
     fontSize: '12px',
-    marginLeft: '4px',
+    marginLeft: 'auto',
+    fontStyle: 'italic',
   },
-  text: {
+  markupText: {
     color: '#64748b',
     fontSize: '13px',
+    fontWeight: '500',
   },
 
-  // ✅ Global Update Banner (naya)
+  // --- Global Update Banner ---
   updateBanner: {
     display: 'flex',
     alignItems: 'center',
-    gap: '12px',
-    padding: '12px 16px',
-    marginBottom: '16px',
-    background: 'linear-gradient(135deg, #fef3c7 0%, #fde68a 100%)',
-    border: '1px solid #fbbf24',
-    borderRadius: '8px',
+    gap: '16px',
+    padding: '14px 18px',
+    marginBottom: '20px',
+    background: 'linear-gradient(135deg, #fffbeb 0%, #fef3c7 100%)',
+    border: '1px solid #fcd34d',
+    borderRadius: '10px',
+    boxShadow: '0 2px 4px rgba(251, 191, 36, 0.1)',
+  },
+  updateIconWrapper: {
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    width: '36px',
+    height: '36px',
+    background: 'white',
+    borderRadius: '50%',
+    boxShadow: '0 1px 3px rgba(0,0,0,0.1)',
+    flexShrink: 0,
   },
   updateIcon: {
-    fontSize: '20px',
-    flexShrink: 0,
+    fontSize: '18px',
     animation: 'spin 1.5s linear infinite',
   },
   updateContent: {
@@ -288,23 +353,29 @@ const styles2 = {
   },
   updateText: {
     color: '#92400e',
-    fontWeight: '600',
-    fontSize: '13px',
+    fontWeight: '700',
+    fontSize: '14px',
   },
   updateHint: {
-    color: '#a16207',
-    fontSize: '12px',
+    color: '#b45309',
+    fontSize: '13px',
+    fontWeight: '500',
   },
   updateBtn: {
-    padding: '6px 14px',
+    padding: '8px 16px',
     background: '#92400e',
     color: 'white',
     border: 'none',
     borderRadius: '6px',
-    fontSize: '12px',
+    fontSize: '13px',
     fontWeight: '600',
     cursor: 'pointer',
     whiteSpace: 'nowrap',
-    transition: 'all 0.15s ease',
+    transition: 'all 0.2s ease',
+    boxShadow: '0 1px 2px rgba(0,0,0,0.1)',
+    ':hover': {
+      background: '#78350f',
+      transform: 'translateY(-1px)',
+    }
   },
 }
