@@ -1,5 +1,5 @@
 // src/pages/ShopifyApp.jsx
-// ✅ UPDATED: Add Product + Collections full-width side-by-side
+// ✅ UPDATED: InfoBox removed + Centered layout
 
 import { useShopifyApp } from '../hooks/useShopifyApp'
 import { usePriceUpdateStore } from '../store/priceUpdateStore'
@@ -7,7 +7,6 @@ import { styles, theme } from '../styles/theme'
 import Header from '../components/Header'
 import AddProductForm from '../components/AddProductForm'
 import CollectionsSelector from '../components/CollectionsSelector'
-import InfoBox from '../components/InfoBox'
 import PlanCard from '../components/PlanCard'
 import Loader from '../components/Loader'
 
@@ -43,7 +42,7 @@ export default function ShopifyApp() {
   if (!subscription?.active) {
     return (
       <div style={styles.page}>
-        <div style={localStyles.wideContainer}>
+        <div style={localStyles.centeredContainer}>
           <div style={localStyles.headerSection}>
             <h1 style={localStyles.mainTitle}>🛒 Amazon Product Manager</h1>
             <p style={localStyles.subtitle}>
@@ -89,17 +88,17 @@ export default function ShopifyApp() {
     )
   }
 
-  // Main App
+  // Main App — ✅ Centered layout, no InfoBox
   return (
     <div style={styles.page}>
-      <div style={localStyles.wideContainer}>
+      <div style={localStyles.centeredContainer}>
         <Header
           shopifyReady={shopifyReady}
           shopDomain={shopDomain}
           subscription={subscription}
         />
 
-        {/* ✅ Global price update indicator */}
+        {/* Global price update indicator */}
         {cronRunning && (
           <div style={localStyles.updateBanner}>
             <div style={localStyles.updateIconWrapper}>
@@ -123,13 +122,13 @@ export default function ShopifyApp() {
           </div>
         )}
 
-        {/* Store saved markup + tax info banner */}
+        {/* Store saved markup info banner */}
         <StoreMarkupBanner
           storeMarkup={storeMarkup}
           loading={storeMarkupLoading}
         />
 
-        {/* ✅ 2-column FULL-WIDTH layout */}
+        {/* ✅ 2-column layout — centered, no InfoBox */}
         <div style={localStyles.twoColumnGrid}>
           <div style={localStyles.column}>
             <AddProductForm
@@ -153,7 +152,7 @@ export default function ShopifyApp() {
           </div>
         </div>
 
-        <InfoBox />
+        {/* ❌ InfoBox removed */}
       </div>
     </div>
   )
@@ -201,9 +200,9 @@ function StoreMarkupBanner({ storeMarkup, loading }) {
 // Local Styles
 // ============================================
 const localStyles = {
-  // ✅ UPDATED: Wide container (was 900px, now 1400px)
-  wideContainer: {
-    maxWidth: '1400px',
+  // ✅ NAYA: Centered container (max 1200px, page ke beech me)
+  centeredContainer: {
+    maxWidth: '1200px',
     margin: '0 auto',
     padding: '0 24px',
   },
@@ -388,7 +387,7 @@ const localStyles = {
     boxShadow: '0 1px 2px rgba(0,0,0,0.1)',
   },
 
-  // ✅ 2-column FULL-WIDTH layout (50% each)
+  // ✅ 2-column layout (centered)
   twoColumnGrid: {
     display: 'grid',
     gridTemplateColumns: '1fr 1fr',
