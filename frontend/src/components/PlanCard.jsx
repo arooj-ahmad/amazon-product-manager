@@ -5,9 +5,9 @@ export default function PlanCard({
   plan,
   onSubscribe,
   isSubscribing,       // global subscribing state
-  subscribingPlanKey,  // ← NAYA: kaunsa plan currently loading hai
+  subscribingPlanKey,  // ← NEW: which plan is currently loading
 }) {
-  // ✅ Check karein ke yeh card currently loading hai ya nahi
+  // ✅ Check if this card is currently loading
   const isThisLoading = isSubscribing && subscribingPlanKey === plan.key
 
   return (
@@ -78,10 +78,10 @@ export default function PlanCard({
         ))}
       </ul>
 
-      {/* ✅ Sirf yeh button apni loading state dikhata hai */}
+      {/* ✅ Only this button shows its own loading state */}
       <button
         onClick={() => onSubscribe(plan.key)}
-        disabled={isSubscribing}  // ✅ Sab buttons disable — but only this one shows loading
+        disabled={isSubscribing}  // ✅ All buttons disabled — but only this one shows loading
         style={{
           ...styles.primaryBtn,
           background: isThisLoading

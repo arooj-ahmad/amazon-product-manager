@@ -1,5 +1,5 @@
 // src/components/AddProductForm.jsx
-// ✅ SIMPLIFIED: Markup settings hata diye — ab user sidebar se set karega
+// ✅ SIMPLIFIED: Removed markup settings — user will now set them from the sidebar
 import { theme } from '../styles/theme'
 
 export default function AddProductForm({
@@ -9,7 +9,7 @@ export default function AddProductForm({
   message,
   onSubmit,
 }) {
-  // ✅ Sirf URL validation
+  // ✅ URL validation only
   const isFormValid = () => {
     return amazonUrl.trim().length > 0
   }
@@ -52,8 +52,8 @@ export default function AddProductForm({
         <div style={styles.infoBanner}>
           <span style={styles.infoIcon}>💡</span>
           <span style={styles.infoText}>
-            Markup aapki saved settings se apply hoga. Change karne ke liye{' '}
-            <strong>Markup Settings</strong> page par jaayein.
+            Markup will be applied from your saved settings. To change it, go to the{' '}
+            <strong>Markup Settings</strong> page.
           </span>
         </div>
 
@@ -194,7 +194,7 @@ const styles = {
     color: theme.colors.text,
     transition: theme.transitions.fast,
   },
-  // ✅ NAYA: Info banner styles
+  // ✅ NEW: Info banner styles
   infoBanner: {
     display: 'flex',
     alignItems: 'flex-start',

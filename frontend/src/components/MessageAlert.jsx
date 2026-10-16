@@ -4,30 +4,29 @@ import { theme } from '../styles/theme'
 export default function MessageAlert({ message }) {
   if (!message) return null
 
-  const isSuccess = message.type === 'success'
-  const isError = message.type === 'error'
-  const isWarning = message.type === 'warning'
+  // Lookup table for cleaner config selection
+  const configMap = {
+    success: {
+      bg: theme.colors.successBg,
+      color: theme.colors.successText,
+      border: theme.colors.successBorder,
+      icon: '✓',
+    },
+    error: {
+      bg: theme.colors.errorBg,
+      color: theme.colors.errorText,
+      border: theme.colors.errorBorder,
+      icon: '!',
+    },
+    warning: {
+      bg: theme.colors.warningBg,
+      color: theme.colors.warningText,
+      border: theme.colors.warningBorder || '#f5d97a',
+      icon: '⚠',
+    },
+  }
 
-  const config = isSuccess
-    ? {
-        bg: theme.colors.successBg,
-        color: theme.colors.successText,
-        border: theme.colors.successBorder,
-        icon: '✓',
-      }
-    : isError
-    ? {
-        bg: theme.colors.errorBg,
-        color: theme.colors.errorText,
-        border: theme.colors.errorBorder,
-        icon: '!',
-      }
-    : {
-        bg: theme.colors.warningBg,
-        color: theme.colors.warningText,
-        border: '#f5d97a',
-        icon: '⚠',
-      }
+  const config = configMap[message.type] || configMap.warning
 
   return (
     <div

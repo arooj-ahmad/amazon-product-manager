@@ -13,6 +13,7 @@ function Navbar() {
           {/* LOGO */}
           <Link
             to="/shopify-app"
+            aria-label="Go to Amazon Product Manager home"
             className="flex items-center gap-2 hover:outline hover:outline-1 hover:outline-white rounded px-2 py-1 flex-shrink-0"
           >
             <span className="text-2xl">🛒</span>

@@ -1,6 +1,6 @@
 // src/components/Loader.jsx
 // ✅ Reusable Circle Spinner Loader
-// Har page pe use kar sakte ho — full screen centered
+// Can be used on any page — full screen centered
 
 import { theme } from '../styles/theme'
 
@@ -31,7 +31,7 @@ export default function Loader({ text = 'Loading...', fullScreen = true }) {
   )
 }
 
-// Inline spinner (chhote buttons ke liye)
+// Inline spinner (for small buttons)
 export function InlineSpinner({ size = 16, color = 'white' }) {
   return (
     <div

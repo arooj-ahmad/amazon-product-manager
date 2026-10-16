@@ -107,7 +107,7 @@ export default function CollectionsSelector({
       <div style={styles.list}>
         {filtered.length === 0 ? (
           <div style={styles.noResults}>
-            No collections match "{searchQuery}"
+            No collections match “{searchQuery}”
           </div>
         ) : (
           filtered.map((col) => {
@@ -115,6 +115,15 @@ export default function CollectionsSelector({
             return (
               <div
                 key={col.id}
+                role="button"
+                tabIndex={0}
+                onClick={() => onToggle(col.id)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' || e.key === ' ') {
+                    e.preventDefault()
+                    onToggle(col.id)
+                  }
+                }}
                 style={{
                   ...styles.item,
                   background: isSelected
@@ -124,7 +133,6 @@ export default function CollectionsSelector({
                     ? theme.colors.primary
                     : 'transparent',
                 }}
-                onClick={() => onToggle(col.id)}
               >
                 <div
                   style={{

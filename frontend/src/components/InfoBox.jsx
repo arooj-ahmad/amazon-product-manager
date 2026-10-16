@@ -1,6 +1,15 @@
 // src/components/InfoBox.jsx
 import { styles, theme } from '../styles/theme'
 
+const HOW_IT_WORKS = [
+  'Paste any Amazon product URL',
+  'Set your markup ($ fixed or % percent)',
+  'Click "Fetch & Add"',
+  'We fetch title, images, price, and specs from Amazon',
+  'Product is added to both Supabase and your Shopify store',
+  'Product appears in your Shopify Products list',
+]
+
 export default function InfoBox() {
   return (
     <>
@@ -18,12 +27,9 @@ export default function InfoBox() {
             margin: '12px 0 0 0',
           }}
         >
-          <li>Paste any Amazon product URL</li>
-          <li>Set your markup ($ fixed or % percent)</li>
-          <li>Click "Fetch &amp; Add"</li>
-          <li>We fetch title, images, price, and specs from Amazon</li>
-          <li>Product is added to both Supabase and your Shopify store</li>
-          <li>Product appears in your Shopify Products list</li>
+          {HOW_IT_WORKS.map((step, idx) => (
+            <li key={idx}>{step}</li>
+          ))}
         </ol>
       </div>
 

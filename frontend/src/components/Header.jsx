@@ -5,7 +5,7 @@ export default function Header({
   shopifyReady,
   shopDomain,
   subscription,
-  // ❌ onOpenMarkupSettings HATAO — ab sidebar mein hai
+  // ❌ REMOVED onOpenMarkupSettings — it is now in the sidebar
 }) {
   return (
     <div style={styles.wrapper}>

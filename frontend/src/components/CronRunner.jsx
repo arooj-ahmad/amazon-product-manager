@@ -1,10 +1,10 @@
 // src/components/CronRunner.jsx
-// + ✅ NAYA: Progress bar while running
-// + ✅ NAYA: Summary + detailed results after complete
-// + ✅ FIXED: Indeterminate progress when total unknown
+// + ✅ NEW: Progress bar while running
+// + ✅ NEW: Summary + detailed results after completion
+// + ✅ FIXED: Indeterminate progress when total is unknown
 // + ✅ FIXED: Elapsed time tracker
 // + ✅ FIXED: Empty results message
-// + ✅ NAYA v2: Dismiss button (✕) — summary manually hatane ke liye
+// + ✅ NEW v2: Dismiss button (✕) — to manually hide the summary
 
 import { useState, useEffect } from 'react'
 import { theme } from '../styles/theme'
@@ -19,10 +19,10 @@ export default function CronRunner({
   const { running, step, total, currentProduct, summary } =
     cronProgress || {}
 
-  // ✅ NAYA: Dismiss handler — Zustand store se
+  // ✅ NEW: Dismiss handler — from Zustand store
   const { dismissSummary } = usePriceUpdateStore()
 
-  // ✅ NAYA: Elapsed time tracker
+  // ✅ NEW: Elapsed time tracker
   const [elapsed, setElapsed] = useState(0)
 
   useEffect(() => {
@@ -100,7 +100,7 @@ export default function CronRunner({
         )}
       </button>
 
-      {/* ✅ Progress (indeterminate when total unknown) */}
+      {/* ✅ Progress (indeterminate when total is unknown) */}
       {running && (
         <div style={styles.progressContainer}>
           <div style={styles.progressHeader}>
@@ -130,15 +130,15 @@ export default function CronRunner({
           )}
 
           <p style={styles.progressHint}>
-            Yeh 1–5 minute lag sakta hai. Tab tak app open rakhein.
+            This may take 1–5 minutes. Please keep the app open during this time.
           </p>
         </div>
       )}
 
-      {/* ✅ Summary (jab complete ho) */}
+      {/* ✅ Summary (when complete) */}
       {summary && !running && (
         <div style={styles.summaryBox}>
-          {/* ✅ NAYA: Header with dismiss button */}
+          {/* ✅ NEW: Header with dismiss button */}
           <div style={styles.summaryHeader}>
             <div style={styles.summaryTitle}>
               ✅ Price Update Complete
@@ -224,7 +224,7 @@ export default function CronRunner({
             </details>
           ) : (
             <p style={styles.emptyResults}>
-              Sab products already up-to-date the ✅
+              All products were already up-to-date ✅
             </p>
           )}
         </div>
@@ -397,7 +397,7 @@ const styles = {
     borderRadius: theme.radii.md,
   },
 
-  // ✅ NAYA: Summary header with dismiss button
+  // ✅ NEW: Summary header with dismiss button
   summaryHeader: {
     display: 'flex',
     justifyContent: 'space-between',
