@@ -5,11 +5,12 @@
 // + ✅ NEW: Tax rate field (manual override)
 // + ✅ FIXED: Navigation via window.location.hash
 // + ✅ FIXED: Circle spinner loader (consistent with other pages)
+// + ✅ NEW v2: Compare Price Settings link card
 // ============================================
 
 import { useState, useEffect } from 'react'
 import { getCountries } from '../api/pricing'
-import Loader from '../components/Loader'   // ✅ NEW
+import Loader from '../components/Loader'
 
 const API_URL =
   (import.meta.env.VITE_API_URL || '').trim() ||
@@ -101,7 +102,6 @@ export default function MarkupSettings() {
       const countriesData = await getCountries()
       setCountries(countriesData || [])
 
-      // Load saved default
       try {
         const defRes = await safeFetch(
           `${API_URL}/api/markup/store-default?shop_domain=${encodeURIComponent(domain)}`
@@ -132,7 +132,6 @@ export default function MarkupSettings() {
     }
   }
 
-  // ✅ Auto-fill tax rate when country changes
   const handleCountryChange = (countryId) => {
     const country = countries.find((c) => c.id === parseInt(countryId))
     setFormData({
@@ -213,7 +212,11 @@ export default function MarkupSettings() {
     navigateTo('/products')
   }
 
-  // ✅ FIXED: Circle spinner loader
+  // ✅ NAYA: Compare Price Settings navigation
+  const handleGoToComparePrice = () => {
+    navigateTo('/compare-price-settings')
+  }
+
   if (loading) {
     return <Loader text="Loading markup settings..." />
   }
@@ -457,6 +460,27 @@ export default function MarkupSettings() {
           </div>
         )}
 
+        {/* ✅ NAYA: Compare Price Settings Card */}
+        <div style={styles.comparePriceCard}>
+          <div style={styles.comparePriceIconBox}>
+            <span style={styles.comparePriceIcon}>🏷️</span>
+          </div>
+          <div style={styles.infoContent}>
+            <h3 style={styles.infoTitle}>Compare Price Settings</h3>
+            <p style={styles.infoText}>
+              Set the default <strong>compare-at price</strong> rule (strikethrough
+              price). It will apply to every new product you add.
+            </p>
+            <button
+              type="button"
+              onClick={handleGoToComparePrice}
+              style={styles.comparePriceBtn}
+            >
+              Compare Price Settings →
+            </button>
+          </div>
+        </div>
+
         {/* Info Card */}
         <div style={styles.infoCard}>
           <div style={styles.infoIconBox}>
@@ -674,6 +698,43 @@ const styles = {
     fontSize: '13px',
     marginBottom: '20px',
     fontWeight: '500',
+  },
+
+  // ✅ NAYA: Compare Price Card
+  comparePriceCard: {
+    display: 'flex',
+    alignItems: 'flex-start',
+    gap: '16px',
+    padding: '20px',
+    background: 'white',
+    border: '1px solid #e1e3e5',
+    borderRadius: '10px',
+    marginBottom: '20px',
+    boxShadow: '0 1px 2px rgba(0,0,0,0.04)',
+  },
+  comparePriceIconBox: {
+    width: '48px',
+    height: '48px',
+    borderRadius: '8px',
+    background: '#fef3c7',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    flexShrink: 0,
+  },
+  comparePriceIcon: { fontSize: '24px' },
+  comparePriceBtn: {
+    display: 'inline-flex',
+    alignItems: 'center',
+    gap: '6px',
+    padding: '8px 16px',
+    background: '#92400e',
+    color: 'white',
+    border: 'none',
+    borderRadius: '6px',
+    fontSize: '13px',
+    fontWeight: '600',
+    cursor: 'pointer',
   },
 
   infoCard: {

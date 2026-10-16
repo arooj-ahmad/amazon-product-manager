@@ -5,6 +5,7 @@
 // + ✅ FIX: External hash + path listener
 // + ✅ NAYA: RouteLoader (nprogress) — page change par loading bar
 // + ✅ FIXED v2: Footer poori tarah remove kar diya
+// + ✅ NAYA v3: Compare Price Settings route
 // ============================================
 
 import {
@@ -27,6 +28,7 @@ import PriceUpdater from './pages/PriceUpdater'
 import ProductsPricing from './pages/ProductsPricing'
 import PrivacyPolicy from './pages/PrivacyPolicy'
 import TermsOfService from './pages/TermsOfService'
+import ComparePriceSettings from './pages/ComparePriceSettings'   // ✅ NAYA
 
 // ✅ NProgress config
 NProgress.configure({
@@ -115,6 +117,7 @@ function HashChangeListener() {
 // ============================================
 // Layout wrapper — full screen vs normal
 // ✅ FIXED v2: Footer hata diya
+// ✅ NAYA v3: Compare Price Settings full screen
 // ============================================
 function Layout({ children }) {
   const location = useLocation()
@@ -124,6 +127,7 @@ function Layout({ children }) {
     '/shopify-app',
     '/price-updater',
     '/products',
+    '/compare-price-settings',   // ✅ NAYA
   ]
   const isFullScreen = FULL_SCREEN_ROUTES.some((path) =>
     location.pathname.startsWith(path)
@@ -153,6 +157,11 @@ function App() {
           <Route path="/markup-settings" element={<MarkupSettings />} />
           <Route path="/products" element={<ProductsPricing />} />
           <Route path="/price-updater" element={<PriceUpdater />} />
+          {/* ✅ NAYA: Compare Price Settings */}
+          <Route
+            path="/compare-price-settings"
+            element={<ComparePriceSettings />}
+          />
           <Route path="/product/:slug" element={<ProductDetail />} />
           <Route path="/product/id/:id" element={<ProductDetail />} />
           <Route path="/shopify-app" element={<ShopifyApp />} />

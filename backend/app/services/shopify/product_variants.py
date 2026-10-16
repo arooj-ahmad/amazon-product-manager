@@ -2,6 +2,8 @@
 # Variant + Option management
 # + ✅ NAYA: Weight mapping support
 # + ✅ NAYA: Measurement in variant input
+# + ✅ NAYA v2: Compare-at price in add_variant_to_existing_product
+# + ✅ NAYA v2: Compare-at price in variant mutation response
 
 import logging
 import re
@@ -13,7 +15,7 @@ logger = logging.getLogger(__name__)
 
 
 # ============================================
-# ✅ NAYA: Parse weight string → (value, unit)
+# ✅ Parse weight string → (value, unit)
 # ============================================
 def _parse_weight(weight_str) -> tuple:
     """
@@ -27,7 +29,6 @@ def _parse_weight(weight_str) -> tuple:
     if not s or s == "none":
         return None, None
 
-    # Extract first number
     match = re.search(r"([\d.]+)", s)
     if not match:
         return None, None
@@ -37,7 +38,6 @@ def _parse_weight(weight_str) -> tuple:
     except ValueError:
         return None, None
 
-    # Detect unit and convert to pounds (Shopify accepts POUNDS/GRAMS/KILOGRAMS/OUNCES)
     if "kg" in s or "kilogram" in s:
         unit = "KILOGRAMS"
     elif "gram" in s or s.endswith("g") or " g" in s:
@@ -45,18 +45,16 @@ def _parse_weight(weight_str) -> tuple:
     elif "ounce" in s or " oz" in s or s.endswith("oz"):
         unit = "OUNCES"
     elif "milligram" in s or " mg" in s:
-        # Convert milligrams to grams
         value = value / 1000
         unit = "GRAMS"
     else:
-        # Default: pounds
         unit = "POUNDS"
 
     return round(value, 4), unit
 
 
 # ============================================
-# ✅ NAYA: Build measurement input from variant_data
+# ✅ Build measurement input from variant_data
 # ============================================
 def _build_measurement(variant_data: dict) -> dict:
     """
@@ -79,6 +77,35 @@ def _build_measurement(variant_data: dict) -> dict:
             }
         }
     return {}
+
+
+# ============================================
+# ✅ NAYA: Normalize compare_at_price
+# ============================================
+def _normalize_compare_at_price(compare_at_price, price) -> str | None:
+    """
+    Validate + format compare_at_price.
+    Returns formatted string "XX.XX" or None.
+    """
+    if compare_at_price is None:
+        return None
+
+    try:
+        cap = float(compare_at_price)
+        price_f = float(price)
+
+        # ✅ Compare price > final price hona chahiye
+        if cap <= price_f:
+            logger.warning(
+                f"⚠️ compare_at_price (${cap}) <= price (${price_f}) — skipping"
+            )
+            return None
+
+        return f"{cap:.2f}"
+
+    except (ValueError, TypeError) as e:
+        logger.warning(f"⚠️ Invalid compare_at_price: {compare_at_price} — {e}")
+        return None
 
 
 # ============================================
@@ -123,7 +150,7 @@ async def update_variant_with_tracked(
     if sku:
         inventory_item_input["sku"] = sku
 
-    # ✅ NAYA: Add weight measurement if provided
+    # ✅ Add weight measurement if provided
     if weight:
         measurement = _build_measurement({"weight": weight})
         if measurement:
@@ -139,13 +166,11 @@ async def update_variant_with_tracked(
         "inventoryItem": inventory_item_input,
     }
 
-    if compare_at_price is not None:
-        try:
-            cap = float(compare_at_price)
-            if cap > float(price):
-                variant_input["compareAtPrice"] = f"{cap:.2f}"
-        except (ValueError, TypeError):
-            pass
+    # ✅ NAYA: Compare-at price add karo (normalized)
+    cap_str = _normalize_compare_at_price(compare_at_price, price)
+    if cap_str:
+        variant_input["compareAtPrice"] = cap_str
+        logger.info(f"   💰 Compare-at price set: ${cap_str}")
 
     variables = {
         "productId": product_id,
@@ -332,6 +357,7 @@ async def ensure_product_has_option(
 
 # ============================================
 # ADD VARIANT TO EXISTING PRODUCT
+# ✅ NAYA v2: compare_at_price support
 # ============================================
 async def add_variant_to_existing_product(
     shop: str,
@@ -340,7 +366,7 @@ async def add_variant_to_existing_product(
     variant_data: dict,
     all_options: list = None,
 ) -> dict:
-    """Existing product mein naya variant add karo (weight ke saath)."""
+    """Existing product mein naya variant add karo (weight + compare-at)."""
     if not all_options:
         option_name = variant_data.get("option_name") or "Style"
         option_value = variant_data.get("title") or "Default"
@@ -372,8 +398,9 @@ async def add_variant_to_existing_product(
     ]
 
     sku_value = variant_data.get("sku", "") or ""
+    price_value = variant_data.get("price", 0)
 
-    # ✅ NAYA: Build inventory item with weight
+    # ✅ Build inventory item with weight
     inventory_item_input = {"tracked": True}
     if sku_value:
         inventory_item_input["sku"] = sku_value
@@ -396,6 +423,7 @@ async def add_variant_to_existing_product(
           id
           title
           price
+          compareAtPrice
           inventoryItem {
             id
             sku
@@ -412,9 +440,16 @@ async def add_variant_to_existing_product(
 
     variants_input = {
         "optionValues": option_values,
-        "price": str(variant_data.get("price", 0)),
+        "price": str(price_value),
         "inventoryItem": inventory_item_input,
     }
+
+    # ✅ NAYA: Compare-at price add karo
+    compare_at_price = variant_data.get("compare_at_price")
+    cap_str = _normalize_compare_at_price(compare_at_price, price_value)
+    if cap_str:
+        variants_input["compareAtPrice"] = cap_str
+        logger.info(f"   💰 Compare-at price set: ${cap_str}")
 
     variables = {"productId": product_id, "variants": [variants_input]}
 
@@ -449,6 +484,7 @@ async def add_variant_to_existing_product(
 
         logger.info(
             f"✅ Variant added: {v.get('title')} — ${v.get('price')} "
+            f"— compare_at: ${v.get('compareAtPrice', 'N/A')} "
             f"— SKU: {v.get('inventoryItem', {}).get('sku', 'N/A')} "
             f"— Weight: {weight_data.get('value', 'N/A')} {weight_data.get('unit', '')}"
         )

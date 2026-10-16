@@ -5,6 +5,8 @@
 # + ✅ NAYA: extra_percent support (Fixed + Percent)
 # + ✅ NAYA: Store default markup (GET + PUT)
 # + ✅ NAYA: Store default country + tax
+# + ✅ NAYA v7: Compare At Price settings (GET + PUT)
+# + ✅ NAYA v8: /store-compare-price endpoints (frontend match)
 # ============================================
 
 import logging
@@ -74,6 +76,20 @@ def get_store_default_markup(
         "tax_rate": float(
             getattr(store, "default_tax_rate", None) or 0.0
         ),
+        # ✅ NAYA: Compare At Price
+        "compare_at_enabled": bool(
+            getattr(store, "default_compare_at_enabled", False)
+        ),
+        "compare_at_type": (
+            getattr(store, "default_compare_at_type", None) or "percent"
+        ),
+        "compare_at_value": float(
+            getattr(store, "default_compare_at_value", None) or 30.0
+        ),
+        # ✅ NAYA v8: Rule (frontend field)
+        "compare_at_rule": (
+            getattr(store, "default_compare_at_rule", None) or "none"
+        ),
     }
 
 
@@ -86,8 +102,8 @@ def update_store_default_markup(
     markup: float = Body(..., embed=True),
     markup_type: str = Body(..., embed=True),
     extra_percent: float = Body(0.0, embed=True),
-    country_id: int = Body(None, embed=True),      # ✅ NAYA
-    tax_rate: float = Body(0.0, embed=True),       # ✅ NAYA
+    country_id: int = Body(None, embed=True),
+    tax_rate: float = Body(0.0, embed=True),
     db: Session = Depends(get_db),
 ):
     """
@@ -168,6 +184,253 @@ def update_store_default_markup(
         "country_id": store.default_country_id,
         "country_name": country_name,
         "tax_rate": float(store.default_tax_rate or 0.0),
+        # ✅ Compare At Price
+        "compare_at_enabled": bool(
+            getattr(store, "default_compare_at_enabled", False)
+        ),
+        "compare_at_type": (
+            getattr(store, "default_compare_at_type", None) or "percent"
+        ),
+        "compare_at_value": float(
+            getattr(store, "default_compare_at_value", None) or 30.0
+        ),
+        "compare_at_rule": (
+            getattr(store, "default_compare_at_rule", None) or "none"
+        ),
+    }
+
+
+# ============================================
+# ✅ NAYA v8: STORE COMPARE PRICE — GET
+# Yeh endpoint frontend (`ComparePriceSettings.jsx`) use karta hai
+# ============================================
+@router.get("/store-compare-price")
+def get_store_compare_price(
+    shop_domain: str = Query(..., description="Shopify store domain"),
+    db: Session = Depends(get_db),
+):
+    """
+    Store ki compare-at price rule return karo.
+    Frontend ke liye response shape:
+      { rule_type, fixed_amount, percent }
+    """
+    store = db.query(ShopifyStore).filter(
+        ShopifyStore.shop_domain == shop_domain
+    ).first()
+
+    if not store:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Store not found: {shop_domain}",
+        )
+
+    # ✅ Rule: pehle naya field check karo, phir purane se derive karo
+    rule_type = getattr(store, "default_compare_at_rule", None)
+
+    if not rule_type:
+        # Fallback — purane fields se derive
+        enabled = bool(
+            getattr(store, "default_compare_at_enabled", False)
+        )
+        compare_type = (
+            getattr(store, "default_compare_at_type", None) or "percent"
+        )
+
+        if not enabled:
+            rule_type = "none"
+        elif compare_type == "amazon":
+            rule_type = "amazon"
+        elif compare_type == "fixed":
+            rule_type = "fixed"
+        else:
+            rule_type = "percent"
+
+    compare_value = float(
+        getattr(store, "default_compare_at_value", None) or 0.0
+    )
+
+    # Frontend response shape
+    return {
+        "shop_domain": store.shop_domain,
+        "rule_type": rule_type,
+        "fixed_amount": compare_value if rule_type == "fixed" else 0,
+        "percent": compare_value if rule_type == "percent" else 0,
+        # Backward compat
+        "enabled": rule_type not in ("none",),
+        "compare_at_type": (
+            getattr(store, "default_compare_at_type", None) or "percent"
+        ),
+        "compare_at_value": compare_value,
+    }
+
+
+# ============================================
+# ✅ NAYA v8: STORE COMPARE PRICE — PUT
+# Frontend sends: rule_type, fixed_amount, percent
+# ============================================
+@router.put("/store-compare-price")
+def update_store_compare_price(
+    shop_domain: str = Body(..., embed=True),
+    rule_type: str = Body("none", embed=True),
+    fixed_amount: float = Body(0.0, embed=True),
+    percent: float = Body(0.0, embed=True),
+    db: Session = Depends(get_db),
+):
+    """
+    Store ki compare-at price rule save karo.
+    Frontend sends: rule_type, fixed_amount, percent
+
+    rule_type options:
+      "none"     → do not set compare price
+      "amazon"   → compare = amazon price
+      "fixed"    → compare = final_price + fixed_amount
+      "percent"  → compare = final_price × (1 + percent/100)
+    """
+    # Validation
+    if rule_type not in ("none", "amazon", "fixed", "percent"):
+        raise HTTPException(
+            status_code=400,
+            detail="rule_type must be one of: none, amazon, fixed, percent",
+        )
+
+    if rule_type == "fixed" and fixed_amount <= 0:
+        raise HTTPException(
+            status_code=400,
+            detail="fixed_amount must be > 0 when rule_type='fixed'",
+        )
+
+    if rule_type == "percent" and (percent <= 0 or percent > 500):
+        raise HTTPException(
+            status_code=400,
+            detail="percent must be between 0 and 500 when rule_type='percent'",
+        )
+
+    store = db.query(ShopifyStore).filter(
+        ShopifyStore.shop_domain == shop_domain
+    ).first()
+
+    if not store:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Store not found: {shop_domain}",
+        )
+
+    # ✅ Save rule
+    store.default_compare_at_rule = rule_type
+    store.default_compare_at_enabled = rule_type != "none"
+
+    if rule_type == "fixed":
+        store.default_compare_at_type = "fixed"
+        store.default_compare_at_value = fixed_amount
+    elif rule_type == "percent":
+        store.default_compare_at_type = "percent"
+        store.default_compare_at_value = percent
+    elif rule_type == "amazon":
+        store.default_compare_at_type = "amazon"
+        store.default_compare_at_value = 0.0
+    else:  # none
+        store.default_compare_at_type = "none"
+        store.default_compare_at_value = 0.0
+
+    db.commit()
+    db.refresh(store)
+
+    logger.info(
+        f"✅ Compare price rule saved for {shop_domain}: "
+        f"rule_type={rule_type}, fixed={fixed_amount}, percent={percent}"
+    )
+
+    return {
+        "success": True,
+        "message": "Compare price rule saved successfully",
+        "shop_domain": store.shop_domain,
+        "rule_type": store.default_compare_at_rule or "none",
+        "fixed_amount": fixed_amount if rule_type == "fixed" else 0,
+        "percent": percent if rule_type == "percent" else 0,
+    }
+
+
+# ============================================
+# ✅ v7 (backward compat): COMPARE AT PRICE — GET
+# ============================================
+@router.get("/compare-at-settings")
+def get_compare_at_settings(
+    shop_domain: str = Query(..., description="Shopify store domain"),
+    db: Session = Depends(get_db),
+):
+    """Store ki compare-at price settings return karo (old endpoint)."""
+    store = db.query(ShopifyStore).filter(
+        ShopifyStore.shop_domain == shop_domain
+    ).first()
+
+    if not store:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Store not found: {shop_domain}",
+        )
+
+    return {
+        "shop_domain": store.shop_domain,
+        "enabled": bool(
+            getattr(store, "default_compare_at_enabled", False)
+        ),
+        "type": (
+            getattr(store, "default_compare_at_type", None) or "percent"
+        ),
+        "value": float(
+            getattr(store, "default_compare_at_value", None) or 30.0
+        ),
+    }
+
+
+# ============================================
+# ✅ v7 (backward compat): COMPARE AT PRICE — PUT
+# ============================================
+@router.put("/compare-at-settings")
+def update_compare_at_settings(
+    shop_domain: str = Body(..., embed=True),
+    enabled: bool = Body(..., embed=True),
+    compare_at_type: str = Body("percent", embed=True),
+    compare_at_value: float = Body(30.0, embed=True),
+    db: Session = Depends(get_db),
+):
+    """Store ki compare-at price settings save karo (old endpoint)."""
+    if compare_at_type not in ("percent", "fixed", "amazon", "none"):
+        raise HTTPException(
+            status_code=400,
+            detail="compare_at_type must be one of: percent, fixed, amazon, none",
+        )
+
+    if compare_at_value < 0:
+        raise HTTPException(
+            status_code=400,
+            detail="compare_at_value must be >= 0",
+        )
+
+    store = db.query(ShopifyStore).filter(
+        ShopifyStore.shop_domain == shop_domain
+    ).first()
+
+    if not store:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Store not found: {shop_domain}",
+        )
+
+    store.default_compare_at_enabled = enabled
+    store.default_compare_at_type = compare_at_type
+    store.default_compare_at_value = compare_at_value
+
+    db.commit()
+    db.refresh(store)
+
+    return {
+        "success": True,
+        "message": "Compare-at settings saved",
+        "shop_domain": store.shop_domain,
+        "enabled": bool(store.default_compare_at_enabled),
+        "type": store.default_compare_at_type or "percent",
+        "value": float(store.default_compare_at_value or 30.0),
     }
 
 
@@ -214,7 +477,6 @@ async def update_pricing(
             extra_percent=getattr(data, "extra_percent", 0.0),
         )
 
-        # Shopify par bhi update karo
         product = db.query(Product).filter(
             Product.id == int(data.product_id)
         ).first()
@@ -261,7 +523,6 @@ async def bulk_update(
             extra_percent=getattr(data, "extra_percent", 0.0),
         )
 
-        # Shopify par bhi update karo
         store = db.query(ShopifyStore).first()
         if store and store.access_token:
             products = db.query(Product).filter(

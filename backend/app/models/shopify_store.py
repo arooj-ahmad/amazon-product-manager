@@ -5,14 +5,17 @@
 # + ✅ NAYE COLUMNS — Expiring offline tokens ke liye
 # + ✅ NAYE COLUMNS — Store default markup (v5)
 # + ✅ NAYE COLUMNS — Store default country + tax (v6)
+# + ✅ NAYE COLUMNS — Store default compare-at price (v7)
+# + ✅ NAYE COLUMNS — Store default compare-at RULE (v8)
 # ============================================
 
 from sqlalchemy import (
     BigInteger,
+    Boolean,
     Column,
     DateTime,
-    Integer,        # ✅ NAYA — country_id ke liye
-    Numeric,        # decimal values ke liye
+    Integer,
+    Numeric,
     String,
     Text,
     func,
@@ -46,15 +49,47 @@ class ShopifyStore(Base):
     refresh_token_expires_at = Column(DateTime(timezone=True), nullable=True)
 
     # ✅ NAYE COLUMNS — Store default markup (v5)
-    # Ye markup har naye product par apply hoga
     default_markup = Column(Numeric(10, 2), nullable=True, default=2.00)
     default_markup_type = Column(String(20), nullable=True, default="fixed")
     default_extra_percent = Column(Numeric(10, 2), nullable=True, default=0.00)
 
     # ✅ NAYE COLUMNS — Store default country + tax (v6)
-    # Ye country + tax har naye product par apply hoga
     default_country_id = Column(Integer, nullable=True)
     default_tax_rate = Column(Numeric(5, 2), nullable=True, default=0.00)
+
+    # ============================================
+    # ✅ NAYE COLUMNS — Compare At Price (v7)
+    # ============================================
+    # Agar enable = False → compare at price set NAHI hoga
+    default_compare_at_enabled = Column(
+        Boolean, nullable=True, default=False
+    )
+    # Type: "percent" | "fixed" | "amazon" | "none"
+    # percent → final_price × (1 + value/100)
+    # fixed   → final_price + value
+    # amazon  → compare = amazon_price (from metafield)
+    # none    → not set
+    default_compare_at_type = Column(
+        String(20), nullable=True, default="percent"
+    )
+    default_compare_at_value = Column(
+        Numeric(10, 2), nullable=True, default=30.00
+    )
+
+    # ============================================
+    # ✅ NAYA (v8): COMPARE AT RULE — frontend uses this
+    # ============================================
+    # Values: "none" | "amazon" | "fixed" | "percent"
+    # Yeh frontend ke `rule_type` se match karta hai
+    #
+    # Rule → type + value mapping:
+    #   "none"     → enabled=False, type="none",    value=0
+    #   "amazon"   → enabled=True,  type="amazon",  value=0
+    #   "fixed"    → enabled=True,  type="fixed",   value=fixed_amount
+    #   "percent"  → enabled=True,  type="percent", value=percent
+    default_compare_at_rule = Column(
+        String(20), nullable=True, default="none"
+    )
 
     def __repr__(self):
         return f"<ShopifyStore {self.shop_domain}>"

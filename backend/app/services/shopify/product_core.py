@@ -2,12 +2,18 @@
 # app/services/shopify/product_core.py
 # Product create (simple + variants) + delete + search
 # + ✅ NAYA: Weight mapping to Shopify variant
+# + ✅ NAYA v2: Compare-at price store settings se aata hai
+# + ✅ NAYA v3: 4 rule types support (none/amazon/fixed/percent)
 # ============================================
 
 import logging
 import re
 from typing import Optional
 
+from sqlalchemy.orm import Session
+
+from app.database import SessionLocal
+from app.models import ShopifyStore
 from app.services.shopify_helpers import (
     shopify_graphql,
     _build_shopify_tags,
@@ -32,13 +38,154 @@ logger = logging.getLogger(__name__)
 
 
 # ============================================
+# ✅ NAYA v3: Compare-at price calculate karo
+# 4 rule types support: none / amazon / fixed / percent
+# ============================================
+def calculate_compare_at_price(
+    final_price: float,
+    compare_at_type: str,
+    compare_at_value: float,
+    amazon_price: float = None,
+) -> Optional[float]:
+    """
+    Compare-at price calculate karo.
+
+    Args:
+        final_price: Final selling price (e.g. $29.88)
+        compare_at_type: "none" | "amazon" | "fixed" | "percent"
+        compare_at_value: 30.0 (= +30% ya +$30)
+        amazon_price: Amazon price (only for "amazon" rule)
+
+    Returns:
+        Compare-at price (rounded to 2 decimals) ya None
+    """
+    # ✅ Rule "none" → skip
+    if compare_at_type == "none":
+        return None
+
+    # ✅ Rule "amazon" → Amazon price use karo
+    if compare_at_type == "amazon":
+        if amazon_price is None:
+            logger.warning("⚠️ amazon rule selected but no amazon_price")
+            return None
+
+        compare_price = round(float(amazon_price), 2)
+
+        # Sanity: compare price > final price hona chahiye
+        if compare_price <= final_price:
+            logger.warning(
+                f"⚠️ Amazon price (${compare_price}) <= final price "
+                f"(${final_price}) — skipping compare_at"
+            )
+            return None
+
+        return compare_price
+
+    # ✅ Rule "fixed" / "percent" → value based calculation
+    if not final_price or final_price <= 0:
+        return None
+
+    if not compare_at_value or compare_at_value <= 0:
+        return None
+
+    try:
+        if compare_at_type == "percent":
+            compare_price = final_price * (1 + compare_at_value / 100)
+        elif compare_at_type == "fixed":
+            compare_price = final_price + compare_at_value
+        else:
+            logger.warning(
+                f"⚠️ Unknown compare_at_type: {compare_at_type} — skipping"
+            )
+            return None
+
+        compare_price = round(compare_price, 2)
+
+        # Sanity check
+        if compare_price <= final_price:
+            logger.warning(
+                f"⚠️ Compare price (${compare_price}) <= final price "
+                f"(${final_price}) — skipping"
+            )
+            return None
+
+        return compare_price
+
+    except (ValueError, TypeError) as e:
+        logger.error(f"❌ Compare price calc error: {e}")
+        return None
+
+
+# ============================================
+# ✅ NAYA v3: Store ki compare-at settings fetch karo
+# 4 rule types support ke saath
+# ============================================
+def _get_compare_at_settings_from_store(
+    shop: str,
+) -> tuple:
+    """
+    Store ki compare-at settings fetch karo (DB se).
+
+    Returns:
+        (enabled: bool, type: str, value: float)
+        type = "none" | "amazon" | "fixed" | "percent"
+    """
+    db: Session = SessionLocal()
+    try:
+        store = db.query(ShopifyStore).filter(
+            ShopifyStore.shop_domain == shop
+        ).first()
+
+        if not store:
+            logger.warning(f"⚠️ Store not found in DB: {shop}")
+            return False, "none", 0.0
+
+        # ✅ Pehle naya rule field check karo
+        rule = getattr(store, "default_compare_at_rule", None)
+
+        # ✅ Agar nahi hai toh purane fields se derive karo
+        if not rule:
+            enabled_old = bool(
+                getattr(store, "default_compare_at_enabled", False)
+            )
+            type_old = (
+                getattr(store, "default_compare_at_type", None) or "percent"
+            )
+
+            if not enabled_old:
+                rule = "none"
+            elif type_old == "amazon":
+                rule = "amazon"
+            elif type_old == "fixed":
+                rule = "fixed"
+            else:
+                rule = "percent"
+
+        compare_value = float(
+            getattr(store, "default_compare_at_value", None) or 0.0
+        )
+
+        enabled = rule != "none"
+
+        logger.info(
+            f"   💰 Compare-at rule: rule={rule}, "
+            f"enabled={enabled}, value={compare_value}"
+        )
+
+        return enabled, rule, compare_value
+
+    except Exception as e:
+        logger.error(f"❌ Failed to fetch compare-at settings: {e}")
+        return False, "none", 0.0
+    finally:
+        db.close()
+
+
+# ============================================
 # ✅ NAYA: Parse weight string → (value, unit)
 # ============================================
 def _parse_weight(weight_str) -> tuple:
-    """
-    Parse weight string like "1.5 pounds", "680 g", "2.2 kg", "16 ounces".
-    Returns: (float_value_in_lbs, "POUNDS") or (None, None)
-    """
+    """Parse weight string like '1.5 pounds', '680 g', etc."""
     if not weight_str:
         return None, None
 
@@ -46,7 +193,6 @@ def _parse_weight(weight_str) -> tuple:
     if not s or s == "none":
         return None, None
 
-    # Extract number
     match = re.search(r"([\d.]+)", s)
     if not match:
         return None, None
@@ -56,15 +202,14 @@ def _parse_weight(weight_str) -> tuple:
     except ValueError:
         return None, None
 
-    # Detect unit and convert to pounds
     if "kg" in s or "kilogram" in s:
-        value = value * 2.20462  # kg → lbs
+        value = value * 2.20462
         unit = "POUNDS"
     elif "gram" in s or " g" in s or s.endswith("g"):
-        value = value * 0.00220462  # g → lbs
+        value = value * 0.00220462
         unit = "POUNDS"
     elif "ounce" in s or " oz" in s or s.endswith("oz"):
-        value = value * 0.0625  # oz → lbs
+        value = value * 0.0625
         unit = "POUNDS"
     elif "milligram" in s or " mg" in s:
         value = value * 0.00000220462
@@ -72,7 +217,6 @@ def _parse_weight(weight_str) -> tuple:
     elif "pound" in s or " lb" in s or s.endswith("lb"):
         unit = "POUNDS"
     else:
-        # Assume pounds if no unit
         unit = "POUNDS"
 
     return round(value, 4), unit
@@ -82,15 +226,12 @@ def _parse_weight(weight_str) -> tuple:
 # ✅ NAYA: Build inventoryItem with weight
 # ============================================
 def _build_inventory_item(product_data: dict, sku: str) -> dict:
-    """
-    Build inventoryItem dict with SKU, tracked, and weight (if available).
-    """
+    """Build inventoryItem dict with SKU, tracked, and weight."""
     inventory_item = {
         "sku": sku,
         "tracked": True,
     }
 
-    # Weight from Amazon data
     weight_str = (
         product_data.get("item_weight")
         or product_data.get("package_weight")
@@ -130,6 +271,15 @@ async def create_shopify_product(
     except (ValueError, TypeError):
         price_float = 0.0
 
+    # ✅ Amazon price bhi nikaalo (amazon rule ke liye)
+    amazon_price_float = None
+    try:
+        ap = product_data.get("amazon_price")
+        if ap is not None:
+            amazon_price_float = float(ap)
+    except (ValueError, TypeError):
+        amazon_price_float = None
+
     asin_value = str(product_data.get("asin", "") or "").strip()
     if not asin_value or asin_value == "None":
         asin_value = "NO-SKU"
@@ -152,6 +302,21 @@ async def create_shopify_product(
         )
 
     description_html = _build_description_with_metafields(product_data)
+
+    # ✅ Compare-at settings fetch karo (4 rule types)
+    compare_enabled, compare_rule, compare_value = (
+        _get_compare_at_settings_from_store(shop)
+    )
+
+    # ✅ Compare-at price calculate karo
+    compare_at_price = None
+    if compare_enabled:
+        compare_at_price = calculate_compare_at_price(
+            final_price=price_float,
+            compare_at_type=compare_rule,
+            compare_at_value=compare_value,
+            amazon_price=amazon_price_float,
+        )
 
     input_data = {
         "title": product_data.get("title") or "Untitled Product",
@@ -184,13 +349,20 @@ async def create_shopify_product(
 
     if product_options and variant_values:
         input_data["productOptions"] = product_options
-        input_data["variants"] = [
-            {
-                "optionValues": variant_values,
-                "price": str(price_float or 0),
-                "inventoryItem": _build_inventory_item(product_data, asin_value),
-            }
-        ]
+
+        variant_input = {
+            "optionValues": variant_values,
+            "price": str(price_float or 0),
+            "inventoryItem": _build_inventory_item(product_data, asin_value),
+        }
+
+        if compare_at_price:
+            variant_input["compareAtPrice"] = str(compare_at_price)
+            logger.info(
+                f"   💰 Compare-at price: ${compare_at_price} (rule={compare_rule})"
+            )
+
+        input_data["variants"] = [variant_input]
         logger.info(
             f"   Adding variant: "
             + " / ".join(f"{v['optionName']}={v['name']}" for v in variant_values)
@@ -211,6 +383,7 @@ async def create_shopify_product(
                 id
                 title
                 price
+                compareAtPrice
                 inventoryItem {
                   id
                   sku
@@ -271,10 +444,6 @@ async def create_shopify_product(
         inventory_item_id = variant_node.get("inventoryItem", {}).get("id")
 
         if product_id and variant_id:
-            compare_price = None
-            if price_float and price_float > 0:
-                compare_price = round(price_float * 1.2, 2)
-
             await update_variant_with_tracked(
                 shop=shop,
                 access_token=access_token,
@@ -282,7 +451,7 @@ async def create_shopify_product(
                 variant_id=variant_id,
                 price=price_float,
                 sku=asin_value,
-                compare_at_price=compare_price,
+                compare_at_price=compare_at_price,
             )
 
         if inventory_item_id:
@@ -370,7 +539,7 @@ async def create_shopify_product_with_variants(
           category { id name fullName }
           options { id name values }
           variants(first: 50) {
-            edges { node { id title price inventoryItem { id sku tracked } } }
+            edges { node { id title price compareAtPrice inventoryItem { id sku tracked } } }
           }
         }
         userErrors { field message }
