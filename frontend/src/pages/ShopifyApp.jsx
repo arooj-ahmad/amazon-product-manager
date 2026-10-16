@@ -1,4 +1,6 @@
 // src/pages/ShopifyApp.jsx
+// ✅ UPDATED: Add Product + Collections side-by-side (2-column layout)
+
 import { useShopifyApp } from '../hooks/useShopifyApp'
 import { usePriceUpdateStore } from '../store/priceUpdateStore'
 import { styles, theme } from '../styles/theme'
@@ -56,11 +58,11 @@ export default function ShopifyApp() {
           ) : (
             <div style={styles.grid}>
               {plans.map((plan) => (
-                <PlanCard 
-                  key={plan.key} 
-                  plan={plan} 
-                  onSubscribe={handleSubscribe} 
-                  isSubscribing={isSubscribing} 
+                <PlanCard
+                  key={plan.key}
+                  plan={plan}
+                  onSubscribe={handleSubscribe}
+                  isSubscribing={isSubscribing}
                 />
               ))}
             </div>
@@ -73,10 +75,10 @@ export default function ShopifyApp() {
           )}
 
           <div style={localStyles.testModeContainer}>
-            <button 
-              type="button" 
-              onClick={handleTestActivate} 
-              disabled={isSubscribing} 
+            <button
+              type="button"
+              onClick={handleTestActivate}
+              disabled={isSubscribing}
               style={localStyles.testBtn}
             >
               ⚡ Test Mode: Skip directly to App Dashboard
@@ -127,22 +129,29 @@ export default function ShopifyApp() {
           loading={storeMarkupLoading}
         />
 
-        <AddProductForm
-          amazonUrl={amazonUrl}
-          setAmazonUrl={setAmazonUrl}
-          isLoading={isLoading}
-          message={message}
-          onSubmit={handleAddProduct}
-        />
+        {/* ✅ UPDATED: 2-column layout — Add Product (left) + Collections (right) */}
+        <div style={localStyles.twoColumnGrid}>
+          <div style={localStyles.leftColumn}>
+            <AddProductForm
+              amazonUrl={amazonUrl}
+              setAmazonUrl={setAmazonUrl}
+              isLoading={isLoading}
+              message={message}
+              onSubmit={handleAddProduct}
+            />
+          </div>
 
-        <CollectionsSelector
-          collections={collections}
-          selectedCollections={selectedCollections}
-          loading={collectionsLoading}
-          onToggle={toggleCollection}
-          onClear={clearCollections}
-          onRefresh={refreshCollections}
-        />
+          <div style={localStyles.rightColumn}>
+            <CollectionsSelector
+              collections={collections}
+              selectedCollections={selectedCollections}
+              loading={collectionsLoading}
+              onToggle={toggleCollection}
+              onClear={clearCollections}
+              onRefresh={refreshCollections}
+            />
+          </div>
+        </div>
 
         <InfoBox />
       </div>
@@ -249,9 +258,6 @@ const localStyles = {
     fontWeight: '600',
     cursor: 'pointer',
     transition: 'all 0.2s ease',
-    ':hover': {
-      background: '#eff6ff',
-    }
   },
 
   // --- Markup Banner ---
@@ -373,9 +379,22 @@ const localStyles = {
     whiteSpace: 'nowrap',
     transition: 'all 0.2s ease',
     boxShadow: '0 1px 2px rgba(0,0,0,0.1)',
-    ':hover': {
-      background: '#78350f',
-      transform: 'translateY(-1px)',
-    }
+  },
+
+  // ✅ NAYA: 2-column layout
+  twoColumnGrid: {
+    display: 'grid',
+    gridTemplateColumns: '1fr 1fr',
+    gap: '20px',
+    marginBottom: '20px',
+    alignItems: 'start',
+  },
+  leftColumn: {
+    display: 'flex',
+    flexDirection: 'column',
+  },
+  rightColumn: {
+    display: 'flex',
+    flexDirection: 'column',
   },
 }
