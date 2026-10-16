@@ -105,7 +105,7 @@ export default function ShopifyApp() {
             </div>
             <div style={localStyles.updateContent}>
               <span style={localStyles.updateText}>
-                Price update running in background
+                Price update is running in the background
               </span>
               <span style={localStyles.updateHint}>
                 {cronProgress?.currentProduct || 'Processing products...'}
