@@ -6,6 +6,7 @@
 // + ✅ FIXED: Navigation via window.location.hash
 // + ✅ FIXED: Circle spinner loader (consistent with other pages)
 // + ✅ NEW v2: Compare Price Settings link card
+// + ✅ FIXED v3: Preview tax format — now in parentheses
 // ============================================
 
 import { useState, useEffect } from 'react'
@@ -212,7 +213,6 @@ export default function MarkupSettings() {
     navigateTo('/products')
   }
 
-  // ✅ NAYA: Compare Price Settings navigation
   const handleGoToComparePrice = () => {
     navigateTo('/compare-price-settings')
   }
@@ -399,7 +399,7 @@ export default function MarkupSettings() {
             )}
           </div>
 
-          {/* Preview */}
+          {/* ✅ FIXED v3: Preview — tax ab parentheses me */}
           {formData.markup_value && (
             <div style={styles.previewBox}>
               <div style={styles.previewLabel}>Preview</div>
@@ -413,9 +413,9 @@ export default function MarkupSettings() {
                   )}
                 </strong>
                 {parseFloat(formData.tax_rate) > 0 && (
-                  <span>
+                  <span style={{ color: '#6d7175' }}>
                     {' '}
-                    + <strong>{formData.tax_rate}% tax</strong>
+                    (+<strong>{formData.tax_rate}% tax</strong>)
                   </span>
                 )}
               </div>
@@ -460,7 +460,7 @@ export default function MarkupSettings() {
           </div>
         )}
 
-        {/* ✅ NAYA: Compare Price Settings Card */}
+        {/* Compare Price Settings Card */}
         <div style={styles.comparePriceCard}>
           <div style={styles.comparePriceIconBox}>
             <span style={styles.comparePriceIcon}>🏷️</span>
@@ -700,7 +700,6 @@ const styles = {
     fontWeight: '500',
   },
 
-  // ✅ NAYA: Compare Price Card
   comparePriceCard: {
     display: 'flex',
     alignItems: 'flex-start',
