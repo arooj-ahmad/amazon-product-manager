@@ -1,6 +1,7 @@
 # ============================================
 # app/services/scheduler.py
 # Har 24 ghante Amazon se fresh prices fetch karne wala scheduler
+# + ✅ FIXED v11: markup/markup_type store se lo — hardcoded nahi
 # + ✅ FIXED v10: calculate_final_price() use karo (same as add-product)
 # + ✅ FIXED v8: Markup CAP add (same as add-product)
 # + ✅ FIXED v8: Compare-at price calculate + push
@@ -17,7 +18,7 @@ from app.database import SessionLocal
 from app.models import Product, ShopifyStore
 from app.services.brightdata import (
     BrightDataError,
-    calculate_final_price,          # ✅ NAYA: same formula as add-product
+    calculate_final_price,
     fetch_product_from_brightdata,
 )
 from app.services.shopify import (
@@ -78,22 +79,27 @@ def _get_store_for_product(
 
 
 # ============================================
-# ✅ HELPER: Store ka default markup + tax
+# ✅ FIXED v11: Store ka default markup + tax
+# Agar store nahi hai to None return karo — hardcoded nahi
 # ============================================
 def _get_store_default_markup(store: ShopifyStore) -> tuple:
     """
     Store ka saved default markup + tax return karo.
     Returns: (markup_value, markup_type, extra_percent, tax_rate)
+
+    Agar store nahi hai, to (None, None, 0.0, 0.0) return karega.
     """
     if not store:
-        return 2.0, "fixed", 0.0, 0.0
+        return None, None, 0.0, 0.0
 
-    markup_val = float(getattr(store, "default_markup", None) or 2.0)
-    markup_type = getattr(store, "default_markup_type", None) or "fixed"
+    markup_val = getattr(store, "default_markup", None)
+    markup_type = getattr(store, "default_markup_type", None)
     extra_pct = float(getattr(store, "default_extra_percent", None) or 0.0)
     tax_rate = float(getattr(store, "default_tax_rate", None) or 0.0)
 
-    if markup_type not in ("fixed", "percent", "both"):
+    if markup_val is not None:
+        markup_val = float(markup_val)
+    if markup_type is not None and markup_type not in ("fixed", "percent", "both"):
         markup_type = "fixed"
 
     return markup_val, markup_type, extra_pct, tax_rate
@@ -101,6 +107,7 @@ def _get_store_default_markup(store: ShopifyStore) -> tuple:
 
 # ============================================
 # ✅ v8: Markup CAP (same as product_core.py)
+# ✅ FIXED v11: Error case mein 0.0 return karo — 2.0 nahi
 # ============================================
 def _apply_markup_cap(markup: float, markup_type: str) -> float:
     """
@@ -112,7 +119,7 @@ def _apply_markup_cap(markup: float, markup_type: str) -> float:
     try:
         markup = float(markup)
     except (ValueError, TypeError):
-        return 2.0
+        return 0.0
 
     if markup < 0:
         markup = 0.0
@@ -560,7 +567,7 @@ async def sync_shopify_price(
 
 # ============================================
 # JOB: UPDATE ALL PRICES
-# ✅ FIXED v10: calculate_final_price() — same as add-product
+# ✅ FIXED v11: markup/markup_type check — agar None hain to skip
 # ============================================
 async def update_all_prices():
     """SAARE products ke prices update karta hai (24h)."""
@@ -657,6 +664,22 @@ async def update_all_prices():
                     })
                     continue
 
+                # ✅ v11: markup/markup_type check — agar None hain to skip
+                if store_markup is None or store_markup_type is None:
+                    logger.warning(
+                        f"⚠️ ASIN={product.asin}: store default markup/markup_type "
+                        f"missing — price calculation skip"
+                    )
+                    skipped_count += 1
+                    results.append({
+                        "index": index,
+                        "asin": product.asin,
+                        "title": (product.title or "")[:60],
+                        "status": "skipped",
+                        "reason": "Markup not set in store defaults",
+                    })
+                    continue
+
                 old_amazon = product.amazon_price or 0
                 old_price = product.price
 
@@ -672,7 +695,7 @@ async def update_all_prices():
                     markup=capped_markup,
                     markup_type=store_markup_type,
                     extra_percent=store_extra_pct,
-                    tax_rate=store_tax_rate,   # ✅ Tax bhi pass kiya
+                    tax_rate=store_tax_rate,
                 )
 
                 # ✅ Compare-at price calculate karo
@@ -683,7 +706,7 @@ async def update_all_prices():
                 )
 
                 logger.info(
-                    f"   💰 Price calculated (v10 formula): "
+                    f"   💰 Price calculated (v11 formula): "
                     f"amazon=${new_amazon_price}, "
                     f"markup={capped_markup} ({store_markup_type}), "
                     f"extra={store_extra_pct}%, "
@@ -699,6 +722,8 @@ async def update_all_prices():
                 product.markup_type = store_markup_type
                 if hasattr(product, "extra_percent"):
                     product.extra_percent = store_extra_pct
+                if hasattr(product, "tax_rate"):
+                    product.tax_rate = store_tax_rate
 
                 # Metadata update
                 if data.get("title") and data["title"] != product.title:

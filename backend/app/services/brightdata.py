@@ -16,6 +16,7 @@
 # + ✅ FIXED v3: tax_rate support in calculate_final_price
 # + ✅ FIXED v4: parse_tags — sirf real tags + categories + 1 color
 # + ✅ FIXED v5: calculate_final_price — (Amazon + Fixed + Percentage) + Tax
+# + ✅ FIXED v6: markup/markup_type validation (no defaults)
 # ============================================
 
 import logging
@@ -794,13 +795,14 @@ async def fetch_product_from_brightdata(amazon_url: str) -> dict:
 
 
 # ============================================
-# ✅ FIXED v5: CALCULATE FINAL PRICE
+# ✅ FIXED v6: CALCULATE FINAL PRICE
 # Formula: (Amazon Price + Fixed + Percentage) + Tax
+# + markup/markup_type validation (no defaults)
 # ============================================
 def calculate_final_price(
     amazon_price: Optional[float],
-    markup: float = 2.0,
-    markup_type: str = "fixed",
+    markup: Optional[float] = None,          # ✅ No default
+    markup_type: Optional[str] = None,       # ✅ No default
     admin_price: Optional[float] = None,
     is_manual_override: bool = False,
     extra_percent: float = 0.0,
@@ -811,6 +813,9 @@ def calculate_final_price(
 
     ✅ FORMULA (v5):
     Final Price = (Amazon Price + Fixed Markup + Percentage Amount) + Tax
+
+    ⚠️ markup aur markup_type ZAROORI hain — user ya store se aane chahiye.
+    Agar dono None hain, to admin_price return hoga (agar diya ho).
 
     Steps:
     1. Base = Amazon + Fixed + (Amazon × Percentage/100)
@@ -831,6 +836,14 @@ def calculate_final_price(
     Final = 120 + (120 × 0.10)      = 132.00
     """
     if amazon_price is None:
+        return admin_price
+
+    # ✅ Agar markup/markup_type nahi diya, to admin_price return karo
+    if markup is None or markup_type is None:
+        logger.warning(
+            "⚠️ calculate_final_price: markup ya markup_type missing — "
+            "admin_price return kar rahe hain"
+        )
         return admin_price
 
     markup = markup or 0.0

@@ -10,6 +10,7 @@
 # + ✅ FIXED: admin_delete_product + admin_update_product added
 # + ✅ NAYA: "both" markup type — extra_percent support
 # + ✅ FIXED v2: tax_rate pass karo calculate_final_price mein
+# + ✅ FIXED v3: markup/markup_type user ya store se lo — hardcoded nahi
 # ============================================
 
 import logging
@@ -52,21 +53,27 @@ router = APIRouter(prefix="/api", tags=["Products"])
 
 # ============================================
 # HELPER: Store ka default markup + tax
+# ✅ FIXED v3: Agar store na ho to None return karo
 # ============================================
 def _get_store_defaults(store: ShopifyStore) -> tuple:
     """
     Store ka default markup + tax return karo.
     Returns: (markup, markup_type, extra_percent, tax_rate)
+
+    Agar store nahi hai, to (None, None, 0.0, 0.0) return karega.
     """
     if not store:
-        return 2.0, "fixed", 0.0, 0.0
+        return None, None, 0.0, 0.0
 
-    markup = float(getattr(store, "default_markup", None) or 2.0)
-    markup_type = getattr(store, "default_markup_type", None) or "fixed"
+    markup = getattr(store, "default_markup", None)
+    markup_type = getattr(store, "default_markup_type", None)
     extra_percent = float(getattr(store, "default_extra_percent", None) or 0.0)
     tax_rate = float(getattr(store, "default_tax_rate", None) or 0.0)
 
-    if markup_type not in ("fixed", "percent", "both"):
+    # ✅ markup aur markup_type ko as-is return karo — None ho sakta hai
+    if markup is not None:
+        markup = float(markup)
+    if markup_type is not None and markup_type not in ("fixed", "percent", "both"):
         markup_type = "fixed"
 
     return markup, markup_type, extra_percent, tax_rate
@@ -314,6 +321,10 @@ def get_all_products_admin(
     return ProductListResponse(total=len(products), products=products)
 
 
+# ============================================
+# ✅ FIXED v3: admin_fetch_product
+# + markup/markup_type user ya store se — hardcoded nahi
+# ============================================
 @router.post("/admin/fetch", response_model=ProductFetchResponse, status_code=201)
 async def admin_fetch_product(
     payload: ProductCreate,
@@ -333,25 +344,45 @@ async def admin_fetch_product(
     if existing:
         raise HTTPException(status_code=409, detail=f"Product already exists (ASIN: {asin})")
 
-    # ✅ Store defaults nikalo (agar store hai to)
+    # ✅ Store defaults nikalo
     default_store = db.query(ShopifyStore).first()
+    store_markup, store_markup_type, store_extra_pct, store_tax_rate = (
+        _get_store_defaults(default_store)
+    )
 
-    user_markup = payload.markup if payload.markup is not None else 2.0
-    user_markup_type = payload.markup_type or "fixed"
-    user_extra_percent = getattr(payload, "extra_percent", 0.0) or 0.0
-    user_tax_rate = getattr(payload, "tax_rate", 0.0) or 0.0
+    # ✅ Markup: user se lo, warna store default
+    if payload.markup is not None:
+        user_markup = payload.markup
+        user_markup_type = payload.markup_type or "fixed"
+        user_extra_percent = getattr(payload, "extra_percent", 0.0) or 0.0
+    elif store_markup is not None:
+        user_markup = store_markup
+        user_markup_type = store_markup_type or "fixed"
+        user_extra_percent = store_extra_pct
+        logger.info(
+            f"ℹ️ User ne markup nahi diya — store default use kar rahe hain: "
+            f"{user_markup} ({user_markup_type}), extra={user_extra_percent}%"
+        )
+    else:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "Markup required — na user ne diya, na store default hai. "
+                "Pehle store settings mein default markup set karein."
+            ),
+        )
 
-    # ✅ Agar payload mein tax_rate nahi, to store se lo
-    if user_tax_rate == 0.0 and default_store:
-        _, _, _, store_tax = _get_store_defaults(default_store)
-        user_tax_rate = store_tax
+    # ✅ Tax: user se lo, warna store default
+    user_tax_rate = getattr(payload, "tax_rate", None)
+    if user_tax_rate is None:
+        user_tax_rate = store_tax_rate
 
     final_price = calculate_final_price(
         amazon_price=data["amazon_price"],
         markup=user_markup,
         markup_type=user_markup_type,
         extra_percent=user_extra_percent,
-        tax_rate=user_tax_rate,   # ✅ NAYA
+        tax_rate=user_tax_rate,
     )
 
     new_product = Product(
@@ -371,7 +402,7 @@ async def admin_fetch_product(
         markup=user_markup,
         markup_type=user_markup_type,
         extra_percent=user_extra_percent,
-        tax_rate=user_tax_rate,   # ✅ NAYA (agar model mein field hai)
+        tax_rate=user_tax_rate,
         is_manual_override=False,
         availability=data.get("availability", "In Stock"),
         is_available=data.get("is_available", True),
@@ -443,7 +474,6 @@ async def admin_delete_product(
     asin = product.asin
     shopify_id = product.shopify_product_id
 
-    # ✅ Step 1: Pehle Shopify se delete karo
     if shopify_id:
         store = _get_store_for_product(db, product)
 
@@ -483,7 +513,6 @@ async def admin_delete_product(
     else:
         logger.info(f"ℹ️ No Shopify ID for {asin}, only DB delete")
 
-    # ✅ Step 2: DB se delete karo
     db.delete(product)
     db.commit()
 
@@ -505,8 +534,7 @@ def list_products_for_markup(store_id: int = None, db: Session = Depends(get_db)
 
 
 # ============================================
-# ✅ FIXED v2: update_product_markup
-# + ✅ NAYA: extra_percent + tax_rate support
+# ✅ FIXED v3: update_product_markup
 # ============================================
 @router.patch("/markup/{product_id}", response_model=ProductResponse)
 async def update_product_markup(
@@ -518,7 +546,7 @@ async def update_product_markup(
     if not product:
         raise HTTPException(status_code=404, detail="Product not found")
 
-    # ✅ Store se defaults nikalo (tax_rate ke liye)
+    # ✅ Store se defaults (sirf tax_rate ke liye, markup user se)
     store = _get_store_for_product(db, product)
     _, _, _, store_tax = _get_store_defaults(store)
 
@@ -527,12 +555,13 @@ async def update_product_markup(
     if tax_rate is None:
         tax_rate = store_tax
 
+    # ✅ Markup payload se aayega — payload.markup aur payload.markup_type
     new_price = calculate_final_price(
         amazon_price=product.amazon_price,
         markup=payload.markup,
         markup_type=payload.markup_type,
         extra_percent=extra_pct,
-        tax_rate=tax_rate,   # ✅ NAYA
+        tax_rate=tax_rate,
     )
 
     product.markup = payload.markup
@@ -583,8 +612,7 @@ async def update_product_markup(
 
 
 # ============================================
-# ✅ FIXED v2: bulk_update_markup
-# + ✅ NAYA: extra_percent + tax_rate support
+# ✅ FIXED v3: bulk_update_markup
 # ============================================
 @router.post("/markup/bulk-update")
 async def bulk_update_markup(
@@ -605,7 +633,6 @@ async def bulk_update_markup(
     extra_pct = getattr(payload, "extra_percent", 0.0) or 0.0
 
     for product in products:
-        # ✅ Store se defaults (tax_rate ke liye)
         product_store = _get_store_for_product(db, product, fallback_store_id=store_id)
         _, _, _, store_tax = _get_store_defaults(product_store)
 
@@ -613,12 +640,13 @@ async def bulk_update_markup(
         if tax_rate is None:
             tax_rate = store_tax
 
+        # ✅ Markup payload se — user ne diya hai
         new_price = calculate_final_price(
             amazon_price=product.amazon_price,
             markup=payload.markup,
             markup_type=payload.markup_type,
             extra_percent=extra_pct,
-            tax_rate=tax_rate,   # ✅ NAYA
+            tax_rate=tax_rate,
         )
         product.markup = payload.markup
         product.markup_type = payload.markup_type
@@ -671,8 +699,8 @@ async def bulk_update_markup(
 
 # ============================================
 # SYNC FROM SHOPIFY
+# ✅ FIXED v3: markup store default se lo — hardcoded nahi
 # ============================================
-
 @router.post("/markup/sync-from-shopify")
 async def sync_products_from_shopify(store_id: int = None, db: Session = Depends(get_db)):
     if store_id:
@@ -693,7 +721,10 @@ async def sync_products_from_shopify(store_id: int = None, db: Session = Depends
     shop = store.shop_domain
     access_token = store.access_token
 
-    _, _, _, store_tax = _get_store_defaults(store)   # ✅ NAYA
+    # ✅ Store defaults nikalo
+    store_markup, store_markup_type, store_extra_pct, store_tax = (
+        _get_store_defaults(store)
+    )
 
     query = """
     query getProducts($cursor: String) {
@@ -788,21 +819,46 @@ async def sync_products_from_shopify(store_id: int = None, db: Session = Depends
                 product.title = title
             if shopify_price:
                 product.amazon_price = shopify_price
-                product.price = calculate_final_price(
-                    amazon_price=shopify_price,
-                    markup=product.markup or 2.0,
-                    markup_type=product.markup_type or "fixed",
-                    extra_percent=getattr(product, "extra_percent", 0.0) or 0.0,
-                    tax_rate=getattr(product, "tax_rate", None) or store_tax,   # ✅ NAYA
-                )
+
+                # ✅ Product ka apna markup, warna store default
+                p_markup = product.markup or store_markup
+                p_markup_type = product.markup_type or store_markup_type
+                p_extra = getattr(product, "extra_percent", None)
+                if p_extra is None:
+                    p_extra = store_extra_pct
+                p_tax = getattr(product, "tax_rate", None)
+                if p_tax is None:
+                    p_tax = store_tax
+
+                if p_markup is not None and p_markup_type is not None:
+                    product.price = calculate_final_price(
+                        amazon_price=shopify_price,
+                        markup=p_markup,
+                        markup_type=p_markup_type,
+                        extra_percent=p_extra,
+                        tax_rate=p_tax,
+                    )
+                else:
+                    logger.warning(
+                        f"⚠️ {sku}: markup/markup_type missing — price recalculate skip"
+                    )
             updated += 1
         else:
-            final_price = calculate_final_price(
-                amazon_price=shopify_price,
-                markup=2.0,
-                markup_type="fixed",
-                tax_rate=store_tax,   # ✅ NAYA
-            )
+            # ✅ Naya product — store default markup use karo
+            final_price = None
+            if shopify_price and store_markup is not None and store_markup_type is not None:
+                final_price = calculate_final_price(
+                    amazon_price=shopify_price,
+                    markup=store_markup,
+                    markup_type=store_markup_type,
+                    extra_percent=store_extra_pct,
+                    tax_rate=store_tax,
+                )
+            else:
+                logger.warning(
+                    f"⚠️ {sku}: store default markup missing — price calculate skip"
+                )
+
             new_product = Product(
                 asin=sku,
                 title=title,
