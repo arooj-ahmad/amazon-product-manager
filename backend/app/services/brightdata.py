@@ -17,6 +17,8 @@
 # + ✅ FIXED v4: parse_tags — sirf real tags + categories + 1 color
 # + ✅ FIXED v5: calculate_final_price — (Amazon + Fixed + Percentage) + Tax
 # + ✅ FIXED v6: markup/markup_type validation (no defaults)
+# + ✅ FIXED v7: stock_quantity = 100 bug hataya
+# + ✅ FIXED v7: shipping restriction detect karo
 # ============================================
 
 import logging
@@ -160,10 +162,31 @@ def validate_parent_asin(parent_asin, asin: str) -> Optional[str]:
 
 
 # ============================================
-# AVAILABILITY CHECK
+# ✅ FIXED v7: AVAILABILITY CHECK
+# + Shipping restriction detect karo
 # ============================================
 def check_availability(raw: dict) -> tuple[bool, str, str]:
     """Availability check karta hai multiple fields se."""
+
+    # ✅ NAYA: Pehle shipping restriction check karo
+    shipping_msg = (
+        raw.get("shipping_message")
+        or raw.get("delivery_message")
+        or raw.get("buybox_message")
+        or ""
+    )
+    if isinstance(shipping_msg, str) and shipping_msg.strip():
+        msg_lower = shipping_msg.lower()
+        if any(kw in msg_lower for kw in [
+            "cannot be shipped",
+            "cannot ship",
+            "not shippable",
+            "delivery location",
+            "not available for delivery",
+        ]):
+            logger.warning(f"⚠️ Shipping restriction detected: {shipping_msg}")
+            return False, "Shipping Restricted", "shipping_message"
+
     add_to_cart = raw.get("add_to_cart_available")
     if isinstance(add_to_cart, bool):
         return add_to_cart, "In Stock" if add_to_cart else "Out of Stock", "add_to_cart_available"
@@ -193,6 +216,12 @@ def check_availability(raw: dict) -> tuple[bool, str, str]:
             "not available", "sold out", "temporarily out",
             "no disponible", "temporarily unavailable",
             "back order", "backorder",
+            # ✅ NAYA: Shipping restriction bhi out-of-stock maano
+            "cannot be shipped",
+            "cannot ship",
+            "not shippable",
+            "delivery location",
+            "not available for delivery",
         ]
 
         in_stock_keywords = [
@@ -534,6 +563,7 @@ def clean_description(description: str) -> str:
 
 # ============================================
 # BRIGHT DATA API CALL
+# ✅ FIXED v7: stock_quantity = 100 bug hataya
 # ============================================
 async def fetch_product_from_brightdata(amazon_url: str) -> dict:
     """Bright Data API se product data fetch karta hai."""
@@ -719,16 +749,18 @@ async def fetch_product_from_brightdata(amazon_url: str) -> dict:
         f"✅ Availability: is_available={is_available}, text='{availability_text}'"
     )
 
+    # ✅ FIXED v7: stock_quantity = 100 bug hataya
     stock_quantity = raw.get("stock_quantity") or raw.get("stock") or 0
     try:
         stock_quantity = int(stock_quantity) if stock_quantity else 0
     except (ValueError, TypeError):
         stock_quantity = 0
 
+    # ✅ FIXED v7: Agar available nahi hai to 0 — warna actual quantity
+    # Agar Amazon ne quantity nahi di, to 0 rakho — 100 nahi
     if not is_available:
         stock_quantity = 0
-    elif stock_quantity == 0:
-        stock_quantity = 100
+    # ❌ `elif stock_quantity == 0: stock_quantity = 100` HATA DIYA
 
     specs = {}
     product_details = raw.get("product_details") or []
