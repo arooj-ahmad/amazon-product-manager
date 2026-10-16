@@ -1,6 +1,7 @@
 # ============================================
 # app/services/scheduler.py
 # Har 24 ghante Amazon se fresh prices fetch karne wala scheduler
+# + ✅ FIXED v12: stock_quantity seedha Shopify pe bhejo — 100 nahi
 # + ✅ FIXED v11: markup/markup_type store se lo — hardcoded nahi
 # + ✅ FIXED v10: calculate_final_price() use karo (same as add-product)
 # + ✅ FIXED v8: Markup CAP add (same as add-product)
@@ -80,7 +81,6 @@ def _get_store_for_product(
 
 # ============================================
 # ✅ FIXED v11: Store ka default markup + tax
-# Agar store nahi hai to None return karo — hardcoded nahi
 # ============================================
 def _get_store_default_markup(store: ShopifyStore) -> tuple:
     """
@@ -107,7 +107,6 @@ def _get_store_default_markup(store: ShopifyStore) -> tuple:
 
 # ============================================
 # ✅ v8: Markup CAP (same as product_core.py)
-# ✅ FIXED v11: Error case mein 0.0 return karo — 2.0 nahi
 # ============================================
 def _apply_markup_cap(markup: float, markup_type: str) -> float:
     """
@@ -273,7 +272,8 @@ async def find_shopify_product_by_title(
 
 
 # ============================================
-# ✅ SHOPIFY STATUS + INVENTORY SYNC
+# ✅ FIXED v12: SHOPIFY STATUS + INVENTORY SYNC
+# + stock_quantity seedha use karo — 100 nahi
 # ============================================
 async def sync_shopify_product(
     product: Product,
@@ -414,9 +414,8 @@ async def sync_shopify_product(
                 )
                 continue
 
+            # ✅ FIXED v12: stock_quantity seedha use karo — 100 nahi
             qty = stock_quantity
-            if qty == 0 and is_available:
-                qty = 100
 
             inv_ok = await set_inventory_quantity(
                 shop=shop,
@@ -567,7 +566,7 @@ async def sync_shopify_price(
 
 # ============================================
 # JOB: UPDATE ALL PRICES
-# ✅ FIXED v11: markup/markup_type check — agar None hain to skip
+# ✅ FIXED v12: stock_quantity seedha use karo
 # ============================================
 async def update_all_prices():
     """SAARE products ke prices update karta hai (24h)."""
@@ -706,7 +705,7 @@ async def update_all_prices():
                 )
 
                 logger.info(
-                    f"   💰 Price calculated (v11 formula): "
+                    f"   💰 Price calculated (v12 formula): "
                     f"amazon=${new_amazon_price}, "
                     f"markup={capped_markup} ({store_markup_type}), "
                     f"extra={store_extra_pct}%, "
