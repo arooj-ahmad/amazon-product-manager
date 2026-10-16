@@ -24,7 +24,7 @@ function ProductDetail() {
   const [selectedImage, setSelectedImage] = useState(null)
   const [activeTab, setActiveTab] = useState('description')
 
-  // ✅ NAYA — Availability state
+  // ✅ NEW — Availability state
   const [availability, setAvailability] = useState(null)
   const [checkingAvailability, setCheckingAvailability] = useState(false)
 
@@ -51,11 +51,11 @@ function ProductDetail() {
           const variantsData = await getProductVariants(data.id)
           setVariants(variantsData)
         } catch (err) {
-          console.warn('Variants fetch fail:', err)
+          console.warn('Variants fetch failed:', err)
           setVariants([data])
         }
       } catch (err) {
-        console.error('Product fetch fail:', err)
+        console.error('Product fetch failed:', err)
         setError(
           err.response?.status === 404
             ? 'Product not found'
@@ -69,7 +69,7 @@ function ProductDetail() {
     fetchData()
   }, [slug, id])
 
-  // ✅ NAYA — Availability check (jab bhi product ya variant change ho)
+  // ✅ NEW — Availability check (whenever product or variant changes)
   useEffect(() => {
     if (!product?.id) return
 
@@ -79,7 +79,7 @@ function ProductDetail() {
         const data = await getProductAvailability(product.id)
         setAvailability(data)
       } catch (err) {
-        console.error('Availability check fail:', err)
+        console.error('Availability check failed:', err)
         setAvailability(null)
       } finally {
         setCheckingAvailability(false)
@@ -100,7 +100,7 @@ function ProductDetail() {
       setSelectedImage(data.image_url || data.images?.[0] || null)
       // Availability will re-fetch automatically due to useEffect [product?.id]
     } catch (err) {
-      console.error('Variant fetch fail:', err)
+      console.error('Variant fetch failed:', err)
     }
   }
 
@@ -143,7 +143,7 @@ function ProductDetail() {
   const specEntries = Object.entries(specs)
   const hasMultipleVariants = variants.length > 1
 
-  // ✅ NAYA — Availability derived values
+  // ✅ NEW — Availability derived values
   const isAvailable = availability?.available !== false
   const showAvailability =
     availability && !checkingAvailability && !isLoading
@@ -261,7 +261,7 @@ function ProductDetail() {
               )}
             </div>
 
-            {/* ✅ NAYA — Stock Status Banner */}
+            {/* ✅ NEW — Stock Status Banner */}
             {showAvailability && (
               <p
                 className={`text-sm font-medium mb-4 ${
@@ -278,7 +278,7 @@ function ProductDetail() {
               </p>
             )}
 
-            {/* ✅ NAYA — Add to Cart / Buy Now Buttons */}
+            {/* ✅ NEW — Add to Cart / Buy Now Buttons */}
             <div className="space-y-3 mb-6">
               <button
                 type="button"

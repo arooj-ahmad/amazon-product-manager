@@ -1,10 +1,10 @@
 // src/pages/PriceUpdater.jsx
 // Manual Price Update page
 // + ✅ FIXED: Navigation via window.location.hash (iframe compatible)
-// + ✅ NAYA: Circle spinner loader
-// + ✅ NAYA v2: cronProgress pass karo (progress bar + summary)
-// + ✅ FIXED: JSX comment syntax error hataya
-// + ✅ FIXED v3: Duplicate navigation avoid karo
+// + ✅ NEW: Circle spinner loader
+// + ✅ NEW v2: Pass cronProgress (progress bar + summary)
+// + ✅ FIXED: Removed JSX comment syntax error
+// + ✅ FIXED v3: Avoid duplicate navigation
 // + ✅ FIXED v3: Error boundary safety
 
 import { useShopifyApp } from '../hooks/useShopifyApp'
@@ -18,7 +18,7 @@ import Loader from '../components/Loader'
 function navigateTo(path) {
   const targetHash = `#${path}`
 
-  // ✅ Agar already us page pe ho toh kuch mat karo
+  // ✅ If already on that page, do nothing
   if (window.location.hash === targetHash) {
     console.log(`🧭 Already on ${targetHash}`)
     return
@@ -41,7 +41,7 @@ export default function PriceUpdater() {
     navigateTo('/shopify-app')
   }
 
-  // Loading spinner jab tak subscription check ho
+  // Loading spinner while subscription is being checked
   if (checkingSub) {
     return <Loader text="Loading price updater..." />
   }

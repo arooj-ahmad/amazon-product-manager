@@ -16,7 +16,7 @@ import {
   bulkUpdatePricing,
   getStoreIdByDomain,
 } from '../api/pricing'
-import Loader from '../components/Loader'   // ✅ NAYA
+import Loader from '../components/Loader'   // ✅ NEW
 
 const API_URL =
   (import.meta.env.VITE_API_URL || '').trim() ||
@@ -117,7 +117,7 @@ export default function ProductsPricing() {
     try {
       const domain = getShopDomain()
       if (!domain) {
-        throw new Error('Shop domain detect nahi ho saka.')
+        throw new Error('Could not detect shop domain.')
       }
       setShopDomain(domain)
 
@@ -188,11 +188,11 @@ export default function ProductsPricing() {
       return
     }
     if (!storeId) {
-      setMessage({ type: 'error', text: '❌ Store ID detect nahi ho saka' })
+      setMessage({ type: 'error', text: '❌ Could not detect Store ID' })
       return
     }
 
-    if (!window.confirm('Saare products par yeh pricing apply karein?')) return
+    if (!window.confirm('Apply this pricing to all products?')) return
 
     setBulkLoading(true)
     setMessage(null)
@@ -207,7 +207,7 @@ export default function ProductsPricing() {
 
       setMessage({
         type: 'success',
-        text: `✅ ${res.updated} products update ho gaye! (Shopify: ${res.shopify_updated || 0})`,
+        text: `✅ ${res.updated} products updated! (Shopify: ${res.shopify_updated || 0})`,
       })
 
       await loadProducts(storeId)
@@ -249,7 +249,7 @@ export default function ProductsPricing() {
 
         <h1 style={styles.h1}>📦 Product Pricing</h1>
         <p style={styles.subtitle}>
-          Bulk update ya har product ka markup alag-alag set karein.
+          Bulk update or set a different markup for each product.
         </p>
 
         {!storeId && (
@@ -261,7 +261,7 @@ export default function ProductsPricing() {
               border: '1px solid #fedf89',
             }}
           >
-            ⚠️ Store ID detect nahi ho saka.
+            ⚠️ Could not detect Store ID.
           </div>
         )}
 
@@ -280,7 +280,7 @@ export default function ProductsPricing() {
               </span>
               <span style={styles.infoHint}>
                 {' '}
-                — ye markup naye products par apply hoga
+                — this markup will be applied to new products
               </span>
             </div>
           </div>
@@ -293,7 +293,7 @@ export default function ProductsPricing() {
             <div>
               <h3 style={styles.bulkTitle}>Bulk Update All Products</h3>
               <p style={styles.bulkSubtitle}>
-                Ye settings saare existing products par apply hongi
+                These settings will be applied to all existing products
               </p>
             </div>
           </div>
@@ -432,8 +432,8 @@ export default function ProductsPricing() {
         {filteredProducts.length === 0 ? (
           <p style={{ textAlign: 'center', padding: 40, color: '#666' }}>
             {searchTerm
-              ? 'Koi product search se match nahi hua.'
-              : 'Koi product nahi mila.'}
+              ? 'No products matched your search.'
+              : 'No products found.'}
           </p>
         ) : (
           <div style={styles.tableWrap}>
@@ -537,15 +537,15 @@ function ProductRow({
 
   const handleSave = async () => {
     if (!countryId) {
-      onMessage({ type: 'error', text: '❌ Country select karein' })
+      onMessage({ type: 'error', text: '❌ Please select a country' })
       return
     }
     if (!markup || parseFloat(markup) <= 0) {
-      onMessage({ type: 'error', text: '❌ Markup value enter karein' })
+      onMessage({ type: 'error', text: '❌ Please enter a markup value' })
       return
     }
     if (!storeId) {
-      onMessage({ type: 'error', text: '❌ Store ID detect nahi ho saka' })
+      onMessage({ type: 'error', text: '❌ Could not detect Store ID' })
       return
     }
 
@@ -562,7 +562,7 @@ function ProductRow({
       })
       onMessage({
         type: 'success',
-        text: '✅ Pricing save ho gayi! (Shopify bhi update)',
+        text: '✅ Pricing saved! (Shopify also updated)',
       })
     } catch (err) {
       onMessage({ type: 'error', text: `❌ ${err.message}` })
