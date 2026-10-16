@@ -21,6 +21,9 @@
 # + ✅ FIXED v8: /trigger-price-update me summary return karo
 # + ✅ NAYA v9: /price-update-status (polling ke liye)
 # + ✅ NAYA v9: /trigger-price-update-async (background job)
+# + ✅ FIXED v10: SKU mismatch — parent_asin verify karo
+# + ✅ FIXED v10: user_tax_rate = 0 → store se lo
+# + ✅ FIXED v10: hardcoded defaults hatao
 # ============================================
 
 import asyncio
@@ -123,19 +126,27 @@ async def _get_valid_access_token(
 
 
 # ============================================
-# HELPER: Store default markup + tax
+# ✅ FIXED v10: Store default markup + tax
+# Agar store nahi hai to None return karo — hardcoded nahi
 # ============================================
 def _get_store_markup(store: ShopifyStore) -> tuple:
     """
     Store se saved markup + country + tax return karo.
     Returns: (markup_value, markup_type, extra_percent, tax_rate)
+
+    Agar store nahi hai, to (None, None, 0.0, 0.0) return karega.
     """
-    markup_val = float(getattr(store, "default_markup", None) or 2.0)
-    markup_type = getattr(store, "default_markup_type", None) or "fixed"
+    if not store:
+        return None, None, 0.0, 0.0
+
+    markup_val = getattr(store, "default_markup", None)
+    markup_type = getattr(store, "default_markup_type", None)
     extra_pct = float(getattr(store, "default_extra_percent", None) or 0.0)
     tax_rate = float(getattr(store, "default_tax_rate", None) or 0.0)
 
-    if markup_type not in ("fixed", "percent", "both"):
+    if markup_val is not None:
+        markup_val = float(markup_val)
+    if markup_type is not None and markup_type not in ("fixed", "percent", "both"):
         markup_type = "fixed"
 
     return markup_val, markup_type, extra_pct, tax_rate
@@ -151,7 +162,7 @@ def _build_product_data_for_shopify(data: dict, product=None) -> dict:
         product_price = product.price
         if product_price is None or float(product_price or 0) <= 0:
             amazon = float(product.amazon_price or 0)
-            markup_val = float(product.markup or 2.0)
+            markup_val = float(product.markup or 0.0)
             markup_type = product.markup_type or "fixed"
             extra_pct = float(getattr(product, "extra_percent", 0.0) or 0.0)
 
@@ -384,12 +395,13 @@ async def check_variant_exists_in_shopify(
 
 # ============================================
 # HELPER: Smart markup cap
+# ✅ FIXED v10: Error case mein 0.0 return karo — 2.0 nahi
 # ============================================
 def apply_markup_cap(markup: float, markup_type: str) -> float:
     try:
         markup = float(markup)
     except (ValueError, TypeError):
-        return 2.0
+        return 0.0
 
     if markup < 0:
         markup = 0.0
@@ -410,6 +422,53 @@ def apply_markup_cap(markup: float, markup_type: str) -> float:
         markup = min(markup, 50.0)
 
     return markup
+
+
+# ============================================
+# ✅ FIXED v10: Helper — Verify parent match
+# ============================================
+def _verify_parent_match(
+    existing_parent: Product,
+    new_data: dict,
+) -> bool:
+    """
+    Verify karo ki existing_parent actually same product family ka hai.
+
+    Check:
+    - Categories match karti hain (kam se kam 1 common)
+    - Brand match karta hai
+
+    Returns: True agar match hai, False agar nahi
+    """
+    if not existing_parent:
+        return False
+
+    # Categories check
+    existing_cats = set(existing_parent.categories or [])
+    new_cats = set(new_data.get("categories") or [])
+
+    if existing_cats and new_cats:
+        if not (existing_cats & new_cats):
+            logger.warning(
+                f"⚠️ Parent ASIN matched but categories differ: "
+                f"existing={list(existing_cats)[:3]}, "
+                f"new={list(new_cats)[:3]}"
+            )
+            return False
+
+    # Brand check
+    existing_brand = (existing_parent.brand or "").strip().lower()
+    new_brand = (new_data.get("brand") or "").strip().lower()
+
+    if existing_brand and new_brand:
+        if existing_brand != new_brand:
+            logger.warning(
+                f"⚠️ Parent ASIN matched but brands differ: "
+                f"existing='{existing_brand}', new='{new_brand}'"
+            )
+            return False
+
+    return True
 
 
 # ============================================
@@ -630,7 +689,6 @@ async def get_shopify_collections(
 
 # ============================================
 # TRIGGER CRON JOB MANUALLY (sync — waits)
-# ✅ FIXED v8: Summary bhi return karo
 # ============================================
 @router.post("/trigger-price-update")
 async def trigger_price_update(
@@ -672,14 +730,13 @@ async def trigger_price_update(
         )
 
     try:
-        # ✅ NAYA: Summary return karo
         summary = await run_price_update_now()
         logger.info(f"✅ Price update completed for {shop_domain}")
         return {
             "success": True,
             "message": "Price update completed successfully",
             "shop_domain": shop_domain,
-            "summary": summary,   # ✅ NAYA
+            "summary": summary,
         }
     except Exception as e:
         logger.error(f"❌ Price update failed: {e}")
@@ -690,9 +747,7 @@ async def trigger_price_update(
 
 
 # ============================================
-# ✅ NAYA v9: TRIGGER PRICE UPDATE (ASYNC — background)
-# Yeh endpoint turant return karta hai (Shopify App Bridge 30s timeout se bachne ke liye).
-# Frontend /price-update-status ko poll karega.
+# TRIGGER PRICE UPDATE (ASYNC — background)
 # ============================================
 @router.post("/trigger-price-update-async")
 async def trigger_price_update_async(
@@ -728,7 +783,6 @@ async def trigger_price_update_async(
             status_code=404, detail=f"Store {shop_domain} not connected"
         )
 
-    # ✅ Agar pehle se chal raha hai toh dobara start mat karo
     if last_run_status.get("running"):
         return {
             "success": True,
@@ -737,7 +791,6 @@ async def trigger_price_update_async(
             "started_at": last_run_status.get("started_at"),
         }
 
-    # ✅ Background me chalao (await nahi karo)
     asyncio.create_task(run_price_update_now())
 
     logger.info(f"🚀 Background price update started for {shop_domain}")
@@ -751,8 +804,7 @@ async def trigger_price_update_async(
 
 
 # ============================================
-# ✅ NAYA v9: PRICE UPDATE STATUS (polling ke liye)
-# Frontend is endpoint ko har 2-3 second me poll karega.
+# PRICE UPDATE STATUS (polling ke liye)
 # ============================================
 @router.get("/price-update-status")
 async def get_price_update_status():
@@ -767,6 +819,7 @@ async def get_price_update_status():
 
 # ============================================
 # PUSH PRODUCT TO SHOPIFY
+# ✅ FIXED v10: Parent verify karo
 # ============================================
 @router.post("/push-product/{product_id}")
 async def push_product_to_shopify(
@@ -804,6 +857,17 @@ async def push_product_to_shopify(
             )
             .first()
         )
+
+        # ✅ NAYA: Verify karo ki parent actually match karta hai
+        if existing_parent:
+            if not _verify_parent_match(existing_parent, {
+                "categories": product.categories or [],
+                "brand": product.brand or "",
+            }):
+                logger.warning(
+                    "⚠️ Parent verify fail — treating as new product"
+                )
+                existing_parent = None
 
     all_variations = extract_all_variations({
         "variant_attributes": product.variant_attributes or [],
@@ -919,7 +983,10 @@ async def push_product_to_shopify(
 
 
 # ============================================
-# ADD PRODUCT FROM SHOPIFY APP
+# ✅ FIXED v10: ADD PRODUCT FROM SHOPIFY APP
+# + Parent verify karo
+# + tax_rate = 0 hataya
+# + store_markup None check
 # ============================================
 @router.post("/app/add-product")
 async def add_product_from_shopify_app(
@@ -1037,6 +1104,15 @@ async def add_product_from_shopify_app(
             .first()
         )
 
+        # ✅ FIXED v10: Verify parent match karo
+        if existing_parent:
+            if not _verify_parent_match(existing_parent, data):
+                logger.warning(
+                    "⚠️ Parent ASIN matched but categories/brand differ — "
+                    "treating as new product"
+                )
+                existing_parent = None
+
     all_variations = extract_all_variations(data)
 
     if existing_parent and existing_parent.shopify_product_id:
@@ -1051,19 +1127,34 @@ async def add_product_from_shopify_app(
             logger.warning("⚠️ Variant exists — new product")
             existing_parent = None
 
-    # ✅ STORE DEFAULT markup + tax use karo
+    # ✅ FIXED v10: Markup — user se lo ya store se
     if markup is not None and markup > 0:
         user_markup = float(markup)
         user_markup_type = (
             markup_type if markup_type in ("fixed", "percent", "both") else "fixed"
         )
         user_extra = float(extra_percent or 0.0)
-        user_tax_rate = 0.0
-        logger.info(f"💰 Using frontend markup: {user_markup} ({user_markup_type})")
+        # ✅ FIXED: tax_rate store se lo — 0.0 nahi
+        _, _, _, user_tax_rate = _get_store_markup(store)
+        logger.info(
+            f"💰 Using frontend markup: {user_markup} ({user_markup_type}), "
+            f"extra={user_extra}%, tax={user_tax_rate}% (from store)"
+        )
     else:
         user_markup, user_markup_type, user_extra, user_tax_rate = (
             _get_store_markup(store)
         )
+
+        # ✅ FIXED v10: Agar store mein markup set nahi hai to error
+        if user_markup is None or user_markup_type is None:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "Markup required — na frontend se diya, na store default hai. "
+                    "Pehle store settings mein default markup set karein."
+                ),
+            )
+
         logger.info(
             f"💰 Using STORE DEFAULT markup: {user_markup} "
             f"({user_markup_type}), extra={user_extra}%, tax={user_tax_rate}%"
@@ -1109,6 +1200,7 @@ async def add_product_from_shopify_app(
         price=final_price,
         markup=user_markup,
         markup_type=user_markup_type,
+        extra_percent=user_extra,
         is_manual_override=False,
         variant_attributes=data.get("variant_attributes", []),
         categories=data.get("categories", []),
