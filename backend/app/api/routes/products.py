@@ -9,6 +9,7 @@
 # + ✅ NAYA: DELETE — pehle Shopify se delete, phir DB se
 # + ✅ FIXED: admin_delete_product + admin_update_product added
 # + ✅ NAYA: "both" markup type — extra_percent support
+# + ✅ FIXED v2: tax_rate pass karo calculate_final_price mein
 # ============================================
 
 import logging
@@ -47,6 +48,28 @@ from app.services.shopify import (
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api", tags=["Products"])
+
+
+# ============================================
+# HELPER: Store ka default markup + tax
+# ============================================
+def _get_store_defaults(store: ShopifyStore) -> tuple:
+    """
+    Store ka default markup + tax return karo.
+    Returns: (markup, markup_type, extra_percent, tax_rate)
+    """
+    if not store:
+        return 2.0, "fixed", 0.0, 0.0
+
+    markup = float(getattr(store, "default_markup", None) or 2.0)
+    markup_type = getattr(store, "default_markup_type", None) or "fixed"
+    extra_percent = float(getattr(store, "default_extra_percent", None) or 0.0)
+    tax_rate = float(getattr(store, "default_tax_rate", None) or 0.0)
+
+    if markup_type not in ("fixed", "percent", "both"):
+        markup_type = "fixed"
+
+    return markup, markup_type, extra_percent, tax_rate
 
 
 # ============================================
@@ -310,18 +333,26 @@ async def admin_fetch_product(
     if existing:
         raise HTTPException(status_code=409, detail=f"Product already exists (ASIN: {asin})")
 
+    # ✅ Store defaults nikalo (agar store hai to)
+    default_store = db.query(ShopifyStore).first()
+
     user_markup = payload.markup if payload.markup is not None else 2.0
     user_markup_type = payload.markup_type or "fixed"
-    user_extra_percent = getattr(payload, "extra_percent", 0.0) or 0.0   # ✅ NAYA
+    user_extra_percent = getattr(payload, "extra_percent", 0.0) or 0.0
+    user_tax_rate = getattr(payload, "tax_rate", 0.0) or 0.0
+
+    # ✅ Agar payload mein tax_rate nahi, to store se lo
+    if user_tax_rate == 0.0 and default_store:
+        _, _, _, store_tax = _get_store_defaults(default_store)
+        user_tax_rate = store_tax
 
     final_price = calculate_final_price(
         amazon_price=data["amazon_price"],
         markup=user_markup,
         markup_type=user_markup_type,
-        extra_percent=user_extra_percent,   # ✅ NAYA
+        extra_percent=user_extra_percent,
+        tax_rate=user_tax_rate,   # ✅ NAYA
     )
-
-    default_store = db.query(ShopifyStore).first()
 
     new_product = Product(
         asin=asin,
@@ -339,7 +370,8 @@ async def admin_fetch_product(
         price=final_price,
         markup=user_markup,
         markup_type=user_markup_type,
-        extra_percent=user_extra_percent,   # ✅ NAYA
+        extra_percent=user_extra_percent,
+        tax_rate=user_tax_rate,   # ✅ NAYA (agar model mein field hai)
         is_manual_override=False,
         availability=data.get("availability", "In Stock"),
         is_available=data.get("is_available", True),
@@ -473,8 +505,8 @@ def list_products_for_markup(store_id: int = None, db: Session = Depends(get_db)
 
 
 # ============================================
-# ✅ FIXED: update_product_markup
-# + ✅ NAYA: extra_percent support
+# ✅ FIXED v2: update_product_markup
+# + ✅ NAYA: extra_percent + tax_rate support
 # ============================================
 @router.patch("/markup/{product_id}", response_model=ProductResponse)
 async def update_product_markup(
@@ -486,26 +518,33 @@ async def update_product_markup(
     if not product:
         raise HTTPException(status_code=404, detail="Product not found")
 
-    # ✅ NAYA: extra_percent nikalo
+    # ✅ Store se defaults nikalo (tax_rate ke liye)
+    store = _get_store_for_product(db, product)
+    _, _, _, store_tax = _get_store_defaults(store)
+
     extra_pct = getattr(payload, "extra_percent", 0.0) or 0.0
+    tax_rate = getattr(payload, "tax_rate", None)
+    if tax_rate is None:
+        tax_rate = store_tax
 
     new_price = calculate_final_price(
         amazon_price=product.amazon_price,
         markup=payload.markup,
         markup_type=payload.markup_type,
-        extra_percent=extra_pct,   # ✅ NAYA
+        extra_percent=extra_pct,
+        tax_rate=tax_rate,   # ✅ NAYA
     )
 
     product.markup = payload.markup
     product.markup_type = payload.markup_type
-    product.extra_percent = extra_pct   # ✅ NAYA
+    product.extra_percent = extra_pct
+    if hasattr(product, "tax_rate"):
+        product.tax_rate = tax_rate
     product.price = new_price
     product.is_manual_override = True
 
     db.commit()
     db.refresh(product)
-
-    store = _get_store_for_product(db, product)
 
     if store and store.access_token and product.shopify_product_id:
         token_ok = await _ensure_valid_store_token(db, store)
@@ -533,7 +572,7 @@ async def update_product_markup(
             if ok:
                 logger.info(
                     f"✅ Shopify price + tags updated: {product.asin} → ${new_price} "
-                    f"(type={payload.markup_type}, extra={extra_pct}%)"
+                    f"(type={payload.markup_type}, extra={extra_pct}%, tax={tax_rate}%)"
                 )
             else:
                 logger.warning(f"⚠️ Shopify price update FAILED: {product.asin}")
@@ -544,8 +583,8 @@ async def update_product_markup(
 
 
 # ============================================
-# ✅ FIXED: bulk_update_markup
-# + ✅ NAYA: extra_percent support
+# ✅ FIXED v2: bulk_update_markup
+# + ✅ NAYA: extra_percent + tax_rate support
 # ============================================
 @router.post("/markup/bulk-update")
 async def bulk_update_markup(
@@ -563,24 +602,32 @@ async def bulk_update_markup(
     shopify_failed = 0
     token_refreshed_stores = set()
 
-    # ✅ NAYA: extra_percent nikalo
     extra_pct = getattr(payload, "extra_percent", 0.0) or 0.0
 
     for product in products:
+        # ✅ Store se defaults (tax_rate ke liye)
+        product_store = _get_store_for_product(db, product, fallback_store_id=store_id)
+        _, _, _, store_tax = _get_store_defaults(product_store)
+
+        tax_rate = getattr(payload, "tax_rate", None)
+        if tax_rate is None:
+            tax_rate = store_tax
+
         new_price = calculate_final_price(
             amazon_price=product.amazon_price,
             markup=payload.markup,
             markup_type=payload.markup_type,
-            extra_percent=extra_pct,   # ✅ NAYA
+            extra_percent=extra_pct,
+            tax_rate=tax_rate,   # ✅ NAYA
         )
         product.markup = payload.markup
         product.markup_type = payload.markup_type
-        product.extra_percent = extra_pct   # ✅ NAYA
+        product.extra_percent = extra_pct
+        if hasattr(product, "tax_rate"):
+            product.tax_rate = tax_rate
         product.price = new_price
         product.is_manual_override = True
         updated += 1
-
-        product_store = _get_store_for_product(db, product, fallback_store_id=store_id)
 
         if product_store and product_store.access_token and product.shopify_product_id:
             if product_store.shop_domain not in token_refreshed_stores:
@@ -645,6 +692,8 @@ async def sync_products_from_shopify(store_id: int = None, db: Session = Depends
 
     shop = store.shop_domain
     access_token = store.access_token
+
+    _, _, _, store_tax = _get_store_defaults(store)   # ✅ NAYA
 
     query = """
     query getProducts($cursor: String) {
@@ -744,6 +793,7 @@ async def sync_products_from_shopify(store_id: int = None, db: Session = Depends
                     markup=product.markup or 2.0,
                     markup_type=product.markup_type or "fixed",
                     extra_percent=getattr(product, "extra_percent", 0.0) or 0.0,
+                    tax_rate=getattr(product, "tax_rate", None) or store_tax,   # ✅ NAYA
                 )
             updated += 1
         else:
@@ -751,6 +801,7 @@ async def sync_products_from_shopify(store_id: int = None, db: Session = Depends
                 amazon_price=shopify_price,
                 markup=2.0,
                 markup_type="fixed",
+                tax_rate=store_tax,   # ✅ NAYA
             )
             new_product = Product(
                 asin=sku,

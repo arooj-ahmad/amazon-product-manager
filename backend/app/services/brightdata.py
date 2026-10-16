@@ -15,6 +15,7 @@
 # + ✅ FIXED v2: package_dimensions se item_weight + item_dimensions extract
 # + ✅ FIXED v3: tax_rate support in calculate_final_price
 # + ✅ FIXED v4: parse_tags — sirf real tags + categories + 1 color
+# + ✅ FIXED v5: calculate_final_price — (Amazon + Fixed + Percentage) + Tax
 # ============================================
 
 import logging
@@ -793,7 +794,8 @@ async def fetch_product_from_brightdata(amazon_url: str) -> dict:
 
 
 # ============================================
-# ✅ FIXED v3: CALCULATE FINAL PRICE
+# ✅ FIXED v5: CALCULATE FINAL PRICE
+# Formula: (Amazon Price + Fixed + Percentage) + Tax
 # ============================================
 def calculate_final_price(
     amazon_price: Optional[float],
@@ -807,14 +809,26 @@ def calculate_final_price(
     """
     Final website price calculate karta hai.
 
+    ✅ FORMULA (v5):
+    Final Price = (Amazon Price + Fixed Markup + Percentage Amount) + Tax
+
     Steps:
-    1. Markup apply karo (fixed / percent / both)
-    2. Tax apply karo: final = subtotal * (1 + tax/100)
+    1. Base = Amazon + Fixed + (Amazon × Percentage/100)
+    2. Final = Base + (Base × Tax/100)
 
     Types:
-    - fixed:    amazon + markup
-    - percent:  amazon * (1 + markup/100)
-    - both:     (amazon + markup) * (1 + extra_percent/100)
+    - fixed:    Base = Amazon + Fixed
+                Final = Base + (Base × Tax/100)
+
+    - percent:  Base = Amazon + (Amazon × Markup/100)
+                Final = Base + (Base × Tax/100)
+
+    - both:     Base = Amazon + Fixed + (Amazon × ExtraPercent/100)
+                Final = Base + (Base × Tax/100)
+
+    Example (both, Amazon=$100, Fixed=$10, Pct=10%, Tax=10%):
+    Base  = 100 + 10 + (100 × 0.10) = 120
+    Final = 120 + (120 × 0.10)      = 132.00
     """
     if amazon_price is None:
         return admin_price
@@ -823,15 +837,25 @@ def calculate_final_price(
     extra_percent = extra_percent or 0.0
     tax_rate = tax_rate or 0.0
 
+    # ── Step 1: Base = Amazon + Fixed + Percentage ──
     if markup_type == "percent":
-        subtotal = amazon_price * (1 + markup / 100.0)
-    elif markup_type == "both":
-        base_price = amazon_price + markup
-        subtotal = base_price * (1 + extra_percent / 100.0)
-    else:
-        subtotal = amazon_price + markup
+        # Sirf percentage markup (markup khud percentage hai)
+        base_price = amazon_price + (amazon_price * (markup / 100.0))
 
-    final_price = subtotal * (1 + tax_rate / 100.0)
+    elif markup_type == "both":
+        # Fixed + Percentage dono
+        base_price = (
+            amazon_price
+            + markup
+            + (amazon_price * (extra_percent / 100.0))
+        )
+
+    else:
+        # "fixed" (default) — sirf fixed markup
+        base_price = amazon_price + markup
+
+    # ── Step 2: Tax on top ──
+    final_price = base_price + (base_price * (tax_rate / 100.0))
 
     if is_manual_override and admin_price is not None:
         return round(max(admin_price, final_price), 2)
