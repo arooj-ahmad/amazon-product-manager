@@ -1,5 +1,5 @@
 // src/pages/ShopifyApp.jsx
-// ✅ UPDATED: Add Product + Collections side-by-side (2-column layout)
+// ✅ UPDATED: Add Product + Collections full-width side-by-side
 
 import { useShopifyApp } from '../hooks/useShopifyApp'
 import { usePriceUpdateStore } from '../store/priceUpdateStore'
@@ -43,7 +43,7 @@ export default function ShopifyApp() {
   if (!subscription?.active) {
     return (
       <div style={styles.page}>
-        <div style={styles.container}>
+        <div style={localStyles.wideContainer}>
           <div style={localStyles.headerSection}>
             <h1 style={localStyles.mainTitle}>🛒 Amazon Product Manager</h1>
             <p style={localStyles.subtitle}>
@@ -92,7 +92,7 @@ export default function ShopifyApp() {
   // Main App
   return (
     <div style={styles.page}>
-      <div style={styles.container}>
+      <div style={localStyles.wideContainer}>
         <Header
           shopifyReady={shopifyReady}
           shopDomain={shopDomain}
@@ -129,9 +129,9 @@ export default function ShopifyApp() {
           loading={storeMarkupLoading}
         />
 
-        {/* ✅ UPDATED: 2-column layout — Add Product (left) + Collections (right) */}
+        {/* ✅ 2-column FULL-WIDTH layout */}
         <div style={localStyles.twoColumnGrid}>
-          <div style={localStyles.leftColumn}>
+          <div style={localStyles.column}>
             <AddProductForm
               amazonUrl={amazonUrl}
               setAmazonUrl={setAmazonUrl}
@@ -141,7 +141,7 @@ export default function ShopifyApp() {
             />
           </div>
 
-          <div style={localStyles.rightColumn}>
+          <div style={localStyles.column}>
             <CollectionsSelector
               collections={collections}
               selectedCollections={selectedCollections}
@@ -198,9 +198,16 @@ function StoreMarkupBanner({ storeMarkup, loading }) {
 }
 
 // ============================================
-// Local Styles (Professional & Clean)
+// Local Styles
 // ============================================
 const localStyles = {
+  // ✅ UPDATED: Wide container (was 900px, now 1400px)
+  wideContainer: {
+    maxWidth: '1400px',
+    margin: '0 auto',
+    padding: '0 24px',
+  },
+
   // --- Header Section ---
   headerSection: {
     textAlign: 'center',
@@ -381,20 +388,18 @@ const localStyles = {
     boxShadow: '0 1px 2px rgba(0,0,0,0.1)',
   },
 
-  // ✅ NAYA: 2-column layout
+  // ✅ 2-column FULL-WIDTH layout (50% each)
   twoColumnGrid: {
     display: 'grid',
     gridTemplateColumns: '1fr 1fr',
-    gap: '20px',
-    marginBottom: '20px',
-    alignItems: 'start',
+    gap: '24px',
+    marginBottom: '24px',
+    alignItems: 'stretch',
+    width: '100%',
   },
-  leftColumn: {
+  column: {
     display: 'flex',
     flexDirection: 'column',
-  },
-  rightColumn: {
-    display: 'flex',
-    flexDirection: 'column',
+    minWidth: 0,
   },
 }
