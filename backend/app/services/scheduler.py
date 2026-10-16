@@ -1,30 +1,9 @@
 # ============================================
 # app/services/scheduler.py
 # Har 24 ghante Amazon se fresh prices fetch karne wala scheduler
-# + Out of Stock tracking
-# + Shopify Status Sync (DB token use karta hai)
-# + Inventory quantity sync (har variant)
-# + Shopify price update (HAR CHANGE PE — increase ya decrease)
-# + SAARE products process (draft bhi)
-# + price hamesha amazon_price + STORE DEFAULT markup + TAX
-# + Shopify metafields update
-# + ✅ NAYA: shopify_status field DB mein save
-# + ✅ NAYA: SKU na mile toh title se Shopify product dhoondo
-# + ✅ FIXED: sync_update_shopify_price ab await ke saath
-# + ✅ FIXED: refresh_token pass hota hai
-# + ✅ FIXED: Product ke shopify_store_id se store dhoondha jata hai
-# + ✅ FIXED: Manual override skip NAHI hota — sab products process hote hain
-# + ✅ FIXED: Price push HAR change pe (increase ya decrease)
-# + ✅ FIXED: is_available filter HATA DIYA — saare products process hote hain
-# + ✅ FIXED: set_inventory_quantity ka result check hota hai
-# + ✅ FIXED: Inventory error par warning log hoti hai
-# + ✅ NAYA: Markup type "both" — Fixed + Percent
-# + ✅ FIXED v2: STORE DEFAULT markup use karo (product.markup nahi)
-# + ✅ FIXED v3: STORE DEFAULT tax bhi use karo
-# + ✅ FIXED v4: Final price change pe bhi Shopify pe push karo
-# + ✅ FIXED v5: None checks in sync_shopify_product (crash fix)
-# + ✅ FIXED v6: summary return karo (frontend progress ke liye)
-# + ✅ FIXED v7: last_run_status (polling ke liye)
+# + ✅ FIXED v8: Markup CAP add (same as add-product)
+# + ✅ FIXED v8: Compare-at price calculate + push
+# + ✅ FIXED v8: Same result as add-product
 # ============================================
 
 import logging
@@ -61,7 +40,7 @@ scheduler = AsyncIOScheduler()
 
 
 # ============================================
-# ✅ NAYA: Global status — frontend polling ke liye
+# ✅ Global status — frontend polling ke liye
 # ============================================
 last_run_status = {
     "running": False,
@@ -99,7 +78,7 @@ def _get_store_for_product(
 
 
 # ============================================
-# ✅ FIXED v3: Store ka default markup + tax nikaalo
+# ✅ HELPER: Store ka default markup + tax
 # ============================================
 def _get_store_default_markup(store: ShopifyStore) -> tuple:
     """
@@ -118,6 +97,125 @@ def _get_store_default_markup(store: ShopifyStore) -> tuple:
         markup_type = "fixed"
 
     return markup_val, markup_type, extra_pct, tax_rate
+
+
+# ============================================
+# ✅ NAYA v8: Markup CAP (same as product_core.py)
+# ============================================
+def _apply_markup_cap(markup: float, markup_type: str) -> float:
+    """
+    Markup cap lagao — same as add-product.
+    - fixed: max $50
+    - percent: max 500%
+    - both: fixed part max $50
+    """
+    try:
+        markup = float(markup)
+    except (ValueError, TypeError):
+        return 2.0
+
+    if markup < 0:
+        markup = 0.0
+
+    if markup_type == "fixed":
+        if markup > 50:
+            logger.warning(f"⚠️ Fixed markup ${markup} capped at $50")
+            markup = 50.0
+    elif markup_type == "percent":
+        if markup > 500:
+            logger.warning(f"⚠️ Percent markup {markup}% capped at 500%")
+            markup = 500.0
+    elif markup_type == "both":
+        if markup > 50:
+            logger.warning(f"⚠️ Fixed part ${markup} capped at $50")
+            markup = 50.0
+
+    return markup
+
+
+# ============================================
+# ✅ NAYA v8: Compare-at price calculate karo
+# Same logic as product_core.py
+# ============================================
+def _calculate_compare_at_price(
+    store: ShopifyStore,
+    final_price: float,
+    amazon_price: float,
+) -> float | None:
+    """
+    Compare-at price calculate karo store settings se.
+    Same logic as add-product.
+
+    Returns: Compare price (rounded 2 decimals) ya None
+    """
+    if not store:
+        return None
+
+    if not final_price or final_price <= 0:
+        return None
+
+    # ✅ Rule read karo (naya field, fallback purane se)
+    rule = getattr(store, "default_compare_at_rule", None)
+
+    if not rule:
+        # Fallback — purane fields se derive
+        enabled = bool(getattr(store, "default_compare_at_enabled", False))
+        if not enabled:
+            rule = "none"
+        else:
+            old_type = getattr(store, "default_compare_at_type", None) or "percent"
+            if old_type == "amazon":
+                rule = "amazon"
+            elif old_type == "fixed":
+                rule = "fixed"
+            else:
+                rule = "percent"
+
+    if rule == "none":
+        return None
+
+    compare_value = float(
+        getattr(store, "default_compare_at_value", None) or 0.0
+    )
+
+    # ✅ Amazon rule
+    if rule == "amazon":
+        if amazon_price and amazon_price > final_price:
+            return round(float(amazon_price), 2)
+        logger.warning(
+            f"⚠️ Amazon rule: amazon (${amazon_price}) <= final "
+            f"(${final_price}) — skip compare"
+        )
+        return None
+
+    # ✅ Fixed / Percent rules
+    if compare_value <= 0:
+        return None
+
+    try:
+        if rule == "percent":
+            compare_price = final_price * (1 + compare_value / 100)
+        elif rule == "fixed":
+            compare_price = final_price + compare_value
+        else:
+            logger.warning(f"⚠️ Unknown compare rule: {rule} — skipping")
+            return None
+
+        compare_price = round(compare_price, 2)
+
+        # Sanity check
+        if compare_price <= final_price:
+            logger.warning(
+                f"⚠️ Compare price (${compare_price}) <= final "
+                f"(${final_price}) — skipping"
+            )
+            return None
+
+        return compare_price
+
+    except (ValueError, TypeError) as e:
+        logger.error(f"❌ Compare price calc error: {e}")
+        return None
 
 
 # ============================================
@@ -179,7 +277,7 @@ async def find_shopify_product_by_title(
 
 
 # ============================================
-# ✅ FIXED v5: SHOPIFY STATUS + INVENTORY SYNC
+# ✅ SHOPIFY STATUS + INVENTORY SYNC
 # ============================================
 async def sync_shopify_product(
     product: Product,
@@ -346,10 +444,15 @@ async def sync_shopify_product(
 
 
 # ============================================
-# ✅ HELPER: SHOPIFY PRICE + METAFIELDS UPDATE
+# ✅ FIXED v8: SHOPIFY PRICE + COMPARE-AT + METAFIELDS UPDATE
 # ============================================
-async def sync_shopify_price(product: Product, new_price: float, db: Session):
-    """Shopify pe product ka price + metafields update karta hai."""
+async def sync_shopify_price(
+    product: Product,
+    new_price: float,
+    db: Session,
+    compare_at_price: float = None,   # ✅ NAYA
+):
+    """Shopify pe product ka price + compare_at + metafields update karta hai."""
     store = _get_store_for_product(db, product)
 
     if not store or not store.access_token:
@@ -385,17 +488,21 @@ async def sync_shopify_price(product: Product, new_price: float, db: Session):
         return False
 
     try:
+        # ✅ sync_update_shopify_price ko compare_at_price bhi bhejo
         success = await sync_update_shopify_price(
             shop_domain=shop,
             access_token=access_token,
             shopify_product_id=shopify_id,
             new_price=new_price,
             refresh_token=refresh_token,
+            compare_at_price=compare_at_price,   # ✅ NAYA
         )
+
         if success:
             logger.info(
                 f"✅ Shopify price updated: ASIN={product.asin}, "
-                f"new_price=${new_price}"
+                f"new_price=${new_price}, "
+                f"compare_at=${compare_at_price}"
             )
         else:
             logger.warning(
@@ -465,7 +572,7 @@ async def sync_shopify_price(product: Product, new_price: float, db: Session):
 
 # ============================================
 # JOB: UPDATE ALL PRICES
-# ✅ FIXED v7: last_run_status + summary
+# ✅ FIXED v8: Cap + Compare-at price
 # ============================================
 async def update_all_prices():
     """SAARE products ke prices update karta hai (24h)."""
@@ -475,7 +582,6 @@ async def update_all_prices():
     logger.info("PRICE UPDATE JOB STARTED")
     logger.info("=" * 60)
 
-    # ✅ NAYA: Status running set karo
     last_run_status["running"] = True
     last_run_status["started_at"] = datetime.now(timezone.utc).isoformat()
     last_run_status["finished_at"] = None
@@ -497,7 +603,6 @@ async def update_all_prices():
         price_changed_count = 0
         price_recalculated_count = 0
 
-        # ✅ NAYA: Detailed results list
         results = []
 
         for index, product in enumerate(products, start=1):
@@ -567,29 +672,42 @@ async def update_all_prices():
                 old_amazon = product.amazon_price or 0
                 old_price = product.price
 
-                # ✅ STORE DEFAULT markup + tax use karo
+                # ✅ FIXED v8: Markup CAP lagao (same as add-product)
+                capped_markup = _apply_markup_cap(
+                    store_markup, store_markup_type
+                )
+
+                # ✅ Final price calculate karo (capped markup)
                 new_final_price = calculate_final_price(
                     amazon_price=new_amazon_price,
-                    markup=store_markup,
+                    markup=capped_markup,           # ✅ Capped
                     markup_type=store_markup_type,
                     extra_percent=store_extra_pct,
                     tax_rate=store_tax_rate,
                 )
 
+                # ✅ FIXED v8: Compare-at price calculate karo
+                compare_at_price = _calculate_compare_at_price(
+                    store=store,
+                    final_price=new_final_price,
+                    amazon_price=new_amazon_price,
+                )
+
                 logger.info(
                     f"   💰 Price calculated: "
                     f"amazon=${new_amazon_price}, "
-                    f"markup={store_markup} ({store_markup_type}), "
+                    f"markup={capped_markup} ({store_markup_type}), "
                     f"extra={store_extra_pct}%, "
                     f"tax={store_tax_rate}%, "
-                    f"final=${new_final_price}"
+                    f"final=${new_final_price}, "
+                    f"compare_at=${compare_at_price}"
                 )
 
                 product.amazon_price = new_amazon_price
                 product.price = new_final_price
 
                 # Product me bhi updated markup save karo
-                product.markup = store_markup
+                product.markup = capped_markup             # ✅ Capped
                 product.markup_type = store_markup_type
                 if hasattr(product, "extra_percent"):
                     product.extra_percent = store_extra_pct
@@ -624,21 +742,23 @@ async def update_all_prices():
                 )
 
                 if price_changed:
+                    # ✅ FIXED v8: Compare-at price bhi bhejo
                     await sync_shopify_price(
                         product=product,
                         new_price=new_final_price,
                         db=db,
+                        compare_at_price=compare_at_price,   # ✅ NAYA
                     )
 
                     logger.info(
                         f"[PRICE CHANGED] ASIN={product.asin} "
                         f"amazon: ${old_amazon} → ${new_amazon_price}, "
-                        f"final: ${old_price} → ${new_final_price}"
+                        f"final: ${old_price} → ${new_final_price}, "
+                        f"compare_at: ${compare_at_price}"
                     )
                     price_changed_count += 1
                     updated_count += 1
 
-                    # ✅ NAYA: Result entry
                     results.append({
                         "index": index,
                         "asin": product.asin,
@@ -655,7 +775,6 @@ async def update_all_prices():
                     )
                     skipped_count += 1
 
-                    # ✅ NAYA: Result entry
                     results.append({
                         "index": index,
                         "asin": product.asin,
@@ -699,7 +818,6 @@ async def update_all_prices():
         )
         logger.info("=" * 60)
 
-        # ✅ NAYA: Summary return karo
         summary = {
             "total": total_products,
             "updated": updated_count,
@@ -713,7 +831,6 @@ async def update_all_prices():
             "results": results,
         }
 
-        # ✅ NAYA: Status success set karo
         last_run_status["running"] = False
         last_run_status["finished_at"] = datetime.now(timezone.utc).isoformat()
         last_run_status["summary"] = summary
@@ -723,7 +840,6 @@ async def update_all_prices():
     except Exception as e:
         logger.error(f"Scheduler job failed: {e}")
 
-        # ✅ NAYA: Status error set karo
         last_run_status["running"] = False
         last_run_status["finished_at"] = datetime.now(timezone.utc).isoformat()
         last_run_status["summary"] = {"error": str(e)}

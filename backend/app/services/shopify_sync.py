@@ -2,6 +2,7 @@
 # app/services/shopify_sync.py
 # Price sync (Admin API) + Storefront availability check
 # + ✅ FIXED: Circular import — direct module se import
+# + ✅ NAYA v2: compare_at_price support
 # ============================================
 
 import logging
@@ -11,7 +12,7 @@ import httpx
 
 from app.config import settings
 from app.services.shopify_helpers import _safe_api_version
-from app.services.shopify.product_extras import update_shopify_product_tags_and_type   # ✅ FIXED
+from app.services.shopify.product_extras import update_shopify_product_tags_and_type
 
 logger = logging.getLogger(__name__)
 
@@ -140,6 +141,7 @@ async def check_product_availability(
 
 # ============================================
 # SYNC SHOPIFY PRICE UPDATE
+# ✅ NAYA v2: compare_at_price support
 # ============================================
 async def sync_update_shopify_price(
     shop_domain: str,
@@ -149,13 +151,21 @@ async def sync_update_shopify_price(
     refresh_token: Optional[str] = None,
     tags: Optional[list] = None,
     product_type: Optional[str] = None,
+    compare_at_price: Optional[float] = None,   # ✅ NAYA
 ) -> bool:
+    """
+    Update Shopify product price + compare_at_price.
+
+    Args:
+        compare_at_price: Agar diya toh variant pe set karega.
+                          Agar None ya <= new_price hai toh skip.
+    """
     if not all([shop_domain, access_token, shopify_product_id]):
         logger.warning("Shopify sync skipped: missing config")
         return False
 
     if not str(shopify_product_id).startswith("gid://"):
-        product_gid = f"gid://shopify/Product/{shopify_product_id}"
+        product_gid = f"gid://Shopify/Product/{shopify_product_id}"
     else:
         product_gid = shopify_product_id
 
@@ -182,6 +192,7 @@ async def sync_update_shopify_price(
               id
               title
               price
+              compareAtPrice
             }
           }
         }
@@ -218,6 +229,7 @@ async def sync_update_shopify_price(
                             refresh_token=new_data.get("refresh_token"),
                             tags=tags,
                             product_type=product_type,
+                            compare_at_price=compare_at_price,   # ✅ NAYA
                         )
                 logger.error(
                     f"❌ {res.status_code} Unauthorized for {shop_domain} "
@@ -243,13 +255,40 @@ async def sync_update_shopify_price(
             logger.warning(f"⚠️ No variants found for: {product_gid}")
             return False
 
-        variants_to_update = [
-            {
+        # ✅ Compare-at price normalize karo
+        compare_at_str = None
+        if compare_at_price is not None:
+            try:
+                cap = float(compare_at_price)
+                price_f = float(new_price)
+
+                if cap > price_f:
+                    compare_at_str = f"{cap:.2f}"
+                    logger.info(
+                        f"   💰 Compare-at: ${compare_at_str} "
+                        f"(price: ${price_f})"
+                    )
+                else:
+                    logger.warning(
+                        f"⚠️ compare_at (${cap}) <= price (${price_f}) "
+                        f"— skipping compare_at"
+                    )
+            except (ValueError, TypeError) as e:
+                logger.warning(f"⚠️ Invalid compare_at_price: {e}")
+
+        # ✅ Har variant ke liye input banao
+        variants_to_update = []
+        for edge in variant_edges:
+            variant_input = {
                 "id": edge["node"]["id"],
                 "price": str(new_price),
             }
-            for edge in variant_edges
-        ]
+
+            # ✅ Agar compare_at set karna hai toh add karo
+            if compare_at_str:
+                variant_input["compareAtPrice"] = compare_at_str
+
+            variants_to_update.append(variant_input)
 
         mutation = """
         mutation productVariantsBulkUpdate(
@@ -263,6 +302,7 @@ async def sync_update_shopify_price(
             productVariants {
               id
               price
+              compareAtPrice
             }
             userErrors {
               field
@@ -307,9 +347,14 @@ async def sync_update_shopify_price(
             .get("productVariants", [])
         )
 
-        logger.info(
-            f"✅ Shopify price updated: {len(updated)} variant(s) → ${new_price}"
-        )
+        # ✅ Log price + compare_at
+        if updated:
+            first = updated[0]
+            logger.info(
+                f"✅ Shopify price updated: {len(updated)} variant(s) → "
+                f"${first.get('price')}, "
+                f"compare_at=${first.get('compareAtPrice', 'N/A')}"
+            )
 
         if tags is not None:
             await update_shopify_product_tags_and_type(
