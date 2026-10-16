@@ -18,8 +18,7 @@
 # + ✅ FIXED v5: calculate_final_price — (Amazon + Fixed + Percentage) + Tax
 # + ✅ FIXED v6: markup/markup_type validation (no defaults)
 # + ✅ FIXED v7: stock_quantity = 100 bug hataya
-# + ✅ FIXED v8: None availability = out of stock
-# + ✅ FIXED v9: Available product ka stock 100 — out-of-stock ka 0
+# + ✅ FIXED v10: add_to_cart None = out of stock
 # ============================================
 
 import logging
@@ -163,13 +162,21 @@ def validate_parent_asin(parent_asin, asin: str) -> Optional[str]:
 
 
 # ============================================
-# ✅ FIXED v9: AVAILABILITY CHECK
-# + availability text ko priority do — None ko out-of-stock mat maano
+# ✅ FIXED v10: AVAILABILITY CHECK
+# + add_to_cart None = OUT OF STOCK
 # ============================================
 def check_availability(raw: dict) -> tuple[bool, str, str]:
-    """Availability check karta hai multiple fields se."""
+    """
+    Availability check karta hai.
 
-    # ✅ Pehle shipping restriction check karo
+    ✅ SIMPLE LOGIC:
+    - add_to_cart_available == True → In Stock
+    - add_to_cart_available == False → Out of Stock
+    - add_to_cart_available == None → Out of Stock (safe)
+    - Shipping restriction → Out of Stock
+    """
+
+    # ✅ 1. Shipping restriction check karo
     shipping_msg = (
         raw.get("shipping_message")
         or raw.get("delivery_message")
@@ -185,68 +192,41 @@ def check_availability(raw: dict) -> tuple[bool, str, str]:
             "delivery location",
             "not available for delivery",
         ]):
-            logger.warning(f"⚠️ Shipping restriction detected: {shipping_msg}")
+            logger.warning(f"⚠️ Shipping restriction: {shipping_msg}")
             return False, "Shipping Restricted", "shipping_message"
 
+    # ✅ 2. add_to_cart_available check karo
     add_to_cart = raw.get("add_to_cart_available")
     buybox = raw.get("buybox_available")
     in_stock = raw.get("in_stock")
 
-    # ✅ Pehle explicitly bool values check karo
-    if isinstance(add_to_cart, bool):
-        return add_to_cart, "In Stock" if add_to_cart else "Out of Stock", "add_to_cart_available"
+    # ✅ add_to_cart = True → In Stock
+    if add_to_cart is True:
+        return True, "In Stock", "add_to_cart_available (True)"
 
-    if isinstance(buybox, bool):
-        return buybox, "In Stock" if buybox else "Out of Stock", "buybox_available"
+    # ✅ add_to_cart = False → Out of Stock
+    if add_to_cart is False:
+        return False, "Out of Stock", "add_to_cart_available (False)"
 
-    if isinstance(in_stock, bool):
-        return in_stock, "In Stock" if in_stock else "Out of Stock", "in_stock"
+    # ✅ add_to_cart = None → check buybox
+    if buybox is True:
+        return True, "In Stock", "buybox_available (True)"
 
-    # ✅ FIXED v9: Agar teenon None hain to availability text check karo
-    availability_text = (
-        raw.get("availability")
-        or raw.get("availabilityText")
-        or raw.get("availability_text")
-        or raw.get("stock_status")
-        or raw.get("stockStatus")
-        or ""
+    if buybox is False:
+        return False, "Out of Stock", "buybox_available (False)"
+
+    # ✅ buybox = None → check in_stock
+    if in_stock is True:
+        return True, "In Stock", "in_stock (True)"
+
+    if in_stock is False:
+        return False, "Out of Stock", "in_stock (False)"
+
+    # ✅ Teenon None hain → Out of Stock (safe)
+    logger.warning(
+        "⚠️ add_to_cart/buybox/in_stock all None — assuming OUT OF STOCK"
     )
-
-    if isinstance(availability_text, str) and availability_text.strip():
-        avail_lower = availability_text.lower().strip()
-
-        out_of_stock_keywords = [
-            "out of stock", "unavailable", "currently unavailable",
-            "not available", "sold out", "temporarily out",
-            "no disponible", "temporarily unavailable",
-            "back order", "backorder",
-            "cannot be shipped",
-            "cannot ship",
-            "not shippable",
-            "delivery location",
-            "not available for delivery",
-        ]
-
-        in_stock_keywords = [
-            "in stock", "only", "usually ships", "ships within",
-            "available", "in stock soon", "add to cart",
-        ]
-
-        # ✅ Pehle out-of-stock check karo
-        if any(kw in avail_lower for kw in out_of_stock_keywords):
-            return False, availability_text, "availability_text (out)"
-
-        # ✅ Phir in-stock check karo
-        if any(kw in avail_lower for kw in in_stock_keywords):
-            return True, availability_text, "availability_text (in)"
-
-        # ✅ Kuch bhi match nahi hua — default available maano
-        logger.warning(f"⚠️ Unknown availability text: '{availability_text}' — assuming In Stock")
-        return True, availability_text, "availability_text (unknown)"
-
-    # ✅ Kuch bhi nahi mila — default available maano
-    logger.warning("⚠️ No availability info — defaulting to In Stock")
-    return True, "In Stock", "default"
+    return False, "Unknown", "no_info"
 
 
 # ============================================
@@ -573,7 +553,7 @@ def clean_description(description: str) -> str:
 
 # ============================================
 # BRIGHT DATA API CALL
-# ✅ FIXED v9: Available product ka stock 100
+# ✅ FIXED v10: add_to_cart None = out of stock
 # ============================================
 async def fetch_product_from_brightdata(amazon_url: str) -> dict:
     """Bright Data API se product data fetch karta hai."""
@@ -759,18 +739,15 @@ async def fetch_product_from_brightdata(amazon_url: str) -> dict:
         f"✅ Availability: is_available={is_available}, text='{availability_text}'"
     )
 
-    # ✅ FIXED v9: Available product ka stock 100
-    stock_quantity = raw.get("stock_quantity") or raw.get("stock") or 0
-    try:
-        stock_quantity = int(stock_quantity) if stock_quantity else 0
-    except (ValueError, TypeError):
+    # ✅ FIXED v10: Available = 100, Out-of-stock = 0
+    if is_available:
+        stock_quantity = 100
+    else:
         stock_quantity = 0
 
-    if not is_available:
-        stock_quantity = 0
-    elif stock_quantity == 0:
-        # ✅ Available product lekin Amazon ne quantity nahi di — 100 set karo
-        stock_quantity = 100
+    logger.info(
+        f"   📦 Stock: {stock_quantity} (available={is_available})"
+    )
 
     specs = {}
     product_details = raw.get("product_details") or []
