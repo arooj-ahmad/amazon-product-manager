@@ -18,7 +18,7 @@
 # + ✅ FIXED v5: calculate_final_price — (Amazon + Fixed + Percentage) + Tax
 # + ✅ FIXED v6: markup/markup_type validation (no defaults)
 # + ✅ FIXED v7: stock_quantity = 100 bug hataya
-# + ✅ FIXED v11: add_to_cart None + availability text check
+# + ✅ FIXED v12: availability None = OUT OF STOCK
 # ============================================
 
 import logging
@@ -162,9 +162,11 @@ def validate_parent_asin(parent_asin, asin: str) -> Optional[str]:
 
 
 # ============================================
-# ✅ FIXED v11: AVAILABILITY CHECK
-# + add_to_cart True/False → use that
-# + add_to_cart None → availability text check
+# ✅ FIXED v12: AVAILABILITY CHECK
+# + add_to_cart True → In Stock
+# + add_to_cart False → Out of Stock
+# + add_to_cart None + availability None → OUT OF STOCK
+# + add_to_cart None + availability text → text check
 # ============================================
 def check_availability(raw: dict) -> tuple[bool, str, str]:
     """
@@ -174,10 +176,9 @@ def check_availability(raw: dict) -> tuple[bool, str, str]:
     1. Shipping restriction → Out of Stock
     2. add_to_cart_available == True → In Stock
     3. add_to_cart_available == False → Out of Stock
-    4. add_to_cart_available == None → availability text check karo
-       - "cannot be shipped" / "delivery location" → Out of Stock
-       - "out of stock" / "unavailable" → Out of Stock
-       - "In Stock" / "Only X left" → In Stock
+    4. add_to_cart_available == None:
+       - availability text hai → text check karo
+       - availability text bhi None → OUT OF STOCK (safe)
     """
 
     # ✅ 1. Shipping restriction check karo (sabse pehle)
@@ -201,6 +202,8 @@ def check_availability(raw: dict) -> tuple[bool, str, str]:
 
     # ✅ 2. add_to_cart_available check karo
     add_to_cart = raw.get("add_to_cart_available")
+    buybox = raw.get("buybox_available")
+    in_stock = raw.get("in_stock")
 
     if add_to_cart is True:
         return True, "In Stock", "add_to_cart_available (True)"
@@ -208,7 +211,19 @@ def check_availability(raw: dict) -> tuple[bool, str, str]:
     if add_to_cart is False:
         return False, "Out of Stock", "add_to_cart_available (False)"
 
-    # ✅ 3. add_to_cart = None → availability text check karo
+    if buybox is True:
+        return True, "In Stock", "buybox_available (True)"
+
+    if buybox is False:
+        return False, "Out of Stock", "buybox_available (False)"
+
+    if in_stock is True:
+        return True, "In Stock", "in_stock (True)"
+
+    if in_stock is False:
+        return False, "Out of Stock", "in_stock (False)"
+
+    # ✅ 3. Teenon None hain → availability text check karo
     availability_text = (
         raw.get("availability")
         or raw.get("availabilityText")
@@ -218,45 +233,46 @@ def check_availability(raw: dict) -> tuple[bool, str, str]:
         or ""
     )
 
-    if isinstance(availability_text, str) and availability_text.strip():
-        avail_lower = availability_text.lower().strip()
-
-        # ❌ Out-of-stock keywords
-        out_of_stock_keywords = [
-            "out of stock", "unavailable", "currently unavailable",
-            "not available", "sold out", "temporarily out",
-            "no disponible", "temporarily unavailable",
-            "back order", "backorder",
-            "cannot be shipped",
-            "cannot ship",
-            "not shippable",
-            "delivery location",
-            "not available for delivery",
-        ]
-
-        # ✅ In-stock keywords
-        in_stock_keywords = [
-            "in stock", "only", "usually ships", "ships within",
-            "available", "in stock soon", "add to cart",
-        ]
-
-        # Pehle out-of-stock check karo (strict)
-        if any(kw in avail_lower for kw in out_of_stock_keywords):
-            return False, availability_text, "availability_text (out)"
-
-        # Phir in-stock check karo
-        if any(kw in avail_lower for kw in in_stock_keywords):
-            return True, availability_text, "availability_text (in)"
-
-        # Kuch bhi match nahi hua — default available maano
+    # ✅ FIXED v12: Agar availability text bhi None/empty hai → OUT OF STOCK
+    if not availability_text or not isinstance(availability_text, str) or not availability_text.strip():
         logger.warning(
-            f"⚠️ Unknown availability text: '{availability_text}' — assuming In Stock"
+            "⚠️ No availability info at all — assuming OUT OF STOCK"
         )
-        return True, availability_text, "availability_text (unknown)"
+        return False, "Unknown", "no_info"
 
-    # ✅ Kuch bhi nahi mila — default available maano
-    logger.warning("⚠️ No availability info — defaulting to In Stock")
-    return True, "In Stock", "default"
+    # ✅ availability text hai → check karo
+    avail_lower = availability_text.lower().strip()
+
+    out_of_stock_keywords = [
+        "out of stock", "unavailable", "currently unavailable",
+        "not available", "sold out", "temporarily out",
+        "no disponible", "temporarily unavailable",
+        "back order", "backorder",
+        "cannot be shipped",
+        "cannot ship",
+        "not shippable",
+        "delivery location",
+        "not available for delivery",
+    ]
+
+    in_stock_keywords = [
+        "in stock", "only", "usually ships", "ships within",
+        "available", "in stock soon", "add to cart",
+    ]
+
+    # Pehle out-of-stock check karo (strict)
+    if any(kw in avail_lower for kw in out_of_stock_keywords):
+        return False, availability_text, "availability_text (out)"
+
+    # Phir in-stock check karo
+    if any(kw in avail_lower for kw in in_stock_keywords):
+        return True, availability_text, "availability_text (in)"
+
+    # Kuch bhi match nahi hua — default available maano
+    logger.warning(
+        f"⚠️ Unknown availability text: '{availability_text}' — assuming In Stock"
+    )
+    return True, availability_text, "availability_text (unknown)"
 
 
 # ============================================
@@ -583,7 +599,7 @@ def clean_description(description: str) -> str:
 
 # ============================================
 # BRIGHT DATA API CALL
-# ✅ FIXED v11: add_to_cart None → availability text check
+# ✅ FIXED v12: availability None = out of stock
 # ============================================
 async def fetch_product_from_brightdata(amazon_url: str) -> dict:
     """Bright Data API se product data fetch karta hai."""
@@ -769,7 +785,7 @@ async def fetch_product_from_brightdata(amazon_url: str) -> dict:
         f"✅ Availability: is_available={is_available}, text='{availability_text}'"
     )
 
-    # ✅ FIXED v11: Available = 100, Out-of-stock = 0
+    # ✅ FIXED v12: Available = 100, Out-of-stock = 0
     if is_available:
         stock_quantity = 100
     else:
