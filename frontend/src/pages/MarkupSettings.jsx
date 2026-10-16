@@ -1,15 +1,15 @@
 // ============================================
 // frontend/src/pages/MarkupSettings.jsx
 // Markup Settings Page — DEFAULT MARKUP + COUNTRY + TAX
-// + ✅ NAYA: Country select (tax rate auto-fill)
-// + ✅ NAYA: Tax rate field (manual override)
+// + ✅ NEW: Country select (tax rate auto-fill)
+// + ✅ NEW: Tax rate field (manual override)
 // + ✅ FIXED: Navigation via window.location.hash
 // + ✅ FIXED: Circle spinner loader (consistent with other pages)
 // ============================================
 
 import { useState, useEffect } from 'react'
 import { getCountries } from '../api/pricing'
-import Loader from '../components/Loader'   // ✅ NAYA
+import Loader from '../components/Loader'   // ✅ NEW
 
 const API_URL =
   (import.meta.env.VITE_API_URL || '').trim() ||
@@ -132,7 +132,7 @@ export default function MarkupSettings() {
     }
   }
 
-  // ✅ Country change par tax rate auto-fill
+  // ✅ Auto-fill tax rate when country changes
   const handleCountryChange = (countryId) => {
     const country = countries.find((c) => c.id === parseInt(countryId))
     setFormData({
