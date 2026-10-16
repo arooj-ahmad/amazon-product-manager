@@ -24,10 +24,13 @@
 # + ✅ FIXED v10: SKU mismatch — parent_asin verify karo
 # + ✅ FIXED v10: user_tax_rate = 0 → store se lo
 # + ✅ FIXED v10: hardcoded defaults hatao
+# + ✅ FIXED v11: Amazon URL normalize karo (https://, www., clean)
+# + ✅ FIXED v11: Token exchange fail → existing token use karo
 # ============================================
 
 import asyncio
 import logging
+import re
 from datetime import datetime, timedelta, timezone
 
 from fastapi import (
@@ -69,6 +72,55 @@ from app.services.scheduler import run_price_update_now, last_run_status
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/shopify", tags=["Shopify"])
+
+
+# ============================================
+# ✅ FIXED v11: Normalize Amazon URL
+# ============================================
+def _normalize_amazon_url(url: str) -> str:
+    """
+    Amazon URL ko normalize karo:
+    - https:// add karo agar missing
+    - www. add karo agar missing
+    - Sirf /dp/ASIN rakho — extra params hatao
+
+    Returns: Normalized URL ya original (agar parse fail ho)
+    """
+    if not url or not isinstance(url, str):
+        return url
+
+    url = url.strip()
+    if not url:
+        return url
+
+    # ✅ https:// add karo
+    if not url.startswith(("http://", "https://")):
+        url = "https://" + url
+
+    # ✅ www. add karo agar amazon. hai aur www. nahi hai
+    if "amazon." in url and "www.amazon." not in url:
+        url = url.replace("amazon.", "www.amazon.", 1)
+
+    # ✅ /dp/ASIN extract karo — baaki sab hatao
+    asin_match = re.search(r"/dp/([A-Z0-9]{10})", url)
+    if asin_match:
+        asin = asin_match.group(1)
+        normalized = f"https://www.amazon.com/dp/{asin}"
+        if normalized != url:
+            logger.info(f"🔗 URL normalized: {url[:60]}... → {normalized}")
+        return normalized
+
+    # ✅ /gp/product/ASIN bhi try karo
+    gp_match = re.search(r"/gp/product/([A-Z0-9]{10})", url)
+    if gp_match:
+        asin = gp_match.group(1)
+        normalized = f"https://www.amazon.com/dp/{asin}"
+        logger.info(f"🔗 URL normalized (gp): {url[:60]}... → {normalized}")
+        return normalized
+
+    # ✅ Agar kuch match nahi hua to original return karo
+    logger.warning(f"⚠️ Could not normalize URL: {url[:80]}...")
+    return url
 
 
 # ============================================
@@ -127,7 +179,6 @@ async def _get_valid_access_token(
 
 # ============================================
 # ✅ FIXED v10: Store default markup + tax
-# Agar store nahi hai to None return karo — hardcoded nahi
 # ============================================
 def _get_store_markup(store: ShopifyStore) -> tuple:
     """
@@ -395,7 +446,6 @@ async def check_variant_exists_in_shopify(
 
 # ============================================
 # HELPER: Smart markup cap
-# ✅ FIXED v10: Error case mein 0.0 return karo — 2.0 nahi
 # ============================================
 def apply_markup_cap(markup: float, markup_type: str) -> float:
     try:
@@ -433,12 +483,6 @@ def _verify_parent_match(
 ) -> bool:
     """
     Verify karo ki existing_parent actually same product family ka hai.
-
-    Check:
-    - Categories match karti hain (kam se kam 1 common)
-    - Brand match karta hai
-
-    Returns: True agar match hai, False agar nahi
     """
     if not existing_parent:
         return False
@@ -858,7 +902,6 @@ async def push_product_to_shopify(
             .first()
         )
 
-        # ✅ NAYA: Verify karo ki parent actually match karta hai
         if existing_parent:
             if not _verify_parent_match(existing_parent, {
                 "categories": product.categories or [],
@@ -983,10 +1026,11 @@ async def push_product_to_shopify(
 
 
 # ============================================
-# ✅ FIXED v10: ADD PRODUCT FROM SHOPIFY APP
+# ✅ FIXED v11: ADD PRODUCT FROM SHOPIFY APP
+# + URL normalize karo
+# + Token exchange fail → existing token use karo
 # + Parent verify karo
-# + tax_rate = 0 hataya
-# + store_markup None check
+# + tax_rate store se lo
 # ============================================
 @router.post("/app/add-product")
 async def add_product_from_shopify_app(
@@ -1004,6 +1048,10 @@ async def add_product_from_shopify_app(
     token = authorization.replace("Bearer ", "").strip()
     if not token:
         raise HTTPException(status_code=401, detail="Empty ID token")
+
+    # ✅ FIXED v11: Amazon URL normalize karo
+    amazon_url = _normalize_amazon_url(amazon_url)
+    logger.info(f"🔗 Normalized Amazon URL: {amazon_url}")
 
     try:
         payload = verify_id_token(token)
@@ -1068,11 +1116,28 @@ async def add_product_from_shopify_app(
         return True
 
     refreshed_ok = await refresh_store_token()
+
+    # ✅ FIXED v11: Agar token exchange fail ho, to existing token use karo
     if not refreshed_ok:
         if not store:
             raise HTTPException(
                 status_code=404,
                 detail=f"Store {shop_domain} not connected",
+            )
+
+        if store.access_token:
+            logger.warning(
+                f"⚠️ Token exchange failed — using existing store token"
+            )
+            # ✅ Existing token use karo — refresh_store_token() ne
+            # store.access_token ko chheda nahi (kyunki fail hua)
+        else:
+            raise HTTPException(
+                status_code=401,
+                detail=(
+                    "Token exchange failed and no existing token. "
+                    "Please reinstall the app or refresh the page."
+                ),
             )
 
     try:
