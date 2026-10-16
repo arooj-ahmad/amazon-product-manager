@@ -1,4 +1,5 @@
 // src/styles/theme.js
+// ✅ UPDATED: container maxWidth 720px → 1000px (better centering)
 
 export const theme = {
   colors: {
@@ -76,8 +77,9 @@ export const styles = {
     fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
   },
   
+  // ✅ UPDATED: 720px → 1000px
   container: {
-    maxWidth: '720px',
+    maxWidth: '1000px',
     margin: '0 auto',
     padding: '24px 20px 60px',
   },

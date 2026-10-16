@@ -1,5 +1,5 @@
 // src/pages/ShopifyApp.jsx
-// ✅ UPDATED: InfoBox removed + Centered layout
+// ✅ SIMPLIFIED: Uses theme's container + page (no local wrapper)
 
 import { useShopifyApp } from '../hooks/useShopifyApp'
 import { usePriceUpdateStore } from '../store/priceUpdateStore'
@@ -10,9 +10,6 @@ import CollectionsSelector from '../components/CollectionsSelector'
 import PlanCard from '../components/PlanCard'
 import Loader from '../components/Loader'
 
-// ============================================
-// ✅ Shopify iframe-compatible navigation
-// ============================================
 function navigateTo(path) {
   const targetHash = `#${path}`
   if (window.location.hash === targetHash) return
@@ -42,7 +39,7 @@ export default function ShopifyApp() {
   if (!subscription?.active) {
     return (
       <div style={styles.page}>
-        <div style={localStyles.centeredContainer}>
+        <div style={styles.container}>
           <div style={localStyles.headerSection}>
             <h1 style={localStyles.mainTitle}>🛒 Amazon Product Manager</h1>
             <p style={localStyles.subtitle}>
@@ -88,17 +85,16 @@ export default function ShopifyApp() {
     )
   }
 
-  // Main App — ✅ Centered layout, no InfoBox
+  // Main App
   return (
     <div style={styles.page}>
-      <div style={localStyles.centeredContainer}>
+      <div style={styles.container}>
         <Header
           shopifyReady={shopifyReady}
           shopDomain={shopDomain}
           subscription={subscription}
         />
 
-        {/* Global price update indicator */}
         {cronRunning && (
           <div style={localStyles.updateBanner}>
             <div style={localStyles.updateIconWrapper}>
@@ -122,13 +118,12 @@ export default function ShopifyApp() {
           </div>
         )}
 
-        {/* Store saved markup info banner */}
         <StoreMarkupBanner
           storeMarkup={storeMarkup}
           loading={storeMarkupLoading}
         />
 
-        {/* ✅ 2-column layout — centered, no InfoBox */}
+        {/* ✅ 2-column layout */}
         <div style={localStyles.twoColumnGrid}>
           <div style={localStyles.column}>
             <AddProductForm
@@ -151,8 +146,6 @@ export default function ShopifyApp() {
             />
           </div>
         </div>
-
-        {/* ❌ InfoBox removed */}
       </div>
     </div>
   )
@@ -200,14 +193,6 @@ function StoreMarkupBanner({ storeMarkup, loading }) {
 // Local Styles
 // ============================================
 const localStyles = {
-  // ✅ NAYA: Centered container (max 1200px, page ke beech me)
-  centeredContainer: {
-    maxWidth: '1200px',
-    margin: '0 auto',
-    padding: '0 24px',
-  },
-
-  // --- Header Section ---
   headerSection: {
     textAlign: 'center',
     marginBottom: '32px',
@@ -224,8 +209,6 @@ const localStyles = {
     color: theme.colors.textSecondary || '#64748b',
     margin: 0,
   },
-
-  // --- Alerts ---
   alertSuccess: {
     padding: '12px 16px',
     marginTop: '16px',
@@ -248,8 +231,6 @@ const localStyles = {
     fontWeight: '500',
     textAlign: 'center',
   },
-
-  // --- Test Mode ---
   testModeContainer: {
     marginTop: '32px',
     textAlign: 'center',
@@ -265,8 +246,6 @@ const localStyles = {
     cursor: 'pointer',
     transition: 'all 0.2s ease',
   },
-
-  // --- Markup Banner ---
   markupBanner: {
     display: 'flex',
     alignItems: 'center',
@@ -329,8 +308,6 @@ const localStyles = {
     fontSize: '13px',
     fontWeight: '500',
   },
-
-  // --- Global Update Banner ---
   updateBanner: {
     display: 'flex',
     alignItems: 'center',
@@ -386,12 +363,10 @@ const localStyles = {
     transition: 'all 0.2s ease',
     boxShadow: '0 1px 2px rgba(0,0,0,0.1)',
   },
-
-  // ✅ 2-column layout (centered)
   twoColumnGrid: {
     display: 'grid',
     gridTemplateColumns: '1fr 1fr',
-    gap: '24px',
+    gap: '20px',
     marginBottom: '24px',
     alignItems: 'stretch',
     width: '100%',
