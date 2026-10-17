@@ -6,7 +6,7 @@
 // + ✅ FIXED: Navigation via window.location.hash
 // + ✅ FIXED: Circle spinner loader (consistent with other pages)
 // + ✅ NEW v2: Compare Price Settings link card
-// + ✅ FIXED v3: Preview tax format — now in parentheses
+// + ✅ FIXED v4: Preview text updated to show actual backend formula
 // ============================================
 
 import { useState, useEffect } from 'react'
@@ -399,23 +399,23 @@ export default function MarkupSettings() {
             )}
           </div>
 
-          {/* ✅ FIXED v3: Preview — tax ab parentheses me */}
+          {/* ✅ FIXED v4: Preview — clear formula */}
           {formData.markup_value && (
             <div style={styles.previewBox}>
               <div style={styles.previewLabel}>Preview</div>
               <div style={styles.previewText}>
                 {selectedCountry ? `${selectedCountry.name}: ` : ''}
                 <strong>
-                  {formatMarkup(
-                    formData.markup_value,
-                    formData.markup_type,
-                    formData.extra_percent || 0
-                  )}
+                  (Amazon Price + ${formData.markup_value}
+                  {formData.markup_type === 'percent' ? '%' : ''}
+                  {formData.markup_type === 'both' && formData.extra_percent 
+                    ? ` + ${formData.extra_percent}%` 
+                    : ''})
                 </strong>
                 {parseFloat(formData.tax_rate) > 0 && (
                   <span style={{ color: '#6d7175' }}>
                     {' '}
-                    (+<strong>{formData.tax_rate}% tax</strong>)
+                    + <strong>{formData.tax_rate}% tax</strong>
                   </span>
                 )}
               </div>
