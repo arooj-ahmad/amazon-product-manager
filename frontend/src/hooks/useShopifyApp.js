@@ -1,16 +1,26 @@
 // src/hooks/useShopifyApp.js
-// ✅ FIXED v8: Zustand Caching + PriceUpdateStore perfectly synced
-
+// ✅ SIMPLIFIED: Markup state removed
+// ✅ NAYA: Backend se store ka saved markup load hota hai
+// ✅ NAYA v2: Tax + Country bhi load hote hain
+// ✅ NAYA v3: Cron progress (real-time UI feedback)
+// ✅ FIXED v4: Fake progress hata diya — real polling /price-update-status se
+// ✅ FIXED v4: Async trigger (/trigger-price-update-async) use karta hai
+// ✅ FIXED v4: Polling cleanup on unmount
+// ✅ FIXED v5: Cron state ab ZUSTAND global store me hai (page change pe survive)
+// ✅ FIXED v6: checkStatusOnce — page load pe backend se fresh status
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { usePriceUpdateStore } from '../store/priceUpdateStore'
-import { useAppStore } from '../store/useAppStore'
 
 const API_URL =
   (import.meta.env.VITE_API_URL || '').trim() ||
   'https://amazon-product-manager-production.up.railway.app'
 
+// ✅ Hardcoded fallback domain (testing ke liye)
 const FALLBACK_SHOP_DOMAIN = 'test-store-ispfraip.myshopify.com'
 
+// ============================================
+// App Bridge helper — v3 & v4 dono support
+// ============================================
 function getAppBridge() {
   if (typeof window === 'undefined') return null
   if (window.shopify) return window.shopify
@@ -20,7 +30,11 @@ function getAppBridge() {
 
 async function getIdToken() {
   const bridge = getAppBridge()
-  if (!bridge) throw new Error('Shopify App Bridge not loaded.')
+  if (!bridge) {
+    throw new Error(
+      'Shopify App Bridge not loaded. Please reload the app from Shopify Admin.'
+    )
+  }
   try {
     const token = await bridge.idToken()
     if (!token) throw new Error('Empty ID token')
@@ -32,7 +46,9 @@ async function getIdToken() {
 
 function showToast(message, isError = false) {
   const bridge = getAppBridge()
-  if (bridge?.toast?.show) bridge.toast.show(message, { isError })
+  if (bridge?.toast?.show) {
+    bridge.toast.show(message, { isError })
+  }
 }
 
 async function safeFetch(url, options = {}) {
@@ -50,68 +66,110 @@ async function safeFetch(url, options = {}) {
 
 function resolveShopDomain(currentDomain) {
   if (currentDomain) return currentDomain
+
   if (typeof window !== 'undefined') {
     const params = new URLSearchParams(window.location.search)
     const urlShop = params.get('shop')
     if (urlShop) return urlShop
   }
+
   return FALLBACK_SHOP_DOMAIN
 }
 
+// ============================================
+// Main Hook
+// ============================================
 export function useShopifyApp() {
   const [amazonUrl, setAmazonUrl] = useState('')
+
+  // ✅ Store ka saved markup + country + tax (backend se load hoga)
+  const [storeMarkup, setStoreMarkup] = useState({
+    markup: 2.0,
+    markupType: 'fixed',
+    extraPercent: 0,
+    countryId: null,
+    countryName: null,
+    taxRate: 0,
+  })
+  const [storeMarkupLoading, setStoreMarkupLoading] = useState(false)
+
   const [isLoading, setIsLoading] = useState(false)
   const [isSubscribing, setIsSubscribing] = useState(false)
   const [message, setMessage] = useState(null)
+
   const [shopifyReady, setShopifyReady] = useState(false)
+  const [shopDomain, setShopDomain] = useState('')
+
+  const [subscription, setSubscription] = useState(null)
   const [plans, setPlans] = useState([])
-  
+  const [checkingSub, setCheckingSub] = useState(true)
+
+  // ✅ Collections state
+  const [collections, setCollections] = useState([])
   const [selectedCollections, setSelectedCollections] = useState(new Set())
   const [collectionsLoading, setCollectionsLoading] = useState(false)
-  const [storeMarkupLoading, setStoreMarkupLoading] = useState(false)
 
-  // ✅ GLOBAL APP STORE
+  // ✅ GLOBAL: Cron state ab Zustand store se aata hai
+  // (page change pe bhi survive karta hai)
   const {
-    isAppInitialized, setAppInitialized,
-    shopDomain, setShopDomain,
-    subscription, setSubscription,
-    collections, setCollections,
-    storeMarkup, setStoreMarkup
-  } = useAppStore()
-
-  // ✅ GLOBAL CRON STORE
-  const {
-    cronRunning, cronMessage, cronProgress,
-    setCronRunning, setCronMessage, setCronProgress,
-    startPolling, stopPolling, checkStatusOnce,
+    cronRunning,
+    cronMessage,
+    cronProgress,
+    setCronRunning,
+    setCronMessage,
+    setCronProgress,
+    startPolling,
+    stopPolling,
+    checkStatusOnce,   // ✅ NAYA
   } = usePriceUpdateStore()
 
   const bridgeCheckRef = useRef(null)
 
-  // 1. Load Billing
+  // ========================================
+  // 1. Load billing data
+  // ========================================
   const loadBillingData = useCallback(async () => {
-    if (isAppInitialized && subscription) return 
-
+    setCheckingSub(true)
     try {
       const plansRes = await safeFetch(`${API_URL}/api/billing/plans`)
-      if (plansRes.ok) setPlans(plansRes.data.plans || [])
+      if (plansRes.ok) {
+        setPlans(plansRes.data.plans || [])
+      } else {
+        console.warn('Plans fetch failed:', plansRes.data)
+      }
 
       try {
         const idToken = await getIdToken()
         const subRes = await safeFetch(`${API_URL}/api/billing/status`, {
           headers: { Authorization: `Bearer ${idToken}` },
         })
-        if (subRes.ok) setSubscription(subRes.data)
-        else setSubscription({ active: false })
+
+        if (subRes.ok) {
+          setSubscription(subRes.data)
+        } else if (subRes.status === 401) {
+          setMessage({
+            type: 'error',
+            text: '❌ Session expired. Please reload the app.',
+          })
+        } else {
+          setSubscription({ active: false })
+        }
       } catch (tokenErr) {
+        console.warn('Token unavailable (testing mode):', tokenErr.message)
         setSubscription({ active: false })
       }
     } catch (err) {
+      console.error('Billing load failed:', err)
       setSubscription({ active: false })
+    } finally {
+      setCheckingSub(false)
     }
-  }, [isAppInitialized, subscription, setSubscription])
+  }, [])
 
-  // 2. App Bridge Init
+  // ========================================
+  // 2. App Bridge ready + shop domain
+  // ✅ FIXED v6: checkStatusOnce() bhi call karo
+  // ========================================
   useEffect(() => {
     let attempts = 0
     const MAX_ATTEMPTS = 20
@@ -126,51 +184,61 @@ export function useShopifyApp() {
         bridgeCheckRef.current = null
 
         const shop = bridge.config?.shop || bridge.shop
-        if (shop && !shopDomain) setShopDomain(shop)
-        else if (!shopDomain) {
+        if (shop) {
+          setShopDomain(shop)
+        } else {
           const params = new URLSearchParams(window.location.search)
           const urlShop = params.get('shop')
           if (urlShop) setShopDomain(urlShop)
         }
 
-        if (!isAppInitialized) {
-          await loadBillingData()
-          setAppInitialized(true)
-          showToast('Amazon Product Manager loaded!')
-        }
+        showToast('Amazon Product Manager loaded!')
+        loadBillingData()
 
+        // ✅ NAYA v6: Backend se ek baar fresh status check karo
+        // (agar job background me chal rahi hai toh progress dikhe,
+        //  ya complete ho chuki hai toh summary dikhe)
         try {
           const idToken = await getIdToken()
-          await checkStatusOnce(API_URL, idToken) // ✅ Cron status check
-        } catch (err) {}
+          await checkStatusOnce(API_URL, idToken)
+        } catch (err) {
+          console.warn('Initial status check failed:', err.message)
+        }
+
         return
       }
 
       if (attempts >= MAX_ATTEMPTS) {
         clearInterval(bridgeCheckRef.current)
         bridgeCheckRef.current = null
-        if (!isAppInitialized) {
-          setMessage({ type: 'error', text: '⚠️ Shopify Admin se app kholein.' })
-          await loadBillingData()
-          setAppInitialized(true)
-        }
+        setMessage({
+          type: 'error',
+          text: '⚠️ Shopify Admin se app kholein. Filhal testing mode active hai.',
+        })
+        loadBillingData()
       }
     }, 500)
 
     return () => {
       if (bridgeCheckRef.current) clearInterval(bridgeCheckRef.current)
     }
-  }, [loadBillingData, checkStatusOnce, isAppInitialized, shopDomain, setAppInitialized, setShopDomain])
+  }, [loadBillingData, checkStatusOnce])
 
-  // 3. Load Markup
-  const loadStoreMarkup = useCallback(async (domain, force = false) => {
-    if (storeMarkup && !force) return
+  // ========================================
+  // ✅ Store ka saved markup + country + tax load karo
+  // ========================================
+  const loadStoreMarkup = useCallback(async (domain) => {
     const actualDomain = resolveShopDomain(domain)
     if (!actualDomain) return
+
+    console.log('💰 Loading store markup for:', actualDomain)
     setStoreMarkupLoading(true)
 
     try {
-      const res = await safeFetch(`${API_URL}/api/markup/store-default?shop_domain=${encodeURIComponent(actualDomain)}`)
+      const res = await safeFetch(
+        `${API_URL}/api/markup/store-default?shop_domain=${encodeURIComponent(actualDomain)}`
+      )
+
       if (res.ok && res.data) {
         setStoreMarkup({
           markup: res.data.markup ?? 2.0,
@@ -180,82 +248,170 @@ export function useShopifyApp() {
           countryName: res.data.country_name ?? null,
           taxRate: res.data.tax_rate ?? 0,
         })
+        console.log('✅ Store markup loaded:', res.data)
+      } else {
+        console.warn('⚠️ Store markup fetch failed, using defaults')
       }
     } catch (err) {
       console.error('❌ Load store markup error:', err)
     } finally {
       setStoreMarkupLoading(false)
     }
-  }, [storeMarkup, setStoreMarkup])
+  }, [])
 
-  // 4. Load Collections
-  const loadCollections = useCallback(async (domain, force = false) => {
-    if (collections.length > 0 && !force) return
+  // ========================================
+  // ✅ Load Collections
+  // ========================================
+  const loadCollections = useCallback(async (domain) => {
     const actualDomain = resolveShopDomain(domain)
-    setCollectionsLoading(true)
 
+    console.log('📁 Fetching collections for:', actualDomain)
+
+    setCollectionsLoading(true)
     try {
-      const res = await safeFetch(`${API_URL}/api/shopify/collections?shop_domain=${encodeURIComponent(actualDomain)}`)
-      if (res.ok && res.data.success) {
+      const res = await safeFetch(
+        `${API_URL}/api/shopify/collections?shop_domain=${encodeURIComponent(actualDomain)}`
+      )
+
+      if (!res.ok) {
+        throw new Error(res.data.detail || `HTTP ${res.status}`)
+      }
+
+      if (res.data.success) {
         setCollections(res.data.collections || [])
+        console.log(`✅ Loaded ${res.data.collections?.length || 0} collections`)
+      } else {
+        console.warn('⚠️ Collections fetch failed:', res.data)
+        setCollections([])
       }
     } catch (err) {
       console.error('❌ Load collections error:', err)
+      setCollections([])
     } finally {
       setCollectionsLoading(false)
     }
-  }, [collections.length, setCollections])
+  }, [])
 
-  // 5. Auto Load
+  // ========================================
+  // ✅ Auto-load collections + store markup
+  // ========================================
   useEffect(() => {
     const domain = resolveShopDomain(shopDomain)
+
     if (domain && subscription?.active) {
+      console.log('📁 Auto-loading collections for:', domain)
       loadCollections(domain)
       loadStoreMarkup(domain)
     }
   }, [shopDomain, subscription?.active, loadCollections, loadStoreMarkup])
 
-  // Handlers
-  const toggleCollection = useCallback((id) => {
+  // ========================================
+  // ✅ Toggle Collection Selection
+  // ========================================
+  const toggleCollection = useCallback((collectionId) => {
     setSelectedCollections((prev) => {
       const newSet = new Set(prev)
-      newSet.has(id) ? newSet.delete(id) : newSet.add(id)
+      if (newSet.has(collectionId)) {
+        newSet.delete(collectionId)
+      } else {
+        newSet.add(collectionId)
+      }
       return newSet
     })
   }, [])
 
-  const clearCollections = useCallback(() => setSelectedCollections(new Set()), [])
-  
+  const clearCollections = useCallback(() => {
+    setSelectedCollections(new Set())
+  }, [])
+
   const refreshCollections = useCallback(() => {
     const domain = resolveShopDomain(shopDomain)
-    return loadCollections(domain, true)
+    return loadCollections(domain)
   }, [shopDomain, loadCollections])
 
-  // Cron Job
+  // ========================================
+  // ✅ Trigger Cron Job Manually — GLOBAL polling
+  // ========================================
   const handleRunCron = useCallback(async () => {
     if (cronRunning) return
+
     setCronRunning(true)
     setCronMessage(null)
-    setCronProgress({ running: true, step: 0, total: 0, currentProduct: 'Starting...', summary: null })
+    setCronProgress({
+      running: true,
+      step: 0,
+      total: 0,
+      currentProduct: 'Starting price update...',
+      summary: null,
+    })
 
     try {
       const idToken = await getIdToken()
-      const res = await safeFetch(`${API_URL}/api/shopify/trigger-price-update-async`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${idToken}` },
-      })
-      if (!res.ok) throw new Error(res.data.detail || `HTTP ${res.status}`)
+
+      console.log('🚀 Triggering async price update...')
+
+      const res = await safeFetch(
+        `${API_URL}/api/shopify/trigger-price-update-async`,
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${idToken}`,
+          },
+        }
+      )
+
+      if (!res.ok) {
+        throw new Error(res.data.detail || `HTTP ${res.status}`)
+      }
+
+      console.log('✅ Async trigger accepted:', res.data)
+
+      // ✅ GLOBAL polling start karo (Zustand store ke through)
       startPolling(API_URL, idToken)
     } catch (err) {
+      console.error('❌ Cron trigger failed:', err)
+
       stopPolling()
-      setCronProgress({ running: false, step: 0, total: 0, currentProduct: null, summary: null })
-      setCronMessage({ type: 'error', text: `❌ ${err.message}` })
+
+      setCronProgress({
+        running: false,
+        step: 0,
+        total: 0,
+        currentProduct: null,
+        summary: null,
+      })
+
+      setCronMessage({
+        type: 'error',
+        text: `❌ ${err.message}`,
+      })
+
       showToast('Price update failed!', true)
       setCronRunning(false)
     }
-  }, [cronRunning, startPolling, stopPolling, setCronRunning, setCronMessage, setCronProgress])
+  }, [
+    cronRunning,
+    startPolling,
+    stopPolling,
+    setCronRunning,
+    setCronMessage,
+    setCronProgress,
+  ])
 
-  // Subscribe
+  // ✅ Cleanup on unmount — SIRF bridgeCheck (polling global store me hai)
+  useEffect(() => {
+    return () => {
+      if (bridgeCheckRef.current) {
+        clearInterval(bridgeCheckRef.current)
+      }
+      // ❌ Polling ko unmount pe band NAHI karo — global store handle karega
+    }
+  }, [])
+
+  // ========================================
+  // 3. Subscribe handler
+  // ========================================
   const handleSubscribe = async (planKey) => {
     if (isSubscribing) return
     setIsSubscribing(true)
@@ -266,31 +422,78 @@ export function useShopifyApp() {
       if (!bridge) {
         await new Promise((r) => setTimeout(r, 800))
         const planName = plans.find((p) => p.key === planKey)?.name || planKey
-        setMessage({ type: 'success', text: `🧪 TEST MODE: "${planName}" selected.` })
+        setMessage({
+          type: 'success',
+          text: `🧪 TEST MODE: Aapne "${planName}" plan select kiya. Real subscription ke liye Shopify Admin se app kholein.`,
+        })
         setIsSubscribing(false)
         return
       }
 
       const idToken = await getIdToken()
-      const res = await safeFetch(`${API_URL}/api/billing/subscribe/${planKey}`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${idToken}` },
-      })
+      const res = await safeFetch(
+        `${API_URL}/api/billing/subscribe/${planKey}`,
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${idToken}`,
+          },
+        }
+      )
 
-      if (!res.ok) throw new Error(res.data.detail || 'Subscription failed')
+      if (!res.ok) {
+        throw new Error(res.data.detail || 'Subscription failed')
+      }
+
       const confirmationUrl = res.data.confirmation_url
-      if (!confirmationUrl) throw new Error('No confirmation URL received')
+      if (!confirmationUrl) {
+        throw new Error('No confirmation URL received')
+      }
 
-      if (window.shopify?.navigation?.navigate) window.shopify.navigation.navigate(confirmationUrl)
-      else if (window.top) window.top.location.href = confirmationUrl
-      else window.location.href = confirmationUrl
+      if (window.shopify?.navigation?.navigate) {
+        window.shopify.navigation.navigate(confirmationUrl)
+      } else if (window.top) {
+        window.top.location.href = confirmationUrl
+      } else {
+        window.location.href = confirmationUrl
+      }
     } catch (err) {
       setMessage({ type: 'error', text: `❌ ${err.message}` })
       setIsSubscribing(false)
     }
   }
 
-  // Test Activate
+  // ========================================
+  // Auto-redirect after billing success
+  // ========================================
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search)
+    const isSuccess = params.get('subscription') === 'success'
+    const queryShop =
+      params.get('shop') || shopDomain || FALLBACK_SHOP_DOMAIN
+
+    if (
+      isSuccess &&
+      typeof window !== 'undefined' &&
+      window.top === window.self &&
+      queryShop
+    ) {
+      const shopSlug = queryShop.replace('.myshopify.com', '')
+      const adminUrl = `https://admin.shopify.com/store/${shopSlug}/apps/stock-sync-partner`
+      setMessage({
+        type: 'success',
+        text: '✅ Subscription approved! Redirecting you into Shopify Admin...',
+      })
+      setTimeout(() => {
+        window.location.href = adminUrl
+      }, 1200)
+    }
+  }, [shopDomain])
+
+  // ========================================
+  // Dev / Test activation helper
+  // ========================================
   const handleTestActivate = async () => {
     setIsSubscribing(true)
     try {
@@ -298,14 +501,22 @@ export function useShopifyApp() {
       const res = await safeFetch(`${API_URL}/api/billing/activate-test`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ shop_domain: targetShop, plan_name: 'Basic Plan (Test)' }),
+        body: JSON.stringify({
+          shop_domain: targetShop,
+          plan_name: 'Basic Plan (Test)',
+        }),
       })
       if (res.ok) {
-        setSubscription({ active: true, shop_domain: targetShop, subscription: { name: 'Basic Plan (Test)', status: 'ACTIVE' } })
+        setSubscription({
+          active: true,
+          shop_domain: targetShop,
+          subscription: { name: 'Basic Plan (Test)', status: 'ACTIVE' },
+        })
         showToast('Active Test Mode enabled!')
+
         if (targetShop) {
-          loadCollections(targetShop, true)
-          loadStoreMarkup(targetShop, true)
+          loadCollections(targetShop)
+          loadStoreMarkup(targetShop)
         }
       } else {
         throw new Error(res.data.detail || 'Test activation failed')
@@ -317,7 +528,9 @@ export function useShopifyApp() {
     }
   }
 
-  // Add Product
+  // ========================================
+  // 4. Add product handler
+  // ========================================
   const handleAddProduct = async (e) => {
     e.preventDefault()
     if (!amazonUrl.trim() || isLoading) return
@@ -329,21 +542,45 @@ export function useShopifyApp() {
       const idToken = await getIdToken()
       const collectionIdsArray = Array.from(selectedCollections)
 
-      const res = await safeFetch(`${API_URL}/api/shopify/app/add-product`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${idToken}` },
-        body: JSON.stringify({ amazon_url: amazonUrl.trim(), collection_ids: collectionIdsArray }),
-      })
+      console.log('📤 Sending product with collections:', collectionIdsArray)
+      console.log('💰 Will use store default markup + tax from backend')
+
+      const res = await safeFetch(
+        `${API_URL}/api/shopify/app/add-product`,
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${idToken}`,
+          },
+          body: JSON.stringify({
+            amazon_url: amazonUrl.trim(),
+            collection_ids: collectionIdsArray,
+          }),
+        }
+      )
 
       if (!res.ok) {
-        if (res.status === 401) throw new Error('Session expired. Please reload the app.')
+        if (res.status === 401) {
+          throw new Error('Session expired. Please reload the app.')
+        }
         if (res.status === 402) {
-          setMessage({ type: 'error', text: '❌ Active subscription required.' })
+          setMessage({
+            type: 'error',
+            text: '❌ Active subscription required. Please subscribe.',
+          })
           setSubscription({ active: false })
+          setCheckingSub(false)
           return
         }
-        if (res.status === 404) throw new Error(res.data.detail || 'Store not connected.')
-        if (res.status === 409) throw new Error(res.data.detail || 'Product already exists.')
+        if (res.status === 404) {
+          throw new Error(
+            res.data.detail || 'Store not connected. Please reinstall.'
+          )
+        }
+        if (res.status === 409) {
+          throw new Error(res.data.detail || 'Product already exists.')
+        }
         throw new Error(res.data.detail || 'Failed to add product')
       }
 
@@ -351,9 +588,14 @@ export function useShopifyApp() {
       const finalPrice = res.data.final_price
       const successMsg = res.data.message || 'Product added successfully!'
 
-      setMessage({ type: 'success', text: `✅ ${successMsg}${collectionsAdded > 0 ? ` (+${collectionsAdded})` : ''}${finalPrice ? ` — $${finalPrice}` : ''}` })
+      setMessage({
+        type: 'success',
+        text: `✅ ${successMsg}${collectionsAdded > 0 ? ` (+${collectionsAdded} collections)` : ''}${finalPrice ? ` — $${finalPrice}` : ''}`,
+      })
+
       setAmazonUrl('')
       clearCollections()
+
       showToast('Product added!')
     } catch (err) {
       setMessage({ type: 'error', text: `❌ ${err.message}` })
@@ -362,27 +604,40 @@ export function useShopifyApp() {
     }
   }
 
-  // Auto Redirect
-  useEffect(() => {
-    const params = new URLSearchParams(window.location.search)
-    const isSuccess = params.get('subscription') === 'success'
-    const queryShop = params.get('shop') || shopDomain || FALLBACK_SHOP_DOMAIN
-
-    if (isSuccess && window.top === window.self && queryShop) {
-      const shopSlug = queryShop.replace('.myshopify.com', '')
-      const adminUrl = `https://admin.shopify.com/store/${shopSlug}/apps/stock-sync-partner`
-      setMessage({ type: 'success', text: '✅ Redirecting to Shopify Admin...' })
-      setTimeout(() => { window.location.href = adminUrl }, 1200)
-    }
-  }, [shopDomain])
-
   return {
-    amazonUrl, isLoading, isSubscribing, message, shopifyReady, shopDomain,
-    subscription, plans,
-    checkingSub: !isAppInitialized, // ✅ Caching ki wajah se ab fast hoga
-    setAmazonUrl, storeMarkup, storeMarkupLoading,
-    handleAddProduct, handleSubscribe, handleTestActivate,
-    collections, selectedCollections, collectionsLoading, toggleCollection, clearCollections, loadCollections, refreshCollections,
-    cronRunning, cronMessage, cronProgress, handleRunCron,
+    amazonUrl,
+    isLoading,
+    isSubscribing,
+    message,
+    shopifyReady,
+    shopDomain,
+    subscription,
+    plans,
+    checkingSub,
+
+    setAmazonUrl,
+
+    // ✅ Store markup (read-only info)
+    storeMarkup,
+    storeMarkupLoading,
+
+    handleAddProduct,
+    handleSubscribe,
+    handleTestActivate,
+
+    // ✅ Collections
+    collections,
+    selectedCollections,
+    collectionsLoading,
+    toggleCollection,
+    clearCollections,
+    loadCollections,
+    refreshCollections,
+
+    // ✅ Cron job + progress (global store se aata hai)
+    cronRunning,
+    cronMessage,
+    cronProgress,
+    handleRunCron,
   }
 }
