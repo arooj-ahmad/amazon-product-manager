@@ -1,6 +1,6 @@
 # ============================================
 # app/services/brightdata.py
-# + ✅ SMART BULLETS EXTRACTION (JSON + HTML Fallback)
+# + ✅ SMART BULLETS EXTRACTION (About this item)
 # ============================================
 
 import logging
@@ -347,11 +347,11 @@ def parse_feature_bullets(raw: dict, cleaned_desc: str) -> list[str]:
         if feature_bullets:
             return feature_bullets
 
-    # 3. HTML Description ke andar <ul><li> check karein (Aapke screenshot wala case)
+    # 3. HTML Description ke andar <ul><li> check karein
     if cleaned_desc and ("<ul>" in cleaned_desc.lower() or "<li>" in cleaned_desc.lower()):
         li_matches = re.findall(r'<li.*?>(.*?)</li>', cleaned_desc, re.DOTALL | re.IGNORECASE)
         for li in li_matches:
-            text = re.sub(r'<[^>]+>', '', li).strip() # Inner HTML tags remove karein
+            text = re.sub(r'<[^>]+>', '', li).strip()
             if text and len(text) > 10:
                 feature_bullets.append(text)
         if feature_bullets:
