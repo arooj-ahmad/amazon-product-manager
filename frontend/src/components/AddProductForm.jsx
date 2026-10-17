@@ -1,6 +1,37 @@
 // src/components/AddProductForm.jsx
-// ✅ SIMPLIFIED: Removed markup settings — user will now set them from the sidebar
+// ✅ SIMPLIFIED & IMPROVED: Amazon Logo added to input field
+import { useState } from 'react'
 import { theme } from '../styles/theme'
+
+// Amazon Smile Logo (SVG) - No external image needed
+const AmazonLogo = ({ size = 20 }) => (
+  <svg 
+    width={size} 
+    height={size} 
+    viewBox="0 0 24 24" 
+    fill="none" 
+    xmlns="http://www.w3.org/2000/svg"
+    style={{ flexShrink: 0 }}
+  >
+    {/* Amazon Smile Arrow */}
+    <path 
+      d="M3 15C3 15 7.5 19 12 19C16.5 19 21 15 21 15" 
+      stroke="#FF9900" 
+      strokeWidth="2.5" 
+      strokeLinecap="round"
+    />
+    <path 
+      d="M18 13L21 15L18 17" 
+      stroke="#FF9900" 
+      strokeWidth="2.5" 
+      strokeLinecap="round" 
+      strokeLinejoin="round"
+    />
+    {/* Amazon Box 'a' style outline */}
+    <rect x="4" y="4" width="16" height="16" rx="4" stroke="#232F3E" strokeWidth="1.5" strokeOpacity="0.8"/>
+    <text x="12" y="15.5" textAnchor="middle" fontSize="9" fontWeight="bold" fill="#232F3E" fontFamily="Arial, sans-serif">a</text>
+  </svg>
+)
 
 export default function AddProductForm({
   amazonUrl,
@@ -9,6 +40,8 @@ export default function AddProductForm({
   message,
   onSubmit,
 }) {
+  const [isFocused, setIsFocused] = useState(false)
+
   // ✅ URL validation only
   const isFormValid = () => {
     return amazonUrl.trim().length > 0
@@ -35,17 +68,31 @@ export default function AddProductForm({
         {/* Amazon URL */}
         <div style={styles.field}>
           <label style={styles.label}>
-            <span style={styles.labelIcon}>🔗</span>
             Amazon Product URL
           </label>
-          <input
-            type="text"
-            value={amazonUrl}
-            onChange={(e) => setAmazonUrl(e.target.value)}
-            placeholder="https://www.amazon.com/dp/B0B2RM68G2"
-            style={styles.input}
-            disabled={isLoading}
-          />
+          
+          {/* ✅ Input Wrapper with Amazon Logo inside */}
+          <div 
+            style={{
+              ...styles.inputWrapper,
+              borderColor: isFocused ? theme.colors.primary || '#3b82f6' : theme.colors.border,
+              boxShadow: isFocused ? `0 0 0 3px ${(theme.colors.primary || '#3b82f6')}20` : 'none',
+            }}
+          >
+            <div style={styles.inputIconContainer}>
+              <AmazonLogo size={20} />
+            </div>
+            <input
+              type="text"
+              value={amazonUrl}
+              onChange={(e) => setAmazonUrl(e.target.value)}
+              onFocus={() => setIsFocused(true)}
+              onBlur={() => setIsFocused(false)}
+              placeholder="https://www.amazon.com/dp/B0B2RM68G2"
+              style={styles.input}
+              disabled={isLoading}
+            />
+          </div>
         </div>
 
         {/* Info Banner */}
@@ -179,22 +226,38 @@ const styles = {
     alignItems: 'center',
     gap: '6px',
   },
-  labelIcon: {
-    fontSize: '14px',
+  // ✅ NEW: Wrapper for input + logo
+  inputWrapper: {
+    display: 'flex',
+    alignItems: 'center',
+    border: `1px solid ${theme.colors.border}`,
+    borderRadius: theme.radii.md,
+    background: theme.colors.bgSubtle,
+    transition: 'border-color 0.2s ease, box-shadow 0.2s ease',
+    overflow: 'hidden',
+  },
+  inputIconContainer: {
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: '0 12px',
+    background: 'white',
+    borderRight: `1px solid ${theme.colors.border}`,
+    height: '100%',
+    alignSelf: 'stretch',
   },
   input: {
     width: '100%',
     padding: '12px 14px',
-    border: `1px solid ${theme.colors.border}`,
-    borderRadius: theme.radii.md,
+    border: 'none',
+    borderRadius: 0,
     fontSize: '14px',
     outline: 'none',
     boxSizing: 'border-box',
-    background: theme.colors.bgSubtle,
+    background: 'transparent',
     color: theme.colors.text,
     transition: theme.transitions.fast,
   },
-  // ✅ NEW: Info banner styles
   infoBanner: {
     display: 'flex',
     alignItems: 'flex-start',
