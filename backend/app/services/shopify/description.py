@@ -1,6 +1,6 @@
 # app/services/shopify/description.py
 # Product description builder with metafields HTML table
-# + ✅ FIXED: Title duplication removed, Bullet points added correctly
+# + ✅ FIXED: Smart Title Filter & Bullet Points Priority
 
 import logging
 
@@ -14,34 +14,49 @@ def _build_description_with_metafields(product_data: dict) -> str:
     raw_description = product_data.get("description", "") or ""
     title = product_data.get("title", "") or ""
     
-    # Scraper ke hisaab se bullets ki key alag ho sakti hai. 
-    # Hum yahan 'feature_bullets' ya 'bullets' dono check kar rahe hain.
-    feature_bullets = product_data.get("feature_bullets") or product_data.get("bullets") or []
+    # Scraper alag alag keys use kar sakta hai bullets ke liye
+    feature_bullets = (
+        product_data.get("feature_bullets") or 
+        product_data.get("bullets") or 
+        product_data.get("about_item") or 
+        []
+    )
 
-    # 2. TITLE KO DESCRIPTION SE HATAYEIN (MAIN FIX)
+    # 2. SMART TITLE FILTER (MAIN FIX)
     clean_description = raw_description.strip()
     
-    if clean_description.lower() == title.strip().lower():
+    # Check 1: Kya description bilkul title jaisi hai?
+    if title and clean_description.lower() == title.strip().lower():
         clean_description = ""
-    elif clean_description.lower().startswith(title.strip().lower()):
+    # Check 2: Kya description title se start ho rahi hai?
+    elif title and clean_description.lower().startswith(title.strip().lower()):
         clean_description = clean_description[len(title):].strip()
+    
+    # Check 3: Agar description mein bohot comma hain aur words kam hain (Yeh Title hota hai)
+    if clean_description:
+        comma_count = clean_description.count(',')
+        word_count = len(clean_description.split())
+        # Agar 15 words se kam hain aur 3 se zyada comma hain, to yeh Title hai, Description nahi
+        if word_count < 15 and comma_count >= 3:
+            clean_description = ""
 
     # 3. ASLI BULLET POINTS KO FORMAT KAREIN
     final_desc_html = ""
     
-    # Agar feature_bullets available hain (jo aapki last image mein thay)
+    # Priority 1: Bullet points (Jo aapki dusri image mein thay)
     if feature_bullets and isinstance(feature_bullets, list):
         bullets_html = "".join([
             f"<li style='margin-bottom: 8px;'>{str(b).strip()}</li>" 
             for b in feature_bullets if b and str(b).strip()
         ])
-        final_desc_html = f"<ul style='padding-left: 20px; margin-bottom: 20px;'>{bullets_html}</ul>"
+        if bullets_html:
+            final_desc_html = f"<ul style='padding-left: 20px; margin-bottom: 20px;'>{bullets_html}</ul>"
     
-    # Agar bullets nahi hain, to cleaned description use karein
-    elif clean_description:
+    # Priority 2: Agar bullets nahi hain, to Description use karein
+    if not final_desc_html and clean_description:
         final_desc_html = f"<p>{clean_description}</p>"
 
-    # Table se pehle space dalein taake text chipke nahi
+    # Table se pehle space dalein
     if final_desc_html and not final_desc_html.endswith("<br>"):
         final_desc_html += "<br>"
 
@@ -77,23 +92,14 @@ def _build_description_with_metafields(product_data: dict) -> str:
     }
 
     fields_to_show = [
-        "asin", "brand", "manufacturer",
-        "model_number", "model_name", "part_number",
-        "rating", "reviews_count",
-        "availability",
-        "color", "size", "material_type", "style_name",
-        "item_dimensions", "item_weight", "package_dimensions",
-        "department", "country_of_origin", "date_first_available",
-        "language", "reading_age",
-        "unit_count", "number_of_pieces",
-        "care_instructions", "closure_type", "fabric_type",
-        "number_of_players", "educational_objective",
-        "power_source", "battery_types", "operation_mode",
-        "specific_uses", "special_features",
-        "connectivity", "processor", "ram_technology",
-        "memory", "screen_size", "resolution",
-        "operating_system", "hard_disk", "graphics_coprocessor",
-        "upc", "ean", "isbn", "theme", "warranty",
+        "asin", "brand", "manufacturer", "model_number", "model_name", "part_number",
+        "rating", "reviews_count", "availability", "color", "size", "material_type", "style_name",
+        "item_dimensions", "item_weight", "package_dimensions", "department", "country_of_origin", 
+        "date_first_available", "language", "reading_age", "unit_count", "number_of_pieces",
+        "care_instructions", "closure_type", "fabric_type", "number_of_players", "educational_objective",
+        "power_source", "battery_types", "operation_mode", "specific_uses", "special_features",
+        "connectivity", "processor", "ram_technology", "memory", "screen_size", "resolution",
+        "operating_system", "hard_disk", "graphics_coprocessor", "upc", "ean", "isbn", "theme", "warranty",
     ]
 
     rows = []
@@ -110,35 +116,20 @@ def _build_description_with_metafields(product_data: dict) -> str:
         if not val_str or val_str.lower() in ["none", "nan", "n/a", "null"]:
             continue
 
-        # HTML Escaping
-        val_str = (
-            val_str.replace("&", "&amp;")
-            .replace("<", "&lt;")
-            .replace(">", "&gt;")
-        )
-
+        val_str = val_str.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
         label = FIELD_LABELS.get(key, key.replace("_", " ").title())
 
         if key == "rating":
-            try:
-                r = float(value)
-                val_str = f"{r} ★ out of 5"
-            except (ValueError, TypeError):
-                pass
+            try: val_str = f"{float(value)} ★ out of 5"
+            except (ValueError, TypeError): pass
         elif key == "reviews_count":
-            try:
-                c = int(float(value))
-                val_str = f"{c:,}"
-            except (ValueError, TypeError):
-                pass
+            try: val_str = f"{int(float(value)):,}"
+            except (ValueError, TypeError): pass
 
         rows.append(
             f'<tr>'
-            f'<td style="padding:8px 12px;font-weight:600;'
-            f'background:#f6f6f7;border:1px solid #e1e3e5;'
-            f'width:180px;vertical-align:top;">{label}</td>'
-            f'<td style="padding:8px 12px;border:1px solid #e1e3e5;'
-            f'vertical-align:top;">{val_str}</td>'
+            f'<td style="padding:8px 12px;font-weight:600;background:#f6f6f7;border:1px solid #e1e3e5;width:180px;vertical-align:top;">{label}</td>'
+            f'<td style="padding:8px 12px;border:1px solid #e1e3e5;vertical-align:top;">{val_str}</td>'
             f'</tr>'
         )
         seen.add(key)
@@ -147,14 +138,9 @@ def _build_description_with_metafields(product_data: dict) -> str:
     if rows:
         table_html = (
             '<hr style="margin:24px 0;border:none;border-top:1px solid #e1e3e5;">'
-            '<h3 style="font-size:18px;font-weight:700;margin-bottom:12px;">'
-            '📋 Product Details</h3>'
-            '<table style="width:100%;border-collapse:collapse;'
-            'font-size:14px;line-height:1.5;">'
-            '<tbody>'
-            + "".join(rows) +
-            '</tbody>'
-            '</table>'
+            '<h3 style="font-size:18px;font-weight:700;margin-bottom:12px;">📋 Product Details</h3>'
+            '<table style="width:100%;border-collapse:collapse;font-size:14px;line-height:1.5;">'
+            '<tbody>' + "".join(rows) + '</tbody></table>'
         )
         final_desc_html += table_html
 
