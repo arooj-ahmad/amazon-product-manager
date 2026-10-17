@@ -1,18 +1,32 @@
 // src/components/Header.jsx
 import { theme } from '../styles/theme'
 
+// ✅ Naya Premium Amazon Logo (SVG)
+const AmazonLogoIcon = () => (
+  <svg width="28" height="28" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+    {/* Background White Circle taake icon pop kare */}
+    <rect width="24" height="24" rx="6" fill="white" />
+    {/* Amazon Cart Outline */}
+    <path d="M5 7H7L9 14H16L18 9H8" stroke="#232F3E" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"/>
+    <circle cx="9.5" cy="17.5" r="1.5" fill="#FF9900"/>
+    <circle cx="15.5" cy="17.5" r="1.5" fill="#FF9900"/>
+    {/* Amazon Smile Arrow */}
+    <path d="M7 11C7 11 10 14 12 14C14 14 17 11 17 11" stroke="#FF9900" strokeWidth="1.8" strokeLinecap="round"/>
+    <path d="M15 10L17 11L16 12.5" stroke="#FF9900" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"/>
+  </svg>
+)
+
 export default function Header({
   shopifyReady,
   shopDomain,
   subscription,
-  // ❌ REMOVED onOpenMarkupSettings — it is now in the sidebar
 }) {
   return (
     <div style={styles.wrapper}>
       {/* Logo + Title */}
       <div style={styles.brandRow}>
         <div style={styles.logoBox}>
-          <span style={styles.logo}>🛒</span>
+          <AmazonLogoIcon />
         </div>
         <div>
           <h1 style={styles.h1}>Amazon Product Manager</h1>
@@ -86,15 +100,13 @@ const styles = {
     width: '52px',
     height: '52px',
     borderRadius: theme.radii.lg,
-    background: theme.colors.gradientPrimary,
+    // ✅ Amazon Dark Navy Blue Gradient
+    background: 'linear-gradient(135deg, #232F3E 0%, #131A22 100%)', 
     display: 'flex',
     alignItems: 'center',
     justifyContent: 'center',
-    boxShadow: theme.shadows.md,
+    boxShadow: '0 4px 12px rgba(35, 47, 62, 0.25)', // Premium Shadow
     flexShrink: 0,
-  },
-  logo: {
-    fontSize: '26px',
   },
   h1: {
     fontSize: '22px',
