@@ -5,6 +5,7 @@
 # + ✅ NAYA v2: Compare-at price store settings se aata hai
 # + ✅ NAYA v3: 4 rule types support (none/amazon/fixed/percent)
 # + ✅ FIXED v4: stock_qty = 100 bug hataya (Bright Data se jo aaye wahi set ho)
+# + ✅ FIXED v5: create_shopify_product_with_variants mein stock update add kiya
 # ============================================
 
 import logging
@@ -40,7 +41,6 @@ logger = logging.getLogger(__name__)
 
 # ============================================
 # ✅ NAYA v3: Compare-at price calculate karo
-# 4 rule types support: none / amazon / fixed / percent
 # ============================================
 def calculate_compare_at_price(
     final_price: float,
@@ -48,23 +48,10 @@ def calculate_compare_at_price(
     compare_at_value: float,
     amazon_price: float = None,
 ) -> Optional[float]:
-    """
-    Compare-at price calculate karo.
-
-    Args:
-        final_price: Final selling price (e.g. $29.88)
-        compare_at_type: "none" | "amazon" | "fixed" | "percent"
-        compare_at_value: 30.0 (= +30% ya +$30)
-        amazon_price: Amazon price (only for "amazon" rule)
-
-    Returns:
-        Compare-at price (rounded to 2 decimals) ya None
-    """
-    # ✅ Rule "none" → skip
+    """Compare-at price calculate karo."""
     if compare_at_type == "none":
         return None
 
-    # ✅ Rule "amazon" → Amazon price use karo
     if compare_at_type == "amazon":
         if amazon_price is None:
             logger.warning("⚠️ amazon rule selected but no amazon_price")
@@ -72,7 +59,6 @@ def calculate_compare_at_price(
 
         compare_price = round(float(amazon_price), 2)
 
-        # Sanity: compare price > final price hona chahiye
         if compare_price <= final_price:
             logger.warning(
                 f"⚠️ Amazon price (${compare_price}) <= final price "
@@ -82,7 +68,6 @@ def calculate_compare_at_price(
 
         return compare_price
 
-    # ✅ Rule "fixed" / "percent" → value based calculation
     if not final_price or final_price <= 0:
         return None
 
@@ -102,7 +87,6 @@ def calculate_compare_at_price(
 
         compare_price = round(compare_price, 2)
 
-        # Sanity check
         if compare_price <= final_price:
             logger.warning(
                 f"⚠️ Compare price (${compare_price}) <= final price "
@@ -119,18 +103,11 @@ def calculate_compare_at_price(
 
 # ============================================
 # ✅ NAYA v3: Store ki compare-at settings fetch karo
-# 4 rule types support ke saath
 # ============================================
 def _get_compare_at_settings_from_store(
     shop: str,
 ) -> tuple:
-    """
-    Store ki compare-at settings fetch karo (DB se).
-
-    Returns:
-        (enabled: bool, type: str, value: float)
-        type = "none" | "amazon" | "fixed" | "percent"
-    """
+    """Store ki compare-at settings fetch karo (DB se)."""
     db: Session = SessionLocal()
     try:
         store = db.query(ShopifyStore).filter(
@@ -141,10 +118,8 @@ def _get_compare_at_settings_from_store(
             logger.warning(f"⚠️ Store not found in DB: {shop}")
             return False, "none", 0.0
 
-        # ✅ Pehle naya rule field check karo
         rule = getattr(store, "default_compare_at_rule", None)
 
-        # ✅ Agar nahi hai toh purane fields se derive karo
         if not rule:
             enabled_old = bool(
                 getattr(store, "default_compare_at_enabled", False)
@@ -272,7 +247,6 @@ async def create_shopify_product(
     except (ValueError, TypeError):
         price_float = 0.0
 
-    # ✅ Amazon price bhi nikaalo (amazon rule ke liye)
     amazon_price_float = None
     try:
         ap = product_data.get("amazon_price")
@@ -304,12 +278,10 @@ async def create_shopify_product(
 
     description_html = _build_description_with_metafields(product_data)
 
-    # ✅ Compare-at settings fetch karo (4 rule types)
     compare_enabled, compare_rule, compare_value = (
         _get_compare_at_settings_from_store(shop)
     )
 
-    # ✅ Compare-at price calculate karo
     compare_at_price = None
     if compare_enabled:
         compare_at_price = calculate_compare_at_price(
@@ -458,10 +430,6 @@ async def create_shopify_product(
         if inventory_item_id:
             # ✅ FIXED v4: Bright Data ka stock_quantity seedha use karo
             stock_qty = product_data.get("stock_quantity", 0)
-            
-            # ❌ YE HATA DIYA:
-            # if stock_qty == 0 and is_available:
-            #     stock_qty = 100
 
             await set_inventory_quantity(
                 shop=shop,
@@ -484,6 +452,7 @@ async def create_shopify_product(
 
 # ============================================
 # CREATE PRODUCT WITH VARIANTS
+# ✅ FIXED v5: Inventory update add kiya
 # ============================================
 async def create_shopify_product_with_variants(
     shop: str,
@@ -587,6 +556,21 @@ async def create_shopify_product_with_variants(
                 product_id=product_id,
                 metafields=all_mfs,
             )
+
+    # ✅ FIXED v5: Inventory set karo har variant ke liye
+    variants_edges = shopify_product.get("variants", {}).get("edges", [])
+    if variants_edges:
+        stock_qty = product_data.get("stock_quantity", 0)
+        for edge in variants_edges:
+            variant_node = edge.get("node", {})
+            inventory_item_id = variant_node.get("inventoryItem", {}).get("id")
+            if inventory_item_id:
+                await set_inventory_quantity(
+                    shop=shop,
+                    access_token=access_token,
+                    inventory_item_id=inventory_item_id,
+                    quantity=stock_qty,
+                )
 
     images = product_data.get("images", [])
     if product_id and images:
