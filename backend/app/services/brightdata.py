@@ -1,6 +1,7 @@
 # ============================================
 # app/services/brightdata.py
-# + ✅ SMART BULLETS EXTRACTION (About this item)
+# + ✅ FIXED: Live Amazon Scraping for Feature Bullets (About this item)
+# + ✅ FIXED: Garbage Description cleaner
 # ============================================
 
 import logging
@@ -19,6 +20,9 @@ class BrightDataError(Exception):
     pass
 
 
+# ============================================
+# AMAZON URL SE ASIN NIKALEIN
+# ============================================
 def extract_asin_from_url(url: str) -> Optional[str]:
     patterns = [
         r"/dp/([A-Z0-9]{10})",
@@ -33,6 +37,9 @@ def extract_asin_from_url(url: str) -> Optional[str]:
     return None
 
 
+# ============================================
+# PRICE PARSE HELPER
+# ============================================
 def parse_price(value) -> Optional[float]:
     if value is None:
         return None
@@ -47,6 +54,9 @@ def parse_price(value) -> Optional[float]:
         return None
 
 
+# ============================================
+# PACKAGE DIMENSIONS PARSE
+# ============================================
 def parse_package_dimensions(package_dims_str: str) -> dict:
     result = {}
     if not package_dims_str or not isinstance(package_dims_str, str):
@@ -84,6 +94,9 @@ def parse_package_dimensions(package_dims_str: str) -> dict:
     return result
 
 
+# ============================================
+# PARENT ASIN VALIDATION
+# ============================================
 def validate_parent_asin(parent_asin, asin: str) -> Optional[str]:
     if not parent_asin or parent_asin == "None" or parent_asin == "":
         return None
@@ -95,6 +108,9 @@ def validate_parent_asin(parent_asin, asin: str) -> Optional[str]:
     return parent_asin.upper()
 
 
+# ============================================
+# AVAILABILITY CHECK
+# ============================================
 def check_availability(raw: dict) -> tuple[bool, str, str]:
     shipping_msg = (
         raw.get("shipping_message") or raw.get("delivery_message") or raw.get("buybox_message") or ""
@@ -140,6 +156,9 @@ def check_availability(raw: dict) -> tuple[bool, str, str]:
     return True, availability_text, "availability_text (unknown)"
 
 
+# ============================================
+# CATEGORIES PARSE
+# ============================================
 def parse_categories(raw: dict) -> list[str]:
     categories: list[str] = []
     category_tree = raw.get("category_tree") or []
@@ -172,6 +191,9 @@ def parse_categories(raw: dict) -> list[str]:
     return [c for c in dict.fromkeys(categories) if c and len(c) < 100]
 
 
+# ============================================
+# STANDARD METAFIELDS FIELDS
+# ============================================
 def parse_standard_fields(raw: dict) -> dict:
     fields = {}
     fields["model_number"] = raw.get("model_number")
@@ -182,9 +204,9 @@ def parse_standard_fields(raw: dict) -> dict:
     fields["date_first_available"] = raw.get("date_first_available")
 
     package_dims_raw = raw.get("package_dimensions") or ""
-    if package_dims_raw and isinstance(package_dims_raw, str):
-        fields["package_dimensions"] = package_dims_raw.strip()
-        parsed = parse_package_dimensions(package_dims_raw)
+    if package_dims_raw and isinstance(package_dims_str := package_dims_raw, str):
+        fields["package_dimensions"] = package_dims_str.strip()
+        parsed = parse_package_dimensions(package_dims_str)
         if parsed.get("item_dimensions"):
             fields["item_dimensions"] = parsed["item_dimensions"]
         if parsed.get("item_weight"):
@@ -244,6 +266,9 @@ def parse_standard_fields(raw: dict) -> dict:
     return {k: v for k, v in fields.items() if v is not None and str(v).strip() and str(v).strip() != "None"}
 
 
+# ============================================
+# TAGS PARSE — Sirf REAL tags
+# ============================================
 def parse_tags(raw: dict, categories: list[str]) -> list[str]:
     tags: list[str] = []
     seen_lower: set = set()
@@ -296,79 +321,62 @@ def parse_tags(raw: dict, categories: list[str]) -> list[str]:
     return tags[:15]
 
 
+# ============================================
+# CLEAN DESCRIPTION — Amazon UI garbage remove
+# ============================================
 def clean_description(description: str) -> str:
     if not description or not isinstance(description, str): return ""
+    # In keywords ko hata dein jo Bright Data galti se bhej deta hai
     garbage_patterns = [
-        r"[>›»]\s*See\s+more\s+product\s+details\.?", r"[>›»]\s*See\s+more\.?", r"[>›»]\s*Read\s+more\.?",
-        r"[>›»]\s*Show\s+more\.?", r"[>›»]\s*View\s+more\.?", r"See\s+more\s+product\s+details\.?",
-        r"Read\s+more\s+product\s+details\.?", r"Report\s+incorrect\s+product\s+information\.?",
-        r"Show\s+more\s+product\s+details\.?", r"View\s+more\s+product\s+details\.?",
-        r"\bSee\s+more\b", r"\bRead\s+more\b", r"\bShow\s+more\b", r"\bView\s+more\b",
+        r"Add to Cart.*", r"Customer Reviews.*", r"\d+\.?\d* out of 5 stars.*",
+        r"[>›»]\s*See\s+more\s+product\s+details\.?", r"[>›»]\s*See\s+more\.?",
+        r"[>›»]\s*Read\s+more\.?", r"[>›»]\s*Show\s+more\.?", r"[>›»]\s*View\s+more\.?",
+        r"See\s+more\s+product\s+details\.?", r"Report\s+incorrect\s+product\s+information\.?",
     ]
     for pattern in garbage_patterns:
-        description = re.sub(pattern, "", description, flags=re.IGNORECASE)
-    description = re.sub(r"^\s*[>›»]\s*", "", description)
-    description = re.sub(r"\s+[>›»]\s+", " ", description)
-    description = re.sub(r"\s+", " ", description)
-    description = re.sub(r"\s+([.,!?;:])", r"\1", description)
-    description = description.strip()
+        description = re.sub(pattern, "", description, flags=re.IGNORECASE | re.DOTALL)
+    description = re.sub(r"\s+", " ", description).strip()
     return "" if len(description) < 20 else description
 
 
 # ============================================
-# ✅ SMART BULLETS EXTRACTION
+# ✅ SMART BULLETS EXTRACTION (Direct Amazon HTML Scraping)
 # ============================================
-def parse_feature_bullets(raw: dict, cleaned_desc: str) -> list[str]:
-    """Bullets ko har possible jagah se nikaalta hai."""
-    feature_bullets = []
+async def fetch_amazon_feature_bullets(amazon_url: str) -> list[str]:
+    """Amazon ke Live Page se <div id="feature-bullets"> ke bullets nikalta hai."""
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        "Accept-Language": "en-US,en;q=0.9",
+    }
     
-    # 1. Standard JSON keys check karein
-    possible_keys = ["feature_bullets", "feature-bullets", "featureBullets", "about_this_item", "bullets"]
-    for key in possible_keys:
-        raw_bullets = raw.get(key)
-        if isinstance(raw_bullets, list) and raw_bullets:
-            for b in raw_bullets:
-                if isinstance(b, str) and b.strip():
-                    feature_bullets.append(b.strip())
-                elif isinstance(b, dict) and b.get("text"):
-                    feature_bullets.append(str(b["text"]).strip())
-            if feature_bullets:
-                return feature_bullets
-
-    # 2. Product details mein check karein
-    product_details = raw.get("product_details") or []
-    if isinstance(product_details, list):
-        for item in product_details:
-            if isinstance(item, dict):
-                field_type = str(item.get("type", "")).lower()
-                value = item.get("value")
-                if value and any(word in field_type for word in ["feature", "bullet", "highlight"]):
-                    feature_bullets.append(str(value).strip())
-        if feature_bullets:
-            return feature_bullets
-
-    # 3. HTML Description ke andar <ul><li> check karein
-    if cleaned_desc and ("<ul>" in cleaned_desc.lower() or "<li>" in cleaned_desc.lower()):
-        li_matches = re.findall(r'<li.*?>(.*?)</li>', cleaned_desc, re.DOTALL | re.IGNORECASE)
-        for li in li_matches:
-            text = re.sub(r'<[^>]+>', '', li).strip()
-            if text and len(text) > 10:
-                feature_bullets.append(text)
-        if feature_bullets:
-            return feature_bullets
-
-    # 4. Fallback: Specs ko bullet points banayein
-    specs = {}
-    if isinstance(product_details, list):
-        for item in product_details:
-            if isinstance(item, dict) and item.get("type") and item.get("value"):
-                specs[item["type"]] = str(item["value"]).strip()
-    
-    if specs:
-        for k, v in list(specs.items())[:5]:
-            feature_bullets.append(f"{k}: {v}")
-
-    return feature_bullets
+    try:
+        async with httpx.AsyncClient(timeout=20.0, follow_redirects=True) as client:
+            response = await client.get(amazon_url, headers=headers)
+            if response.status_code != 200:
+                return []
+            
+            html_content = response.text
+            
+            # Exact ID dhoondein jo aapne screenshot mein dikhayi
+            match = re.search(r'<div id="feature-bullets".*?>(.*?)</div>', html_content, re.DOTALL | re.IGNORECASE)
+            if not match:
+                match = re.search(r'id="feature-bullets"(.*?)</ul>', html_content, re.DOTALL | re.IGNORECASE)
+            
+            if match:
+                bullets_html = match.group(0) if match.lastindex is None else match.group(1)
+                li_matches = re.findall(r'<li.*?>(.*?)</li>', bullets_html, re.DOTALL | re.IGNORECASE)
+                
+                bullets = []
+                for li in li_matches:
+                    # HTML tags hata kar sirf saaf text rakhein
+                    text = re.sub(r'<[^>]+>', '', li).strip()
+                    if text and len(text) > 5:
+                        bullets.append(text)
+                return bullets
+    except Exception as e:
+        logger.error(f"Error fetching direct HTML bullets: {e}")
+        
+    return []
 
 
 # ============================================
@@ -380,42 +388,31 @@ async def fetch_product_from_brightdata(amazon_url: str) -> dict:
         f"?dataset_id={settings.BRIGHT_DATA_DATASET_ID}"
         f"&include_errors=true"
     )
+
     headers = {
         "Authorization": f"Bearer {settings.BRIGHT_DATA_API_KEY}",
         "Content-Type": "application/json",
     }
     body = [{"url": amazon_url}]
 
-    logger.info(f"Bright Data API call: {amazon_url}")
-
     try:
         async with httpx.AsyncClient(timeout=90.0) as client:
             response = await client.post(api_url, headers=headers, json=body)
             response.raise_for_status()
-    except httpx.HTTPStatusError as e:
-        raise BrightDataError(f"Bright Data API error: {e.response.status_code}")
-    except httpx.RequestError as e:
-        raise BrightDataError(f"Bright Data connection error: {str(e)}")
+            data = response.json()
+    except Exception as e:
+        raise BrightDataError(f"Bright Data Error: {str(e)}")
 
-    try:
-        data = response.json()
-    except Exception:
-        raise BrightDataError("Invalid JSON response from Bright Data")
-
-    if isinstance(data, list):
-        if len(data) == 0: raise BrightDataError("Bright Data ne koi data return nahi kiya")
-        raw = data[0]
-    elif isinstance(data, dict):
-        raw = data
-    else:
-        raise BrightDataError("Bright Data ne unexpected response bheja")
-
-    if "error" in raw: raise BrightDataError(f"Bright Data error: {raw['error']}")
+    raw = data[0] if isinstance(data, list) and len(data) > 0 else data
+    if "error" in raw:
+        raise BrightDataError(f"Bright Data error: {raw['error']}")
 
     asin = raw.get("asin") or extract_asin_from_url(amazon_url)
-    if not asin: raise BrightDataError("ASIN nahi mila")
+    if not asin:
+        raise BrightDataError("ASIN nahi mila")
 
-    parent_asin = validate_parent_asin(raw.get("parent_asin"), asin)
+    parent_asin_raw = raw.get("parent_asin") or None
+    parent_asin = validate_parent_asin(parent_asin_raw, asin)
     is_variation = bool(parent_asin)
 
     variant_attributes = []
@@ -480,14 +477,22 @@ async def fetch_product_from_brightdata(amazon_url: str) -> dict:
     categories = parse_categories(raw)
     tags = parse_tags(raw, categories)
     standard_fields = parse_standard_fields(raw)
+    
+    # ✅ 1. Description saaf karein (kachra hatayein)
     cleaned_description = clean_description(raw.get("description"))
 
-    # ✅ Bullets nikalne ke liye Smart Function call karein
-    feature_bullets = parse_feature_bullets(raw, cleaned_description)
+    # ✅ 2. Amazon ke direct HTML se sahi bullets nikaalein
+    feature_bullets = await fetch_amazon_feature_bullets(amazon_url)
+    
+    # Agar direct fetch fail ho jaye (block ho jaye), toh Bright Data ke JSON se try karein
+    if not feature_bullets:
+        possible_keys = ["feature_bullets", "feature-bullets", "featureBullets", "about_this_item", "bullets"]
+        for key in possible_keys:
+            if isinstance(raw.get(key), list):
+                feature_bullets = [str(b).strip() for b in raw.get(key) if b]
+                break
 
-    logger.info(
-        f"Parsed product: ASIN={asin}, FeatureBullets={len(feature_bullets)}"
-    )
+    logger.info(f"Parsed product: ASIN={asin}, FeatureBullets={len(feature_bullets)}")
 
     return {
         "asin": asin,
@@ -501,7 +506,7 @@ async def fetch_product_from_brightdata(amazon_url: str) -> dict:
         "images": unique_images,
         "specifications": specs,
         "description": cleaned_description,
-        "feature_bullets": feature_bullets, # ✅ Bullets add kar diye
+        "feature_bullets": feature_bullets, # ✅ Saaf bullets yahan pass ho rahe hain
         "rating": rating_value,
         "reviews_count": reviews_count,
         "availability": final_availability,
@@ -516,6 +521,9 @@ async def fetch_product_from_brightdata(amazon_url: str) -> dict:
     }
 
 
+# ============================================
+# CALCULATE FINAL PRICE
+# ============================================
 def calculate_final_price(
     amazon_price: Optional[float],
     markup: Optional[float] = None,
