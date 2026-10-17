@@ -1,20 +1,59 @@
 # app/services/shopify/description.py
 # Product description builder with metafields HTML table
 # + ✅ FIXED: Amazon Price aur Best Sellers Rank exclude
+# + ✅ NAYA: Feature Bullets (About this item) format added
 
 import logging
+import html
 
 logger = logging.getLogger(__name__)
 
 
 def _build_description_with_metafields(product_data: dict) -> str:
-    """Amazon description + SAARE metafields HTML table."""
-    description = product_data.get("description", "") or ""
+    """Amazon description + Feature Bullets + SAARE metafields HTML table."""
+    
+    # ✅ 1. Feature Bullets Format (About this item)
+    feature_bullets = product_data.get("feature_bullets") or []
+    bullets_html = ""
 
+    if feature_bullets and isinstance(feature_bullets, list):
+        bullets_list_html = ""
+        for b in feature_bullets:
+            if b and str(b).strip():
+                clean_b = html.escape(str(b).strip())
+                bullets_list_html += (
+                    f'<li style="margin-bottom: 8px; font-size: 14px; color: #333333; line-height: 1.5;">'
+                    f'{clean_b}'
+                    f'</li>'
+                )
+        
+        if bullets_list_html:
+            bullets_html = (
+                '<div style="margin-bottom: 24px;">'
+                '<h3 style="font-size: 18px; font-weight: 700; color: #000000; margin-bottom: 12px; border-bottom: 1px solid #eeeeee; padding-bottom: 8px;">About this item</h3>'
+                '<ul style="list-style-type: disc; padding-left: 20px; margin: 0;">'
+                f'{bullets_list_html}'
+                '</ul>'
+                '</div>'
+            )
+
+    # ✅ 2. Main Description
+    raw_description = product_data.get("description", "") or ""
+    
+    desc_html = ""
+    if raw_description.strip():
+        if "<" in raw_description and ">" in raw_description:
+            desc_html = raw_description
+        else:
+            desc_html = f'<p style="font-size: 14px; line-height: 1.6; color: #333333;">{html.escape(raw_description)}</p>'
+
+    # Combine: Pehle Bullets, Phir Description
+    description = bullets_html + desc_html
+
+    # ✅ 3. Product Details Table
     FIELD_LABELS = {
         "asin": "ASIN", "brand": "Brand", "manufacturer": "Manufacturer",
         "rating": "Rating", "reviews_count": "Reviews",
-        # ❌ amazon_price HATA DIYA
         "availability": "Availability",
         "model_number": "Model Number", "item_model_number": "Item Model Number",
         "model_name": "Model Name", "part_number": "Part Number",
@@ -25,7 +64,6 @@ def _build_description_with_metafields(product_data: dict) -> str:
         "theme": "Theme", "department": "Department",
         "country_of_origin": "Country of Origin",
         "date_first_available": "Date First Available",
-        # ❌ best_sellers_rank HATA DIYA
         "language": "Language",
         "reading_age": "Reading Age", "unit_count": "Unit Count",
         "number_of_pieces": "Number of Pieces",
@@ -43,19 +81,14 @@ def _build_description_with_metafields(product_data: dict) -> str:
         "warranty": "Warranty",
     }
 
-    # ✅ FIXED: fields_to_show me se amazon_price aur best_sellers_rank hataye
     fields_to_show = [
         "asin", "brand", "manufacturer",
         "model_number", "model_name", "part_number",
-        "rating", "reviews_count",
-        # ❌ amazon_price HATA DIYA
-        "availability",
+        "rating", "reviews_count", "availability",
         "color", "size", "material_type", "style_name",
         "item_dimensions", "item_weight", "package_dimensions",
         "department", "country_of_origin", "date_first_available",
-        # ❌ best_sellers_rank HATA DIYA
-        "language", "reading_age",
-        "unit_count", "number_of_pieces",
+        "language", "reading_age", "unit_count", "number_of_pieces",
         "care_instructions", "closure_type", "fabric_type",
         "number_of_players", "educational_objective",
         "power_source", "battery_types", "operation_mode",
@@ -79,12 +112,7 @@ def _build_description_with_metafields(product_data: dict) -> str:
         if not val_str or val_str == "None":
             continue
 
-        val_str = (
-            val_str.replace("&", "&amp;")
-            .replace("<", "&lt;")
-            .replace(">", "&gt;")
-        )
-
+        val_str = html.escape(val_str)
         label = FIELD_LABELS.get(key, key.replace("_", " ").title())
 
         if key == "rating":
@@ -93,7 +121,6 @@ def _build_description_with_metafields(product_data: dict) -> str:
                 val_str = f"{r} ★ out of 5"
             except (ValueError, TypeError):
                 pass
-        # ❌ amazon_price formatting HATA DIYA
         elif key == "reviews_count":
             try:
                 c = int(float(value))
