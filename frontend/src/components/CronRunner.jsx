@@ -1,10 +1,5 @@
 // src/components/CronRunner.jsx
-// + ✅ NEW: Progress bar while running
-// + ✅ NEW: Summary + detailed results after completion
-// + ✅ FIXED: Indeterminate progress when total is unknown
-// + ✅ FIXED: Elapsed time tracker
-// + ✅ FIXED: Empty results message
-// + ✅ NEW v2: Dismiss button (✕) — to manually hide the summary
+// Professional UI for Manual Price Update
 
 import { useState, useEffect } from 'react'
 import { theme } from '../styles/theme'
@@ -16,13 +11,9 @@ export default function CronRunner({
   cronProgress,
   onRunCron,
 }) {
-  const { running, step, total, currentProduct, summary } =
-    cronProgress || {}
-
-  // ✅ NEW: Dismiss handler — from Zustand store
+  const { running, step, total, currentProduct, summary } = cronProgress || {}
   const { dismissSummary } = usePriceUpdateStore()
 
-  // ✅ NEW: Elapsed time tracker
   const [elapsed, setElapsed] = useState(0)
 
   useEffect(() => {
@@ -30,12 +21,10 @@ export default function CronRunner({
       setElapsed(0)
       return
     }
-
     const startTime = Date.now()
     const interval = setInterval(() => {
       setElapsed(Math.floor((Date.now() - startTime) / 1000))
     }, 1000)
-
     return () => clearInterval(interval)
   }, [running])
 
@@ -45,8 +34,7 @@ export default function CronRunner({
     return m > 0 ? `${m}m ${s}s` : `${s}s`
   }
 
-  const progressPercent =
-    total > 0 ? Math.min((step / total) * 100, 95) : 0
+  const progressPercent = total > 0 ? Math.min((step / total) * 100, 95) : 0
 
   return (
     <div style={styles.card}>
@@ -55,114 +43,90 @@ export default function CronRunner({
         <div style={styles.iconBox}>
           <span style={styles.icon}>⚡</span>
         </div>
-        <div style={styles.headerText}>
-          <h3 style={styles.title}>Manual Price Update</h3>
+        <div>
+          <h2 style={styles.title}>Update Prices & Inventory</h2>
           <p style={styles.subtitle}>
-            Fetch latest Amazon prices and sync your Shopify products
+            Fetches the latest Amazon prices, recalculates markups, and pushes stock updates to Shopify.
           </p>
         </div>
       </div>
 
-      {/* Button */}
+      {/* Action Button */}
       <button
         type="button"
         onClick={onRunCron}
         disabled={cronRunning}
         style={{
           ...styles.button,
-          background: cronRunning
-            ? 'linear-gradient(135deg, #b5b5b5 0%, #d1d1d1 100%)'
-            : theme.colors.gradientPrimary,
+          background: cronRunning ? '#b5b5b5' : '#008060',
           cursor: cronRunning ? 'not-allowed' : 'pointer',
-          transform: cronRunning ? 'none' : 'translateY(0)',
-        }}
-        onMouseEnter={(e) => {
-          if (!cronRunning) {
-            e.currentTarget.style.transform = 'translateY(-2px)'
-            e.currentTarget.style.boxShadow = theme.shadows.lg
-          }
-        }}
-        onMouseLeave={(e) => {
-          e.currentTarget.style.transform = 'translateY(0)'
-          e.currentTarget.style.boxShadow = theme.shadows.md
         }}
       >
         {cronRunning ? (
           <>
             <span style={styles.spinner} />
-            <span>Running Price Update...</span>
+            <span>Syncing Products...</span>
           </>
         ) : (
           <>
-            <span style={styles.buttonIcon}>🚀</span>
+            <span style={{ fontSize: '18px' }}>🚀</span>
             <span>Run Price Update Now</span>
           </>
         )}
       </button>
 
-      {/* ✅ Progress (indeterminate when total is unknown) */}
+      {/* Progress Bar */}
       {running && (
         <div style={styles.progressContainer}>
           <div style={styles.progressHeader}>
             <span style={styles.progressLabel}>
-              {currentProduct || 'Processing products...'}
+              {currentProduct ? `Syncing: ${currentProduct}` : 'Processing products...'}
             </span>
             <span style={styles.progressPercent}>
-              {total > 0
-                ? `${step} / ${total}`
-                : `⏱️ ${formatElapsed(elapsed)}`}
+              {total > 0 ? `${step} / ${total}` : `⏱️ ${formatElapsed(elapsed)}`}
             </span>
           </div>
 
-          {total > 0 ? (
-            <div style={styles.progressBarBg}>
+          <div style={styles.progressBarBg}>
+            {total > 0 ? (
               <div
                 style={{
                   ...styles.progressBarFill,
                   width: `${progressPercent}%`,
                 }}
               />
-            </div>
-          ) : (
-            <div style={styles.progressBarBg}>
+            ) : (
               <div style={styles.progressBarIndeterminate} />
-            </div>
-          )}
-
+            )}
+          </div>
           <p style={styles.progressHint}>
-            This may take 1–5 minutes. Please keep the app open during this time.
+            This may take a few minutes. Please keep this page open.
           </p>
         </div>
       )}
 
-      {/* ✅ Summary (when complete) */}
+      {/* Summary */}
       {summary && !running && (
         <div style={styles.summaryBox}>
-          {/* ✅ NEW: Header with dismiss button */}
           <div style={styles.summaryHeader}>
-            <div style={styles.summaryTitle}>
-              ✅ Price Update Complete
-            </div>
-            <button
-              type="button"
-              onClick={dismissSummary}
-              style={styles.dismissBtn}
-              title="Dismiss summary"
-            >
+            <h3 style={styles.summaryTitle}>✅ Update Complete</h3>
+            <button type="button" onClick={dismissSummary} style={styles.dismissBtn}>
               ✕
             </button>
           </div>
 
           <div style={styles.summaryGrid}>
             <div style={styles.summaryItem}>
-              <span style={styles.summaryNum}>{summary.total || 0}</span>
-              <span style={styles.summaryLabel}>Total</span>
+              <span style={{ ...styles.summaryNum, color: '#202223' }}>
+                {summary.total || 0}
+              </span>
+              <span style={styles.summaryLabel}>Total Products</span>
             </div>
             <div style={styles.summaryItem}>
               <span style={{ ...styles.summaryNum, color: '#008060' }}>
                 {summary.price_changed ?? summary.updated ?? 0}
               </span>
-              <span style={styles.summaryLabel}>Changed</span>
+              <span style={styles.summaryLabel}>Updated</span>
             </div>
             <div style={styles.summaryItem}>
               <span style={{ ...styles.summaryNum, color: '#f59e0b' }}>
@@ -178,11 +142,11 @@ export default function CronRunner({
             </div>
           </div>
 
-          {/* Detailed results */}
+          {/* Details Dropdown */}
           {summary.results && summary.results.length > 0 ? (
             <details style={styles.details}>
               <summary style={styles.detailsSummary}>
-                View detailed results ({summary.results.length})
+                View detailed log ({summary.results.length})
               </summary>
               <div style={styles.detailsContent}>
                 {summary.results.map((r, idx) => (
@@ -191,11 +155,7 @@ export default function CronRunner({
                     style={{
                       ...styles.resultRow,
                       borderLeft: `3px solid ${
-                        r.status === 'updated'
-                          ? '#008060'
-                          : r.status === 'skipped'
-                            ? '#f59e0b'
-                            : '#d72c0d'
+                        r.status === 'updated' ? '#008060' : r.status === 'skipped' ? '#f59e0b' : '#d72c0d'
                       }`,
                     }}
                   >
@@ -204,52 +164,34 @@ export default function CronRunner({
                     <span
                       style={{
                         ...styles.resultStatus,
-                        color:
-                          r.status === 'updated'
-                            ? '#008060'
-                            : r.status === 'skipped'
-                              ? '#f59e0b'
-                              : '#d72c0d',
+                        color: r.status === 'updated' ? '#008060' : r.status === 'skipped' ? '#f59e0b' : '#d72c0d',
                       }}
                     >
-                      {r.status === 'updated'
-                        ? '✅ Updated'
-                        : r.status === 'skipped'
-                          ? '⏭️ Skipped'
-                          : '❌ Error'}
+                      {r.status === 'updated' ? '✅' : r.status === 'skipped' ? '⏭️' : '❌'}
                     </span>
                   </div>
                 ))}
               </div>
             </details>
           ) : (
-            <p style={styles.emptyResults}>
-              All products were already up-to-date ✅
-            </p>
+            <p style={styles.emptyResults}>All products were already up-to-date.</p>
           )}
         </div>
       )}
 
-      {/* Message */}
+      {/* Error/Success Messages */}
       {cronMessage && (
         <div
           style={{
             ...styles.message,
-            background:
-              cronMessage.type === 'success'
-                ? theme.colors.successBg
-                : theme.colors.errorBg,
-            color:
-              cronMessage.type === 'success'
-                ? theme.colors.success
-                : theme.colors.error,
-            border: `1px solid ${
-              cronMessage.type === 'success'
-                ? theme.colors.successBorder
-                : theme.colors.errorBorder
-            }`,
+            background: cronMessage.type === 'success' ? '#f0fdf4' : '#fef2f2',
+            color: cronMessage.type === 'success' ? '#166534' : '#991b1b',
+            border: `1px solid ${cronMessage.type === 'success' ? '#bbf7d0' : '#fecaca'}`,
           }}
         >
+          <span style={{ fontSize: '18px' }}>
+            {cronMessage.type === 'success' ? '✅' : '⚠️'}
+          </span>
           {cronMessage.text}
         </div>
       )}
@@ -257,123 +199,122 @@ export default function CronRunner({
   )
 }
 
+// ============================================
+// Styles
+// ============================================
 const styles = {
   card: {
-    background: theme.colors.bgCard,
-    borderRadius: theme.radii.lg,
-    border: `1px solid ${theme.colors.border}`,
-    padding: '20px',
-    marginBottom: '20px',
-    boxShadow: theme.shadows.sm,
+    background: 'white',
+    borderRadius: '12px',
+    border: '1px solid #e1e3e5',
+    padding: '24px',
+    boxShadow: '0 1px 3px rgba(0,0,0,0.05)',
   },
   header: {
     display: 'flex',
     alignItems: 'flex-start',
-    gap: '12px',
-    marginBottom: '16px',
+    gap: '14px',
+    marginBottom: '20px',
   },
   iconBox: {
-    width: '40px',
-    height: '40px',
-    borderRadius: theme.radii.md,
-    background: 'linear-gradient(135deg, #fff8e6 0%, #ffefc2 100%)',
+    width: '44px',
+    height: '44px',
+    borderRadius: '10px',
+    background: '#fff7ed',
+    border: '1px solid #ffedd5',
     display: 'flex',
     alignItems: 'center',
     justifyContent: 'center',
     flexShrink: 0,
   },
-  icon: { fontSize: '20px' },
-  headerText: { flex: 1 },
+  icon: { fontSize: '22px' },
   title: {
-    fontSize: '15px',
-    fontWeight: '600',
-    color: theme.colors.text,
-    margin: '0 0 4px',
+    fontSize: '18px',
+    fontWeight: '700',
+    color: '#202223',
+    margin: '0 0 4px 0',
   },
   subtitle: {
     fontSize: '13px',
-    color: theme.colors.textSecondary,
+    color: '#6d7175',
     margin: 0,
-    lineHeight: '1.4',
+    lineHeight: '1.5',
   },
   button: {
     width: '100%',
     padding: '14px 20px',
     color: 'white',
     border: 'none',
-    borderRadius: theme.radii.md,
-    fontSize: '14px',
+    borderRadius: '8px',
+    fontSize: '15px',
     fontWeight: '600',
-    cursor: 'pointer',
-    transition: theme.transitions.fast,
-    boxShadow: theme.shadows.md,
     display: 'flex',
     alignItems: 'center',
     justifyContent: 'center',
-    gap: '8px',
+    gap: '10px',
+    transition: 'all 0.2s',
+    boxShadow: '0 1px 2px rgba(0,0,0,0.1)',
   },
-  buttonIcon: { fontSize: '16px' },
   spinner: {
-    width: '16px',
-    height: '16px',
+    width: '18px',
+    height: '18px',
     border: '2px solid rgba(255,255,255,0.3)',
     borderTopColor: 'white',
     borderRadius: '50%',
     animation: 'spin 0.8s linear infinite',
   },
   message: {
-    marginTop: '12px',
-    padding: '12px 16px',
-    borderRadius: theme.radii.md,
-    fontSize: '13px',
+    marginTop: '20px',
+    padding: '16px',
+    borderRadius: '8px',
+    fontSize: '14px',
     fontWeight: '500',
-    textAlign: 'center',
+    display: 'flex',
+    alignItems: 'center',
+    gap: '10px',
   },
 
-  // ✅ Progress styles
+  // Progress
   progressContainer: {
-    marginTop: '16px',
-    padding: '14px',
-    background: '#eff6ff',
-    border: '1px solid #bfdbfe',
-    borderRadius: theme.radii.md,
+    marginTop: '20px',
+    padding: '16px',
+    background: '#f8fafc',
+    border: '1px solid #e2e8f0',
+    borderRadius: '8px',
   },
   progressHeader: {
     display: 'flex',
     justifyContent: 'space-between',
     alignItems: 'center',
-    marginBottom: '8px',
+    marginBottom: '10px',
     fontSize: '13px',
   },
   progressLabel: {
-    color: '#1e40af',
+    color: '#334155',
     fontWeight: '600',
   },
   progressPercent: {
-    color: '#1e40af',
+    color: '#0f172a',
     fontWeight: '700',
-    fontSize: '14px',
   },
   progressBarBg: {
     width: '100%',
     height: '8px',
-    background: 'white',
+    background: '#e2e8f0',
     borderRadius: '4px',
     overflow: 'hidden',
-    border: '1px solid #bfdbfe',
     position: 'relative',
   },
   progressBarFill: {
     height: '100%',
-    background: 'linear-gradient(90deg, #008060 0%, #006e52 100%)',
+    background: '#008060',
     borderRadius: '4px',
     transition: 'width 0.4s ease-out',
   },
   progressBarIndeterminate: {
     height: '100%',
     width: '40%',
-    background:
-      'linear-gradient(90deg, #008060 0%, #006e52 50%, #008060 100%)',
+    background: '#008060',
     borderRadius: '4px',
     animation: 'indeterminate 1.5s ease-in-out infinite',
     position: 'absolute',
@@ -381,31 +322,28 @@ const styles = {
     left: 0,
   },
   progressHint: {
-    margin: '8px 0 0',
-    fontSize: '11px',
-    color: '#1e40af',
+    margin: '10px 0 0',
+    fontSize: '12px',
+    color: '#64748b',
     textAlign: 'center',
-    opacity: 0.8,
   },
 
-  // ✅ Summary styles
+  // Summary
   summaryBox: {
-    marginTop: '16px',
-    padding: '16px',
+    marginTop: '24px',
+    padding: '20px',
     background: '#f0fdf4',
-    border: '1px solid #86efac',
-    borderRadius: theme.radii.md,
+    border: '1px solid #bbf7d0',
+    borderRadius: '10px',
   },
-
-  // ✅ NEW: Summary header with dismiss button
   summaryHeader: {
     display: 'flex',
     justifyContent: 'space-between',
     alignItems: 'center',
-    marginBottom: '12px',
+    marginBottom: '16px',
   },
   summaryTitle: {
-    fontSize: '14px',
+    fontSize: '16px',
     fontWeight: '700',
     color: '#166534',
     margin: 0,
@@ -415,95 +353,85 @@ const styles = {
     border: 'none',
     color: '#166534',
     fontSize: '18px',
-    fontWeight: '700',
     cursor: 'pointer',
-    padding: '2px 8px',
-    borderRadius: '4px',
+    padding: '4px',
     lineHeight: 1,
-    transition: 'background 0.15s ease',
   },
-
   summaryGrid: {
     display: 'grid',
     gridTemplateColumns: 'repeat(4, 1fr)',
-    gap: '10px',
-    marginBottom: '12px',
+    gap: '12px',
+    marginBottom: '16px',
   },
   summaryItem: {
     display: 'flex',
     flexDirection: 'column',
     alignItems: 'center',
-    padding: '10px 6px',
+    padding: '12px',
     background: 'white',
-    borderRadius: '6px',
-    border: '1px solid #86efac',
+    borderRadius: '8px',
+    border: '1px solid #bbf7d0',
   },
   summaryNum: {
-    fontSize: '20px',
+    fontSize: '22px',
     fontWeight: '700',
-    color: theme.colors.text,
   },
   summaryLabel: {
-    fontSize: '11px',
-    color: theme.colors.textSecondary,
-    marginTop: '2px',
-    textAlign: 'center',
+    fontSize: '12px',
+    color: '#166534',
+    marginTop: '4px',
+    fontWeight: '500',
   },
-
-  // ✅ Details
   details: {
-    marginTop: '10px',
     background: 'white',
-    borderRadius: '6px',
-    border: '1px solid #86efac',
+    borderRadius: '8px',
+    border: '1px solid #bbf7d0',
     overflow: 'hidden',
   },
   detailsSummary: {
-    padding: '10px 12px',
-    fontSize: '12px',
+    padding: '12px 16px',
+    fontSize: '13px',
     fontWeight: '600',
     color: '#166534',
     cursor: 'pointer',
     userSelect: 'none',
   },
   detailsContent: {
-    maxHeight: '280px',
+    maxHeight: '300px',
     overflowY: 'auto',
+    borderTop: '1px solid #bbf7d0',
     padding: '8px',
   },
   resultRow: {
     display: 'grid',
-    gridTemplateColumns: '80px 1fr 90px',
+    gridTemplateColumns: '90px 1fr 30px',
     gap: '8px',
-    padding: '8px 10px',
-    fontSize: '12px',
-    background: '#fafafa',
+    padding: '10px 12px',
+    fontSize: '13px',
+    background: '#f8fafc',
     marginBottom: '4px',
-    borderRadius: '4px',
+    borderRadius: '6px',
     alignItems: 'center',
   },
   resultAsin: {
     fontWeight: '600',
-    color: theme.colors.text,
     fontFamily: 'monospace',
-    fontSize: '11px',
+    color: '#334155',
   },
   resultTitle: {
-    color: theme.colors.textSecondary,
+    color: '#475569',
     overflow: 'hidden',
     textOverflow: 'ellipsis',
     whiteSpace: 'nowrap',
   },
   resultStatus: {
-    fontWeight: '600',
-    fontSize: '11px',
-    textAlign: 'right',
+    fontWeight: '700',
+    textAlign: 'center',
   },
   emptyResults: {
-    fontSize: '12px',
+    fontSize: '13px',
     color: '#166534',
-    marginTop: '8px',
-    marginBottom: 0,
+    margin: '0',
     textAlign: 'center',
     fontStyle: 'italic',
   },
