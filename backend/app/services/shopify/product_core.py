@@ -4,8 +4,7 @@
 # + ✅ NAYA: Weight mapping to Shopify variant
 # + ✅ NAYA v2: Compare-at price store settings se aata hai
 # + ✅ NAYA v3: 4 rule types support (none/amazon/fixed/percent)
-# + ✅ FIXED v4: stock_qty = 100 bug hataya (Bright Data se jo aaye wahi set ho)
-# + ✅ FIXED v5: create_shopify_product_with_variants mein stock update add kiya
+# + ✅ FIXED v6: Out-of-stock product add hoga, lekin stock 0 hoga
 # ============================================
 
 import logging
@@ -231,14 +230,15 @@ def _build_inventory_item(product_data: dict, sku: str) -> dict:
 
 
 # ============================================
-# ✅ FIXED v4: PRODUCT CREATE (SIMPLE)
+# ✅ PRODUCT CREATE (SIMPLE)
+# ✅ FIXED v6: Out-of-stock = 0, lekin product add hoga
 # ============================================
 async def create_shopify_product(
     shop: str,
     access_token: str,
     product_data: dict,
 ) -> dict:
-    is_available = product_data.get("is_available", True)
+    is_available = product_data.get("is_available", False)
     status = "ACTIVE" if is_available else "DRAFT"
 
     price_float = 0.0
@@ -428,8 +428,11 @@ async def create_shopify_product(
             )
 
         if inventory_item_id:
-            # ✅ FIXED v4: Bright Data ka stock_quantity seedha use karo
-            stock_qty = product_data.get("stock_quantity", 0)
+            # ✅ FIXED v6: Agar product available nahi hai to stock 0
+            if not is_available:
+                stock_qty = 0
+            else:
+                stock_qty = product_data.get("stock_quantity", 0)
 
             await set_inventory_quantity(
                 shop=shop,
@@ -452,7 +455,7 @@ async def create_shopify_product(
 
 # ============================================
 # CREATE PRODUCT WITH VARIANTS
-# ✅ FIXED v5: Inventory update add kiya
+# ✅ FIXED v6: Out-of-stock = 0, lekin product add hoga
 # ============================================
 async def create_shopify_product_with_variants(
     shop: str,
@@ -460,7 +463,7 @@ async def create_shopify_product_with_variants(
     product_data: dict,
     variants: list,
 ) -> dict:
-    is_available = product_data.get("is_available", True)
+    is_available = product_data.get("is_available", False)
     status = "ACTIVE" if is_available else "DRAFT"
 
     shopify_tags = _build_shopify_tags(product_data)
@@ -557,10 +560,14 @@ async def create_shopify_product_with_variants(
                 metafields=all_mfs,
             )
 
-    # ✅ FIXED v5: Inventory set karo har variant ke liye
+    # ✅ FIXED v6: Inventory set karo har variant ke liye (OOS = 0)
     variants_edges = shopify_product.get("variants", {}).get("edges", [])
     if variants_edges:
-        stock_qty = product_data.get("stock_quantity", 0)
+        if not is_available:
+            stock_qty = 0
+        else:
+            stock_qty = product_data.get("stock_quantity", 0)
+
         for edge in variants_edges:
             variant_node = edge.get("node", {})
             inventory_item_id = variant_node.get("inventoryItem", {}).get("id")

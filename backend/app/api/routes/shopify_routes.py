@@ -1,32 +1,7 @@
 # ============================================
 # app/api/routes/shopify_routes.py
 # Shopify OAuth + Product Push + Embedded App
-# + ✅ FIXED: refresh_store_token HAR BAAR call hota hai
-# + ✅ FIXED: expires_at = calculate
-# + ✅ FIXED: exchange_code_for_token dict return karta hai
-# + ✅ FIXED: /callback bhi expiring token handle kare
-# + ✅ NAYA: categories + tags Shopify pe push
-# + ✅ NAYA: Smart markup cap (max $50 fixed, max 500% percent)
-# + ✅ NAYA: Multiple variants support (Color + Size)
-# + ✅ NAYA: All standard metafields passed
-# + ✅ FIXED v2: PRICE FLOW
-# + ✅ FIXED v3: DATA + PRODUCT MERGE
-# + ✅ NAYA: Collections — fetch + add product
-# + ✅ NAYA: Manual Cron Trigger
-# + ✅ NAYA: Markup type "both"
-# + ✅ FIXED v4: /collections me auto-refresh
-# + ✅ FIXED v5: STORE DEFAULT markup use
-# + ✅ FIXED v6: Weight → Shopify variant mapping
-# + ✅ FIXED v7: STORE DEFAULT tax bhi use karo
-# + ✅ FIXED v8: /trigger-price-update me summary return karo
-# + ✅ NAYA v9: /price-update-status (polling ke liye)
-# + ✅ NAYA v9: /trigger-price-update-async (background job)
-# + ✅ FIXED v10: SKU mismatch — parent_asin verify karo
-# + ✅ FIXED v10: user_tax_rate = 0 → store se lo
-# + ✅ FIXED v10: hardcoded defaults hatao
-# + ✅ FIXED v11: Amazon URL normalize karo (https://, www., clean)
-# + ✅ FIXED v11: Token exchange fail → existing token use karo
-# + ✅ FIXED v12: Out-of-stock product add hone se roko
+# + ✅ FIXED v12: Out-of-stock product add hone do (Stock 0 hoga)
 # ============================================
 
 import asyncio
@@ -1006,8 +981,8 @@ async def push_product_to_shopify(
 
 
 # ============================================
-# ✅ FIXED v12: ADD PRODUCT FROM SHOPIFY APP
-# + Out-of-stock product add hone se roko
+# ✅ FIXED v13: ADD PRODUCT FROM SHOPIFY APP
+# + Out-of-stock product ADD HOGA, lekin stock 0 hoga
 # ============================================
 @router.post("/app/add-product")
 async def add_product_from_shopify_app(
@@ -1106,8 +1081,6 @@ async def add_product_from_shopify_app(
             logger.warning(
                 f"⚠️ Token exchange failed — using existing store token"
             )
-            # ✅ Existing token use karo — refresh_store_token() ne
-            # store.access_token ko chheda nahi (kyunki fail hua)
         else:
             raise HTTPException(
                 status_code=401,
@@ -1127,14 +1100,7 @@ async def add_product_from_shopify_app(
     asin = data["asin"]
     parent_asin = data.get("parent_asin")
 
-    # ✅ FIXED v12: Out-of-stock product add hone se roko
-    is_available = data.get("is_available", False)
-    if not is_available:
-        logger.warning(f"⚠️ ASIN={asin}: Product is OUT OF STOCK on Amazon")
-        raise HTTPException(
-            status_code=400,
-            detail="Product is currently OUT OF STOCK on Amazon. Cannot add."
-        )
+    # ✅ FIXED v13: Out-of-stock product ADD HOGA, par stock 0 hoga
 
     existing = db.query(Product).filter(Product.asin == asin).first()
     if existing:
