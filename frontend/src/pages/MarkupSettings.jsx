@@ -1,12 +1,6 @@
 // ============================================
 // frontend/src/pages/MarkupSettings.jsx
-// Markup Settings Page — DEFAULT MARKUP + COUNTRY + TAX
-// + ✅ NEW: Country select (tax rate auto-fill)
-// + ✅ NEW: Tax rate field (manual override)
-// + ✅ FIXED: Navigation via window.location.hash
-// + ✅ FIXED: Circle spinner loader (consistent with other pages)
-// + ✅ NEW v2: Compare Price Settings link card
-// + ✅ FIXED v4: Preview text updated to show actual backend formula
+// Markup Settings Page — Professional UI
 // ============================================
 
 import { useState, useEffect } from 'react'
@@ -18,7 +12,7 @@ const API_URL =
   'https://amazon-product-manager-production.up.railway.app'
 
 // ============================================
-// Detect Shopify store domain
+// Helpers
 // ============================================
 function getShopDomain() {
   const params = new URLSearchParams(window.location.search)
@@ -31,13 +25,8 @@ function getShopDomain() {
   return null
 }
 
-// ============================================
-// ✅ Shopify iframe-compatible navigation
-// ============================================
 function navigateTo(path) {
   const targetHash = `#${path}`
-  console.log(`🧭 Navigating to: ${targetHash}`)
-
   if (window.location.hash === targetHash) {
     window.dispatchEvent(new HashChangeEvent('hashchange'))
   } else {
@@ -205,18 +194,6 @@ export default function MarkupSettings() {
     }
   }
 
-  const handleBackToDashboard = () => {
-    navigateTo('/shopify-app')
-  }
-
-  const handleGoToProducts = () => {
-    navigateTo('/products')
-  }
-
-  const handleGoToComparePrice = () => {
-    navigateTo('/compare-price-settings')
-  }
-
   if (loading) {
     return <Loader text="Loading markup settings..." />
   }
@@ -228,54 +205,61 @@ export default function MarkupSettings() {
   return (
     <div style={styles.page}>
       <div style={styles.container}>
-        <button
-          type="button"
-          onClick={handleBackToDashboard}
-          style={styles.backBtn}
-        >
-          ← Back to Dashboard
-        </button>
+        
+        {/* Header Navigation */}
+        <div style={styles.headerNav}>
+          <button
+            type="button"
+            onClick={() => navigateTo('/shopify-app')}
+            style={styles.backBtn}
+          >
+            ← Back to Dashboard
+          </button>
+        </div>
 
-        <h1 style={styles.h1}>Markup Settings</h1>
-        <p style={styles.subtitle}>
-          Configure the default markup, country and tax that applies to{' '}
-          <strong>every new product</strong> you add.
-        </p>
+        <div style={styles.pageHeader}>
+          <h1 style={styles.h1}>Markup Settings</h1>
+          <p style={styles.subtitle}>
+            Configure the default markup, country, and tax that applies to <strong>every new product</strong> you add.
+          </p>
+        </div>
 
         {/* Current Default Banner */}
         {savedDefault && (
           <div style={styles.defaultBanner}>
-            <div style={styles.bannerIcon}>💾</div>
+            <div style={styles.bannerIconBox}>
+              <span style={styles.bannerIcon}>💾</span>
+            </div>
             <div style={styles.bannerContent}>
-              <div style={styles.bannerTitle}>Current Defaults</div>
-
-              <div style={styles.bannerRow}>
-                <span style={styles.bannerLabel}>Markup:</span>
-                <span style={styles.bannerValue}>
-                  {formatMarkup(
-                    savedDefault.markup,
-                    savedDefault.markup_type,
-                    savedDefault.extra_percent
-                  )}
-                </span>
-              </div>
-
-              {savedDefault.country_name && (
-                <div style={styles.bannerRow}>
-                  <span style={styles.bannerLabel}>Country:</span>
+              <div style={styles.bannerTitle}>CURRENT DEFAULTS</div>
+              <div style={styles.bannerGrid}>
+                <div style={styles.bannerItem}>
+                  <span style={styles.bannerLabel}>Markup:</span>
                   <span style={styles.bannerValue}>
-                    {savedDefault.country_name}
+                    {formatMarkup(
+                      savedDefault.markup,
+                      savedDefault.markup_type,
+                      savedDefault.extra_percent
+                    )}
                   </span>
                 </div>
-              )}
+                
+                <div style={styles.bannerItem}>
+                  <span style={styles.bannerLabel}>Tax:</span>
+                  <span style={styles.bannerValue}>
+                    {savedDefault.tax_rate || 0}%
+                  </span>
+                </div>
 
-              <div style={styles.bannerRow}>
-                <span style={styles.bannerLabel}>Tax:</span>
-                <span style={styles.bannerValue}>
-                  {savedDefault.tax_rate || 0}%
-                </span>
+                {savedDefault.country_name && (
+                  <div style={styles.bannerItem}>
+                    <span style={styles.bannerLabel}>Country:</span>
+                    <span style={styles.bannerValue}>
+                      {savedDefault.country_name}
+                    </span>
+                  </div>
+                )}
               </div>
-
               <div style={styles.bannerHint}>
                 This will apply to all new products added to your store.
               </div>
@@ -283,123 +267,125 @@ export default function MarkupSettings() {
           </div>
         )}
 
-        {/* Form */}
+        {/* Main Form Card */}
         <div style={styles.card}>
           <div style={styles.cardHeader}>
             <div style={styles.cardIconBox}>
               <span style={styles.cardIcon}>💰</span>
             </div>
             <div>
-              <h3 style={styles.cardTitle}>Set Defaults</h3>
+              <h2 style={styles.cardTitle}>Set Defaults</h2>
               <p style={styles.cardSubtitle}>
-                Country, tax and markup for new products
+                Country, tax, and markup for new products
               </p>
             </div>
           </div>
 
-          {/* Row 1: Country + Tax */}
-          <div style={styles.formRow}>
-            <div style={styles.fieldGroup}>
-              <label style={styles.label}>Country</label>
-              <select
-                value={formData.country_id}
-                onChange={(e) => handleCountryChange(e.target.value)}
-                style={styles.select}
-                disabled={saving}
-              >
-                <option value="">Select Country (optional)</option>
-                {countries.map((c) => (
-                  <option key={c.id} value={c.id}>
-                    {c.name} ({c.default_tax_rate}% {c.tax_label})
-                  </option>
-                ))}
-              </select>
-            </div>
-
-            <div style={styles.fieldGroup}>
-              <label style={styles.label}>Tax Rate (%)</label>
-              <input
-                type="number"
-                step="0.01"
-                min="0"
-                max="100"
-                value={formData.tax_rate}
-                onChange={(e) =>
-                  setFormData({ ...formData, tax_rate: e.target.value })
-                }
-                style={styles.input}
-                disabled={saving}
-                placeholder="e.g. 10"
-              />
-            </div>
-          </div>
-
-          {/* Row 2: Markup Type + Amount */}
-          <div style={styles.formRow}>
-            <div style={styles.fieldGroup}>
-              <label style={styles.label}>Markup Type</label>
-              <select
-                value={formData.markup_type}
-                onChange={(e) =>
-                  setFormData({ ...formData, markup_type: e.target.value })
-                }
-                style={styles.select}
-                disabled={saving}
-              >
-                <option value="fixed">Fixed Amount ($)</option>
-                <option value="percent">Percentage (%)</option>
-                <option value="both">Fixed + Percentage</option>
-              </select>
-            </div>
-
-            <div style={styles.fieldGroup}>
-              <label style={styles.label}>
-                {formData.markup_type === 'percent'
-                  ? 'Percentage (%)'
-                  : formData.markup_type === 'both'
-                    ? 'Fixed Amount ($)'
-                    : 'Amount ($)'}
-              </label>
-              <input
-                type="number"
-                step="0.01"
-                min="0"
-                value={formData.markup_value}
-                onChange={(e) =>
-                  setFormData({ ...formData, markup_value: e.target.value })
-                }
-                style={styles.input}
-                disabled={saving}
-                placeholder={
-                  formData.markup_type === 'percent' ? 'e.g. 10' : 'e.g. 5.00'
-                }
-              />
-            </div>
-
-            {formData.markup_type === 'both' && (
+          <div style={styles.formGroup}>
+            {/* Row 1: Country + Tax */}
+            <div style={styles.formRow}>
               <div style={styles.fieldGroup}>
-                <label style={styles.label}>Additional Percentage (%)</label>
+                <label style={styles.label}>Country</label>
+                <select
+                  value={formData.country_id}
+                  onChange={(e) => handleCountryChange(e.target.value)}
+                  style={styles.select}
+                  disabled={saving}
+                >
+                  <option value="">Select Country (optional)</option>
+                  {countries.map((c) => (
+                    <option key={c.id} value={c.id}>
+                      {c.name} ({c.default_tax_rate}% {c.tax_label})
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div style={styles.fieldGroup}>
+                <label style={styles.label}>Tax Rate (%)</label>
                 <input
                   type="number"
                   step="0.01"
                   min="0"
-                  max="500"
-                  value={formData.extra_percent}
+                  max="100"
+                  value={formData.tax_rate}
                   onChange={(e) =>
-                    setFormData({
-                      ...formData,
-                      extra_percent: e.target.value,
-                    })
+                    setFormData({ ...formData, tax_rate: e.target.value })
                   }
                   style={styles.input}
                   disabled={saving}
                   placeholder="e.g. 10"
                 />
               </div>
-            )}
+            </div>
+
+            {/* Row 2: Markup Type + Amount */}
+            <div style={styles.formRow}>
+              <div style={styles.fieldGroup}>
+                <label style={styles.label}>Markup Type</label>
+                <select
+                  value={formData.markup_type}
+                  onChange={(e) =>
+                    setFormData({ ...formData, markup_type: e.target.value })
+                  }
+                  style={styles.select}
+                  disabled={saving}
+                >
+                  <option value="fixed">Fixed Amount ($)</option>
+                  <option value="percent">Percentage (%)</option>
+                  <option value="both">Fixed + Percentage</option>
+                </select>
+              </div>
+
+              <div style={styles.fieldGroup}>
+                <label style={styles.label}>
+                  {formData.markup_type === 'percent'
+                    ? 'Percentage (%)'
+                    : formData.markup_type === 'both'
+                      ? 'Fixed Amount ($)'
+                      : 'Amount ($)'}
+                </label>
+                <input
+                  type="number"
+                  step="0.01"
+                  min="0"
+                  value={formData.markup_value}
+                  onChange={(e) =>
+                    setFormData({ ...formData, markup_value: e.target.value })
+                  }
+                  style={styles.input}
+                  disabled={saving}
+                  placeholder={
+                    formData.markup_type === 'percent' ? 'e.g. 10' : 'e.g. 5.00'
+                  }
+                />
+              </div>
+
+              {formData.markup_type === 'both' && (
+                <div style={styles.fieldGroup}>
+                  <label style={styles.label}>Additional Percentage (%)</label>
+                  <input
+                    type="number"
+                    step="0.01"
+                    min="0"
+                    max="500"
+                    value={formData.extra_percent}
+                    onChange={(e) =>
+                      setFormData({
+                        ...formData,
+                        extra_percent: e.target.value,
+                      })
+                    }
+                    style={styles.input}
+                    disabled={saving}
+                    placeholder="e.g. 10"
+                  />
+                </div>
+              )}
+            </div>
           </div>
 
-          {/* ✅ FIXED v4: Preview — clear formula */}
+          {/* Preview Box */}
           {formData.markup_value && (
             <div style={styles.previewBox}>
               <div style={styles.previewLabel}>Preview</div>
@@ -414,93 +400,93 @@ export default function MarkupSettings() {
                 </strong>
                 {parseFloat(formData.tax_rate) > 0 && (
                   <span style={{ color: '#6d7175' }}>
-                    {' '}
-                    + <strong>{formData.tax_rate}% tax</strong>
+                    {' '} + <strong>{formData.tax_rate}% tax</strong>
                   </span>
                 )}
               </div>
             </div>
           )}
 
-          <button
-            type="button"
-            onClick={handleSaveDefault}
-            disabled={
-              saving ||
-              !formData.markup_value ||
-              parseFloat(formData.markup_value) <= 0
-            }
-            style={{
-              ...styles.primaryBtn,
-              background:
-                saving || !formData.markup_value ? '#b5b5b5' : '#008060',
-              cursor:
-                saving || !formData.markup_value
-                  ? 'not-allowed'
-                  : 'pointer',
-              marginTop: 20,
-            }}
-          >
-            {saving ? 'Saving...' : 'Save as Default'}
-          </button>
-        </div>
-
-        {message && (
-          <div
-            style={{
-              ...styles.messageBox,
-              background: message.type === 'success' ? '#e4f5e4' : '#fbeae5',
-              color: message.type === 'success' ? '#008060' : '#d72c0d',
-              border: `1px solid ${
-                message.type === 'success' ? '#aee9ae' : '#febcb3'
-              }`,
-            }}
-          >
-            {message.text}
-          </div>
-        )}
-
-        {/* Compare Price Settings Card */}
-        <div style={styles.comparePriceCard}>
-          <div style={styles.comparePriceIconBox}>
-            <span style={styles.comparePriceIcon}>🏷️</span>
-          </div>
-          <div style={styles.infoContent}>
-            <h3 style={styles.infoTitle}>Compare Price Settings</h3>
-            <p style={styles.infoText}>
-              Set the default <strong>compare-at price</strong> rule (strikethrough
-              price). It will apply to every new product you add.
-            </p>
+          <div style={styles.formFooter}>
             <button
               type="button"
-              onClick={handleGoToComparePrice}
-              style={styles.comparePriceBtn}
+              onClick={handleSaveDefault}
+              disabled={
+                saving ||
+                !formData.markup_value ||
+                parseFloat(formData.markup_value) <= 0
+              }
+              style={{
+                ...styles.primaryBtn,
+                opacity: (saving || !formData.markup_value) ? 0.7 : 1,
+                cursor: (saving || !formData.markup_value) ? 'not-allowed' : 'pointer',
+              }}
             >
-              Compare Price Settings →
+              {saving ? 'Saving...' : 'Save as Default'}
             </button>
           </div>
         </div>
 
-        {/* Info Card */}
-        <div style={styles.infoCard}>
-          <div style={styles.infoIconBox}>
-            <span style={styles.infoIcon}>📦</span>
+        {/* Alerts */}
+        {message && (
+          <div
+            style={{
+              ...styles.messageBox,
+              background: message.type === 'success' ? '#f0fdf4' : '#fef2f2',
+              color: message.type === 'success' ? '#166534' : '#991b1b',
+              border: `1px solid ${message.type === 'success' ? '#bbf7d0' : '#fecaca'}`,
+            }}
+          >
+            <span style={{ fontSize: '18px', marginRight: '8px' }}>
+              {message.type === 'success' ? '✅' : '⚠️'}
+            </span>
+            {message.text}
           </div>
-          <div style={styles.infoContent}>
-            <h3 style={styles.infoTitle}>Product-wise Pricing</h3>
-            <p style={styles.infoText}>
-              To edit existing products or run a bulk update, go to the
-              Products page.
+        )}
+
+        {/* Bottom Action Cards Grid */}
+        <div style={styles.grid}>
+          {/* Compare Price Settings */}
+          <div style={styles.actionCard}>
+            <div style={styles.actionCardHeader}>
+              <div style={{...styles.actionIconBox, background: '#fef3c7'}}>
+                <span style={styles.actionIcon}>🏷️</span>
+              </div>
+              <h3 style={styles.actionTitle}>Compare Price Settings</h3>
+            </div>
+            <p style={styles.actionText}>
+              Set the default <strong>compare-at price</strong> rule (strikethrough price). It will apply to every new product you add.
             </p>
             <button
               type="button"
-              onClick={handleGoToProducts}
-              style={styles.infoBtn}
+              onClick={() => navigateTo('/compare-price-settings')}
+              style={{...styles.secondaryBtn, background: '#92400e', color: 'white'}}
+            >
+              Configure Compare Price →
+            </button>
+          </div>
+
+          {/* Product-wise Pricing */}
+          <div style={styles.actionCard}>
+            <div style={styles.actionCardHeader}>
+              <div style={{...styles.actionIconBox, background: '#ede9fe'}}>
+                <span style={styles.actionIcon}>📦</span>
+              </div>
+              <h3 style={styles.actionTitle}>Product-wise Pricing</h3>
+            </div>
+            <p style={styles.actionText}>
+              To edit existing products or run a bulk update, go to the Products page.
+            </p>
+            <button
+              type="button"
+              onClick={() => navigateTo('/products')}
+              style={{...styles.secondaryBtn, background: '#008060', color: 'white'}}
             >
               Go to Products →
             </button>
           </div>
         </div>
+
       </div>
     </div>
   )
@@ -511,285 +497,192 @@ export default function MarkupSettings() {
 // ============================================
 const styles = {
   page: {
-    padding: '24px',
-    fontFamily:
-      'Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-    background: '#f6f6f7',
+    padding: '32px 24px',
+    fontFamily: 'Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
+    background: '#f4f6f8',
     minHeight: '100vh',
-  },
-  container: { maxWidth: '900px', margin: '0 auto' },
-  centerBox: { padding: '60px 20px', textAlign: 'center' },
-
-  h1: {
-    fontSize: '24px',
-    fontWeight: '700',
     color: '#202223',
-    marginBottom: '6px',
   },
-  subtitle: {
-    color: '#637381',
-    fontSize: '14px',
-    marginBottom: '24px',
-    lineHeight: '1.5',
-  },
-
+  container: { maxWidth: '960px', margin: '0 auto' },
+  
+  headerNav: { marginBottom: '16px' },
   backBtn: {
     display: 'inline-flex',
     alignItems: 'center',
-    gap: '6px',
-    padding: '8px 16px',
-    marginBottom: '20px',
+    padding: '8px 14px',
     background: 'white',
     color: '#202223',
-    border: '1px solid #e1e3e5',
+    border: '1px solid #c9cccf',
     borderRadius: '8px',
     fontSize: '13px',
     fontWeight: '600',
     cursor: 'pointer',
+    boxShadow: '0 1px 2px rgba(0,0,0,0.05)',
+    transition: 'all 0.2s',
   },
 
+  pageHeader: { marginBottom: '24px' },
+  h1: { fontSize: '26px', fontWeight: '700', color: '#202223', margin: '0 0 8px 0', letterSpacing: '-0.5px' },
+  subtitle: { color: '#6d7175', fontSize: '14px', margin: 0, lineHeight: '1.5' },
+
+  // Banner
   defaultBanner: {
     display: 'flex',
-    alignItems: 'flex-start',
-    gap: '14px',
-    padding: '16px 20px',
-    marginBottom: '20px',
+    gap: '16px',
+    padding: '20px',
+    marginBottom: '24px',
     background: '#f0fdf4',
-    border: '1px solid #86efac',
-    borderRadius: '10px',
+    border: '1px solid #bbf7d0',
+    borderRadius: '12px',
+    boxShadow: '0 1px 2px rgba(0,0,0,0.02)',
   },
-  bannerIcon: { fontSize: '22px', lineHeight: 1 },
-  bannerContent: { flex: 1 },
-  bannerTitle: {
-    fontSize: '12px',
-    fontWeight: '600',
-    color: '#166534',
-    textTransform: 'uppercase',
-    letterSpacing: '0.4px',
-    marginBottom: '8px',
-  },
-  bannerRow: {
-    display: 'flex',
-    alignItems: 'center',
-    gap: '8px',
-    marginBottom: '4px',
-    fontSize: '13px',
-  },
-  bannerLabel: {
-    color: '#166534',
-    fontWeight: '600',
-    minWidth: '70px',
-  },
-  bannerValue: {
-    display: 'inline-block',
-    fontSize: '14px',
-    fontWeight: '700',
-    color: '#15803d',
-    background: 'white',
-    padding: '2px 10px',
-    borderRadius: '6px',
-    border: '1px solid #86efac',
-  },
-  bannerHint: {
-    fontSize: '12px',
-    color: '#65a30d',
-    marginTop: '8px',
-  },
-
-  card: {
-    background: 'white',
-    padding: '24px',
-    borderRadius: '10px',
-    marginBottom: '20px',
-    border: '1px solid #e1e3e5',
-    boxShadow: '0 1px 2px rgba(0,0,0,0.04)',
-  },
-  cardHeader: {
-    display: 'flex',
-    alignItems: 'center',
-    gap: '12px',
-    marginBottom: '20px',
-  },
-  cardIconBox: {
+  bannerIconBox: {
     width: '40px',
     height: '40px',
     borderRadius: '8px',
+    background: '#dcfce7',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    flexShrink: 0,
+  },
+  bannerIcon: { fontSize: '20px' },
+  bannerContent: { flex: 1 },
+  bannerTitle: { fontSize: '12px', fontWeight: '700', color: '#166534', letterSpacing: '0.5px', marginBottom: '12px' },
+  bannerGrid: { display: 'flex', gap: '16px', flexWrap: 'wrap', marginBottom: '12px' },
+  bannerItem: { display: 'flex', alignItems: 'center', gap: '8px' },
+  bannerLabel: { fontSize: '13px', color: '#166534', fontWeight: '500' },
+  bannerValue: {
+    fontSize: '13px',
+    fontWeight: '600',
+    color: '#15803d',
+    background: 'white',
+    padding: '4px 10px',
+    borderRadius: '6px',
+    border: '1px solid #bbf7d0',
+  },
+  bannerHint: { fontSize: '13px', color: '#15803d', fontWeight: '500' },
+
+  // Main Card
+  card: {
+    background: 'white',
+    padding: '28px',
+    borderRadius: '12px',
+    marginBottom: '24px',
+    border: '1px solid #e1e3e5',
+    boxShadow: '0 1px 3px rgba(0,0,0,0.05)',
+  },
+  cardHeader: { display: 'flex', alignItems: 'center', gap: '14px', marginBottom: '24px' },
+  cardIconBox: {
+    width: '44px',
+    height: '44px',
+    borderRadius: '10px',
     background: '#fff7ed',
     display: 'flex',
     alignItems: 'center',
     justifyContent: 'center',
     flexShrink: 0,
+    border: '1px solid #ffedd5',
   },
-  cardIcon: { fontSize: '20px' },
-  cardTitle: {
-    fontSize: '15px',
-    fontWeight: '700',
-    color: '#202223',
-    margin: '0 0 2px 0',
-  },
-  cardSubtitle: {
-    fontSize: '12px',
-    color: '#637381',
-    margin: 0,
-  },
+  cardIcon: { fontSize: '22px' },
+  cardTitle: { fontSize: '18px', fontWeight: '700', color: '#202223', margin: '0 0 4px 0' },
+  cardSubtitle: { fontSize: '13px', color: '#6d7175', margin: 0 },
 
-  formRow: {
-    display: 'flex',
-    gap: '16px',
-    flexWrap: 'wrap',
-    marginBottom: '16px',
-  },
-  fieldGroup: {
-    display: 'flex',
-    flexDirection: 'column',
-    gap: '6px',
-    flex: '1 1 180px',
-    minWidth: '160px',
-  },
-  label: {
-    fontSize: '12px',
-    fontWeight: '600',
-    color: '#637381',
-    textTransform: 'uppercase',
-    letterSpacing: '0.3px',
-  },
+  // Form
+  formGroup: { display: 'flex', flexDirection: 'column', gap: '20px', marginBottom: '24px' },
+  formRow: { display: 'flex', gap: '20px', flexWrap: 'wrap' },
+  fieldGroup: { display: 'flex', flexDirection: 'column', gap: '8px', flex: '1 1 200px', minWidth: '180px' },
+  label: { fontSize: '13px', fontWeight: '600', color: '#202223' },
   select: {
-    padding: '10px 12px',
-    border: '1px solid #babfc3',
-    borderRadius: '6px',
+    padding: '10px 14px',
+    border: '1px solid #c9cccf',
+    borderRadius: '8px',
     fontSize: '14px',
     background: 'white',
     color: '#202223',
     outline: 'none',
+    boxShadow: '0 1px 2px rgba(0,0,0,0.02) inset',
   },
   input: {
-    padding: '10px 12px',
-    border: '1px solid #babfc3',
-    borderRadius: '6px',
+    padding: '10px 14px',
+    border: '1px solid #c9cccf',
+    borderRadius: '8px',
     fontSize: '14px',
     background: 'white',
     color: '#202223',
     outline: 'none',
+    boxShadow: '0 1px 2px rgba(0,0,0,0.02) inset',
   },
 
+  // Preview
   previewBox: {
-    padding: '12px 16px',
-    background: '#f6f6f7',
-    borderRadius: '6px',
-    border: '1px solid #e1e3e5',
-    marginTop: '8px',
-  },
-  previewLabel: {
-    fontSize: '11px',
-    fontWeight: '600',
-    color: '#637381',
-    textTransform: 'uppercase',
-    letterSpacing: '0.3px',
-    marginBottom: '4px',
-  },
-  previewText: {
-    fontSize: '13px',
-    color: '#202223',
-  },
-
-  messageBox: {
-    padding: '12px 16px',
-    borderRadius: '6px',
-    fontSize: '13px',
-    marginBottom: '20px',
-    fontWeight: '500',
-  },
-
-  comparePriceCard: {
-    display: 'flex',
-    alignItems: 'flex-start',
-    gap: '16px',
-    padding: '20px',
-    background: 'white',
-    border: '1px solid #e1e3e5',
-    borderRadius: '10px',
-    marginBottom: '20px',
-    boxShadow: '0 1px 2px rgba(0,0,0,0.04)',
-  },
-  comparePriceIconBox: {
-    width: '48px',
-    height: '48px',
+    padding: '16px',
+    background: '#f8fafc',
     borderRadius: '8px',
-    background: '#fef3c7',
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'center',
-    flexShrink: 0,
+    border: '1px solid #e2e8f0',
+    marginBottom: '24px',
   },
-  comparePriceIcon: { fontSize: '24px' },
-  comparePriceBtn: {
-    display: 'inline-flex',
-    alignItems: 'center',
-    gap: '6px',
-    padding: '8px 16px',
-    background: '#92400e',
-    color: 'white',
-    border: 'none',
-    borderRadius: '6px',
-    fontSize: '13px',
-    fontWeight: '600',
-    cursor: 'pointer',
-  },
+  previewLabel: { fontSize: '11px', fontWeight: '700', color: '#64748b', textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: '6px' },
+  previewText: { fontSize: '14px', color: '#1e293b', fontWeight: '500' },
 
-  infoCard: {
-    display: 'flex',
-    alignItems: 'flex-start',
-    gap: '16px',
-    padding: '20px',
-    background: 'white',
-    border: '1px solid #e1e3e5',
-    borderRadius: '10px',
-    boxShadow: '0 1px 2px rgba(0,0,0,0.04)',
-  },
-  infoIconBox: {
-    width: '48px',
-    height: '48px',
-    borderRadius: '8px',
-    background: '#ede9fe',
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'center',
-    flexShrink: 0,
-  },
-  infoIcon: { fontSize: '24px' },
-  infoContent: { flex: 1 },
-  infoTitle: {
-    fontSize: '15px',
-    fontWeight: '700',
-    color: '#202223',
-    margin: '0 0 6px 0',
-  },
-  infoText: {
-    fontSize: '13px',
-    color: '#637381',
-    margin: '0 0 12px 0',
-    lineHeight: '1.5',
-  },
-  infoBtn: {
-    display: 'inline-flex',
-    alignItems: 'center',
-    gap: '6px',
-    padding: '8px 16px',
-    background: '#008060',
-    color: 'white',
-    border: 'none',
-    borderRadius: '6px',
-    fontSize: '13px',
-    fontWeight: '600',
-    cursor: 'pointer',
-  },
-
+  // Footer & Buttons
+  formFooter: { display: 'flex', justifyContent: 'flex-start', borderTop: '1px solid #e1e3e5', paddingTop: '24px' },
   primaryBtn: {
     color: 'white',
+    background: '#008060',
     border: 'none',
     padding: '12px 24px',
-    borderRadius: '6px',
+    borderRadius: '8px',
     fontSize: '14px',
     fontWeight: '600',
+    cursor: 'pointer',
+    boxShadow: '0 1px 2px rgba(0,0,0,0.1)',
+    transition: 'background 0.2s',
+  },
+
+  // Message
+  messageBox: {
+    display: 'flex',
+    alignItems: 'center',
+    padding: '16px',
+    borderRadius: '8px',
+    fontSize: '14px',
+    fontWeight: '500',
+    marginBottom: '24px',
+  },
+
+  // Grid for bottom cards
+  grid: { display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(350px, 1fr))', gap: '20px' },
+  actionCard: {
+    display: 'flex',
+    flexDirection: 'column',
+    padding: '24px',
+    background: 'white',
+    border: '1px solid #e1e3e5',
+    borderRadius: '12px',
+    boxShadow: '0 1px 3px rgba(0,0,0,0.05)',
+  },
+  actionCardHeader: { display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '12px' },
+  actionIconBox: {
+    width: '40px',
+    height: '40px',
+    borderRadius: '8px',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    flexShrink: 0,
+  },
+  actionIcon: { fontSize: '20px' },
+  actionTitle: { fontSize: '16px', fontWeight: '700', color: '#202223', margin: 0 },
+  actionText: { fontSize: '14px', color: '#6d7175', margin: '0 0 20px 0', lineHeight: '1.5', flex: 1 },
+  secondaryBtn: {
+    alignSelf: 'flex-start',
+    padding: '10px 18px',
+    border: 'none',
+    borderRadius: '8px',
+    fontSize: '14px',
+    fontWeight: '600',
+    cursor: 'pointer',
+    transition: 'opacity 0.2s',
   },
 }
