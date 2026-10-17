@@ -1,7 +1,7 @@
 # ============================================
 # app/api/routes/shopify_routes.py
 # Shopify OAuth + Product Push + Embedded App
-# + ✅ FIXED v12: Out-of-stock product add hone do (Stock 0 hoga)
+# + ✅ FIXED v14: Out-of-stock product add hoga (stock 0), price sahi aayegi
 # ============================================
 
 import asyncio
@@ -163,31 +163,41 @@ def _get_store_markup(store: ShopifyStore) -> tuple:
 
 
 # ============================================
-# HELPER: Build product_data
+# ✅ FIXED v14: Build product_data
+# Agar price None hai to $0.00 set karo (fallback markup nahi)
 # ============================================
 def _build_product_data_for_shopify(data: dict, product=None) -> dict:
     base = {}
 
     if product:
         product_price = product.price
+
+        # ✅ FIXED v14: Agar price 0/None hai, to fallback markup mat lagao
         if product_price is None or float(product_price or 0) <= 0:
             amazon = float(product.amazon_price or 0)
-            markup_val = float(product.markup or 0.0)
-            markup_type = product.markup_type or "fixed"
-            extra_pct = float(getattr(product, "extra_percent", 0.0) or 0.0)
 
-            if markup_type == "percent":
-                product_price = amazon * (1 + markup_val / 100)
-            elif markup_type == "both":
-                base_price = amazon + markup_val
-                product_price = base_price * (1 + extra_pct / 100)
+            if amazon <= 0:
+                product_price = 0.0
+                logger.warning(
+                    "⚠️ product.price and amazon_price both 0 — setting $0.00"
+                )
             else:
-                product_price = amazon + markup_val
+                markup_val = float(product.markup or 0.0)
+                markup_type = product.markup_type or "fixed"
+                extra_pct = float(getattr(product, "extra_percent", 0.0) or 0.0)
 
-            logger.warning(
-                f"⚠️ product.price was 0 — calculated ${product_price} "
-                f"(type={markup_type})"
-            )
+                if markup_type == "percent":
+                    product_price = amazon * (1 + markup_val / 100)
+                elif markup_type == "both":
+                    base_price = amazon + markup_val
+                    product_price = base_price * (1 + extra_pct / 100)
+                else:
+                    product_price = amazon + markup_val
+
+                logger.warning(
+                    f"⚠️ product.price was 0 — calculated ${product_price} "
+                    f"from amazon_price (type={markup_type})"
+                )
 
         base = {
             "title": product.title,
@@ -200,7 +210,7 @@ def _build_product_data_for_shopify(data: dict, product=None) -> dict:
             "stock_quantity": product.stock_quantity or 0,
             "is_available": (
                 product.is_available
-                if product.is_available is not None else True
+                if product.is_available is not None else False
             ),
             "availability": product.availability or "In Stock",
             "rating": product.rating,
@@ -228,7 +238,7 @@ def _build_product_data_for_shopify(data: dict, product=None) -> dict:
             ),
             "price": str(data.get("price", 0) or 0),
             "stock_quantity": data.get("stock_quantity", 0) or 0,
-            "is_available": data.get("is_available", True),
+            "is_available": data.get("is_available", False),
             "availability": data.get("availability", "In Stock"),
             "rating": data.get("rating"),
             "reviews_count": data.get("reviews_count"),
@@ -981,8 +991,9 @@ async def push_product_to_shopify(
 
 
 # ============================================
-# ✅ FIXED v13: ADD PRODUCT FROM SHOPIFY APP
+# ✅ FIXED v14: ADD PRODUCT FROM SHOPIFY APP
 # + Out-of-stock product ADD HOGA, lekin stock 0 hoga
+# + Price sahi aayegi (fallback nahi)
 # ============================================
 @router.post("/app/add-product")
 async def add_product_from_shopify_app(
@@ -1100,7 +1111,7 @@ async def add_product_from_shopify_app(
     asin = data["asin"]
     parent_asin = data.get("parent_asin")
 
-    # ✅ FIXED v13: Out-of-stock product ADD HOGA, par stock 0 hoga
+    # ✅ FIXED v14: Out-of-stock product ADD HOGA, par stock 0 hoga
 
     existing = db.query(Product).filter(Product.asin == asin).first()
     if existing:
@@ -1211,7 +1222,7 @@ async def add_product_from_shopify_app(
         rating=data.get("rating"),
         reviews_count=data.get("reviews_count"),
         availability=data.get("availability", "In Stock"),
-        is_available=data.get("is_available", True),
+        is_available=data.get("is_available", False),
         stock_quantity=data.get("stock_quantity", 0),
         amazon_price=data["amazon_price"],
         price=final_price,
