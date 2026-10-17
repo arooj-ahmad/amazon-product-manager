@@ -1,7 +1,7 @@
 # ============================================
 # app/services/brightdata.py
 # Bright Data Scraper API se Amazon data fetch karne ke liye
-# + ✅ FIXED v16: JSON se exact Feature Bullets extract karne ka logic
+# + ✅ FIXED v17: Feature Bullets fetched using BeautifulSoup (#feature-bullets)
 # ============================================
 
 import logging
@@ -9,6 +9,7 @@ import re
 from typing import Optional
 
 import httpx
+from bs4 import BeautifulSoup  # ✅ HTML Parsing ke liye zaroori hai
 
 from app.config import settings
 
@@ -27,6 +28,7 @@ class BrightDataError(Exception):
 # AMAZON URL SE ASIN NIKALEIN
 # ============================================
 def extract_asin_from_url(url: str) -> Optional[str]:
+    """Amazon URL se ASIN nikalta hai."""
     patterns = [
         r"/dp/([A-Z0-9]{10})",
         r"/gp/product/([A-Z0-9]{10})",
@@ -44,6 +46,7 @@ def extract_asin_from_url(url: str) -> Optional[str]:
 # PRICE PARSE HELPER
 # ============================================
 def parse_price(value) -> Optional[float]:
+    """Price ko float mein parse karta hai."""
     if value is None:
         return None
     try:
@@ -61,6 +64,7 @@ def parse_price(value) -> Optional[float]:
 # PACKAGE DIMENSIONS PARSE
 # ============================================
 def parse_package_dimensions(package_dims_str: str) -> dict:
+    """Parse package_dimensions string like: "7.09 x 5.91 x 0.39 inches; 7.05 ounces" """
     result = {}
     if not package_dims_str or not isinstance(package_dims_str, str):
         return result
@@ -317,46 +321,34 @@ def clean_description(description: str) -> str:
 
 
 # ============================================
-# ✅ NAYA FUNCTION: JSON se Exact Bullets nikalna
+# ✅ NAYA FUNCTION: HTML se #feature-bullets fetch karna
 # ============================================
-def extract_bullets_from_json(raw: dict) -> list[str]:
-    """
-    JSON ke andar se asli bullets (About this item) nikalta hai.
-    Agar 'feature_bullets' nahi hai, to 'description' ko tod kar dekhta hai.
-    """
-    # 1. Direct keys check karein
-    direct_bullets = raw.get("feature_bullets") or raw.get("about_item") or raw.get("bullet_points")
-    if isinstance(direct_bullets, list) and len(direct_bullets) > 0:
-        clean = [str(b).strip() for b in direct_bullets if b and str(b).strip()]
-        if len(clean) > 0:
-            return clean
-
-    # 2. Agar description mein ghusa hua hai, to usko lines mein tod kar check karein
-    desc = raw.get("description") or ""
-    if isinstance(desc, str) and desc.strip():
-        # Gande data ko filter karein (Title, Prices)
-        lines = desc.split('\n')
-        valid_lines = []
-        for line in lines:
-            line = line.strip()
-            if not line: continue
-            # Agar line mein price ya stars hain, skip karein
-            if re.search(r'\$\d+|★|out of \d stars', line): continue
-            # Agar line bohot choti hai (sirf title), skip karein
-            if len(line.split()) < 3: continue
-            
-            valid_lines.append(line)
+def extract_bullets_from_html(html_content: str) -> list[str]:
+    """Aapke DevTools wale #feature-bullets section ko target karta hai."""
+    if not html_content or not isinstance(html_content, str):
+        return []
+    try:
+        soup = BeautifulSoup(html_content, 'html.parser')
+        bullets = []
         
-        # Agar 2 se zyada valid lines mil gayi hain, to maan lein ke yeh bullets hain
-        if len(valid_lines) >= 2:
-            return valid_lines
-
-    return []
+        # Aapne jo inspect kiya uske mutabiq exact selector
+        container = soup.find(id="feature-bullets")
+        if container:
+            # Uske andar saare list items (span.a-list-item) dhoondein
+            items = container.select("ul li span.a-list-item")
+            for item in items:
+                text = item.get_text(strip=True)
+                if text and len(text) > 5:
+                    bullets.append(text)
+        return bullets
+    except Exception as e:
+        logger.error(f"HTML parse error: {e}")
+        return []
 
 
 # ============================================
 # BRIGHT DATA API CALL
-# ✅ FIXED v16: JSON extraction logic
+# ✅ FIXED v17: HTML Fallback via #feature-bullets
 # ============================================
 async def fetch_product_from_brightdata(amazon_url: str) -> dict:
     api_url = f"{settings.BRIGHT_DATA_API_URL}?dataset_id={settings.BRIGHT_DATA_DATASET_ID}&include_errors=true"
@@ -457,10 +449,22 @@ async def fetch_product_from_brightdata(amazon_url: str) -> dict:
     tags = parse_tags(raw, categories)
     standard_fields = parse_standard_fields(raw)
 
-    # ✅ JSON se bullets nikalne ki koshish karein
-    feature_bullets_clean = extract_bullets_from_json(raw)
+    # ✅ 1. JSON se bullets nikalne ki koshish karein
+    feature_bullets_raw = raw.get("feature_bullets") or raw.get("about_item") or []
+    feature_bullets_clean = []
+    if isinstance(feature_bullets_raw, list):
+        feature_bullets_clean = [str(b).strip() for b in feature_bullets_raw if b and str(b).strip()]
 
-    # ✅ DESCRIPTION ASSEMBLE KAREIN
+    # ✅ 2. AGAR JSON MEIN NAHI HAIN, TO HTML SE #feature-bullets NIKALEIN
+    if not feature_bullets_clean:
+        html_content = raw.get("html") or raw.get("raw_html") or raw.get("product_html")
+        if html_content:
+            logger.info("⚠️ JSON bullets empty. Trying to extract from HTML (#feature-bullets)...")
+            feature_bullets_clean = extract_bullets_from_html(html_content)
+            if feature_bullets_clean:
+                logger.info(f"✅ Extracted {len(feature_bullets_clean)} bullets from HTML")
+
+    # ✅ 3. DESCRIPTION ASSEMBLE KAREIN
     if feature_bullets_clean:
         cleaned_description = "<br>".join(feature_bullets_clean)
         logger.info(f"✅ Using Feature Bullets as Description ({len(feature_bullets_clean)} bullets)")
