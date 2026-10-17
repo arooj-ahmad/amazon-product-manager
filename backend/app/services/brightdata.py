@@ -1,6 +1,6 @@
 # ============================================
 # app/services/brightdata.py
-# + ✅ NAYA: Feature Bullets extraction for "About this item"
+# + ✅ SMART BULLETS EXTRACTION (JSON + HTML Fallback)
 # ============================================
 
 import logging
@@ -79,9 +79,7 @@ def parse_package_dimensions(package_dims_str: str) -> dict:
         re.IGNORECASE,
     )
     if weight_match:
-        weight_value = weight_match.group(1)
-        weight_unit = weight_match.group(2)
-        result["item_weight"] = f"{weight_value} {weight_unit}"
+        result["item_weight"] = f"{weight_match.group(1)} {weight_match.group(2)}"
 
     return result
 
@@ -99,17 +97,11 @@ def validate_parent_asin(parent_asin, asin: str) -> Optional[str]:
 
 def check_availability(raw: dict) -> tuple[bool, str, str]:
     shipping_msg = (
-        raw.get("shipping_message")
-        or raw.get("delivery_message")
-        or raw.get("buybox_message")
-        or ""
+        raw.get("shipping_message") or raw.get("delivery_message") or raw.get("buybox_message") or ""
     )
     if isinstance(shipping_msg, str) and shipping_msg.strip():
         msg_lower = shipping_msg.lower()
-        if any(kw in msg_lower for kw in [
-            "cannot be shipped", "cannot ship", "not shippable",
-            "delivery location", "not available for delivery",
-        ]):
+        if any(kw in msg_lower for kw in ["cannot be shipped", "cannot ship", "not shippable", "delivery location", "not available for delivery"]):
             return False, "Shipping Restricted", "shipping_message"
 
     add_to_cart = raw.get("add_to_cart_available")
@@ -124,8 +116,7 @@ def check_availability(raw: dict) -> tuple[bool, str, str]:
     if in_stock is False: return False, "Out of Stock", "in_stock (False)"
 
     availability_text = (
-        raw.get("availability") or raw.get("availabilityText") or
-        raw.get("availability_text") or raw.get("stock_status") or raw.get("stockStatus") or ""
+        raw.get("availability") or raw.get("availabilityText") or raw.get("availability_text") or raw.get("stock_status") or raw.get("stockStatus") or ""
     )
 
     if not availability_text or not isinstance(availability_text, str) or not availability_text.strip():
@@ -133,16 +124,12 @@ def check_availability(raw: dict) -> tuple[bool, str, str]:
 
     avail_lower = availability_text.lower().strip()
     out_of_stock_keywords = [
-        "out of stock", "unavailable", "currently unavailable",
-        "not available", "sold out", "temporarily out",
-        "no disponible", "temporarily unavailable",
-        "back order", "backorder", "cannot be shipped",
-        "cannot ship", "not shippable", "delivery location",
-        "not available for delivery",
+        "out of stock", "unavailable", "currently unavailable", "not available", "sold out", "temporarily out",
+        "no disponible", "temporarily unavailable", "back order", "backorder", "cannot be shipped",
+        "cannot ship", "not shippable", "delivery location", "not available for delivery",
     ]
     in_stock_keywords = [
-        "in stock", "only", "usually ships", "ships within",
-        "available", "in stock soon", "add to cart",
+        "in stock", "only", "usually ships", "ships within", "available", "in stock soon", "add to cart",
     ]
 
     if any(kw in avail_lower for kw in out_of_stock_keywords):
@@ -329,35 +316,59 @@ def clean_description(description: str) -> str:
 
 
 # ============================================
-# ✅ NAYA: Feature Bullets Extract karne ka function
+# ✅ SMART BULLETS EXTRACTION
 # ============================================
-def parse_feature_bullets(raw: dict) -> list[str]:
-    """
-    Bright Data ke JSON response mein se "About this item" bullets nikalta hai.
-    Yeh alag alag possible keys check karta hai (jaise feature_bullets, feature-bullets, about_this_item)
-    """
-    bullets = []
-    possible_keys = [
-        "feature_bullets",
-        "feature-bullets",
-        "featureBullets",
-        "about_this_item",
-        "about-this-item",
-        "bullets"
-    ]
-
+def parse_feature_bullets(raw: dict, cleaned_desc: str) -> list[str]:
+    """Bullets ko har possible jagah se nikaalta hai."""
+    feature_bullets = []
+    
+    # 1. Standard JSON keys check karein
+    possible_keys = ["feature_bullets", "feature-bullets", "featureBullets", "about_this_item", "bullets"]
     for key in possible_keys:
         raw_bullets = raw.get(key)
         if isinstance(raw_bullets, list) and raw_bullets:
             for b in raw_bullets:
                 if isinstance(b, str) and b.strip():
-                    bullets.append(b.strip())
+                    feature_bullets.append(b.strip())
                 elif isinstance(b, dict) and b.get("text"):
-                    bullets.append(str(b["text"]).strip())
-            if bullets:
-                break # Mil gaye toh loop break kar do
+                    feature_bullets.append(str(b["text"]).strip())
+            if feature_bullets:
+                return feature_bullets
 
-    return bullets
+    # 2. Product details mein check karein
+    product_details = raw.get("product_details") or []
+    if isinstance(product_details, list):
+        for item in product_details:
+            if isinstance(item, dict):
+                field_type = str(item.get("type", "")).lower()
+                value = item.get("value")
+                if value and any(word in field_type for word in ["feature", "bullet", "highlight"]):
+                    feature_bullets.append(str(value).strip())
+        if feature_bullets:
+            return feature_bullets
+
+    # 3. HTML Description ke andar <ul><li> check karein (Aapke screenshot wala case)
+    if cleaned_desc and ("<ul>" in cleaned_desc.lower() or "<li>" in cleaned_desc.lower()):
+        li_matches = re.findall(r'<li.*?>(.*?)</li>', cleaned_desc, re.DOTALL | re.IGNORECASE)
+        for li in li_matches:
+            text = re.sub(r'<[^>]+>', '', li).strip() # Inner HTML tags remove karein
+            if text and len(text) > 10:
+                feature_bullets.append(text)
+        if feature_bullets:
+            return feature_bullets
+
+    # 4. Fallback: Specs ko bullet points banayein
+    specs = {}
+    if isinstance(product_details, list):
+        for item in product_details:
+            if isinstance(item, dict) and item.get("type") and item.get("value"):
+                specs[item["type"]] = str(item["value"]).strip()
+    
+    if specs:
+        for k, v in list(specs.items())[:5]:
+            feature_bullets.append(f"{k}: {v}")
+
+    return feature_bullets
 
 
 # ============================================
@@ -392,23 +403,19 @@ async def fetch_product_from_brightdata(amazon_url: str) -> dict:
         raise BrightDataError("Invalid JSON response from Bright Data")
 
     if isinstance(data, list):
-        if len(data) == 0:
-            raise BrightDataError("Bright Data ne koi data return nahi kiya")
+        if len(data) == 0: raise BrightDataError("Bright Data ne koi data return nahi kiya")
         raw = data[0]
     elif isinstance(data, dict):
         raw = data
     else:
         raise BrightDataError("Bright Data ne unexpected response bheja")
 
-    if "error" in raw:
-        raise BrightDataError(f"Bright Data error: {raw['error']}")
+    if "error" in raw: raise BrightDataError(f"Bright Data error: {raw['error']}")
 
     asin = raw.get("asin") or extract_asin_from_url(amazon_url)
-    if not asin:
-        raise BrightDataError("ASIN nahi mila")
+    if not asin: raise BrightDataError("ASIN nahi mila")
 
-    parent_asin_raw = raw.get("parent_asin") or None
-    parent_asin = validate_parent_asin(parent_asin_raw, asin)
+    parent_asin = validate_parent_asin(raw.get("parent_asin"), asin)
     is_variation = bool(parent_asin)
 
     variant_attributes = []
@@ -453,8 +460,7 @@ async def fetch_product_from_brightdata(amazon_url: str) -> dict:
         for img in images_list:
             if isinstance(img, str) and img not in unique_images:
                 unique_images.append(img)
-    if not main_image and unique_images:
-        main_image = unique_images[0]
+    if not main_image and unique_images: main_image = unique_images[0]
 
     is_available, availability_text, _ = check_availability(raw)
     stock_quantity = 100 if is_available else 0
@@ -463,11 +469,8 @@ async def fetch_product_from_brightdata(amazon_url: str) -> dict:
     product_details = raw.get("product_details") or []
     if isinstance(product_details, list):
         for item in product_details:
-            if isinstance(item, dict):
-                key = item.get("type")
-                value = item.get("value")
-                if key and value and str(value).strip():
-                    if key not in specs: specs[key] = str(value).strip()
+            if isinstance(item, dict) and item.get("type") and item.get("value"):
+                if item["type"] not in specs: specs[item["type"]] = str(item["value"]).strip()
 
     extra_fields = {"Rating": rating_value, "Reviews": reviews_count, "Availability": availability_text, "Seller": raw.get("seller_name")}
     for key, value in extra_fields.items():
@@ -479,16 +482,11 @@ async def fetch_product_from_brightdata(amazon_url: str) -> dict:
     standard_fields = parse_standard_fields(raw)
     cleaned_description = clean_description(raw.get("description"))
 
-    # ✅ Feature Bullets Extract karein
-    feature_bullets = parse_feature_bullets(raw)
+    # ✅ Bullets nikalne ke liye Smart Function call karein
+    feature_bullets = parse_feature_bullets(raw, cleaned_description)
 
     logger.info(
-        f"Parsed product: ASIN={asin}, ParentASIN={parent_asin}, "
-        f"AmazonPrice=${amazon_price}, Rating={rating_value}, "
-        f"Reviews={reviews_count}, Categories={len(categories)}, "
-        f"Tags={len(tags)}, StandardFields={len(standard_fields)}, "
-        f"FeatureBullets={len(feature_bullets)}, " # Logging add ki
-        f"Description={len(cleaned_description)} chars"
+        f"Parsed product: ASIN={asin}, FeatureBullets={len(feature_bullets)}"
     )
 
     return {
@@ -503,7 +501,7 @@ async def fetch_product_from_brightdata(amazon_url: str) -> dict:
         "images": unique_images,
         "specifications": specs,
         "description": cleaned_description,
-        "feature_bullets": feature_bullets, # ✅ Return mein add kar diya
+        "feature_bullets": feature_bullets, # ✅ Bullets add kar diye
         "rating": rating_value,
         "reviews_count": reviews_count,
         "availability": final_availability,
