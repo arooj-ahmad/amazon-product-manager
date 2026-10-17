@@ -1,9 +1,8 @@
 # app/services/shopify/description.py
 # Product description builder with metafields HTML table
-# + ✅ FIXED: Title duplication, Bullet points support, HTML formatting
+# + ✅ FIXED: Title duplication removed, Bullet points added correctly
 
 import logging
-import re
 
 logger = logging.getLogger(__name__)
 
@@ -11,52 +10,45 @@ logger = logging.getLogger(__name__)
 def _build_description_with_metafields(product_data: dict) -> str:
     """Amazon description + SAARE metafields HTML table."""
 
-    # --- STEP 1: DESCRIPTION AUR BULLET POINTS KO HANDLE KARNA ---
+    # 1. DATA EXTRACT KAREIN
+    raw_description = product_data.get("description", "") or ""
+    title = product_data.get("title", "") or ""
     
-    description = product_data.get("description", "") or ""
-    feature_bullets = product_data.get("feature_bullets", [])
+    # Scraper ke hisaab se bullets ki key alag ho sakti hai. 
+    # Hum yahan 'feature_bullets' ya 'bullets' dono check kar rahe hain.
+    feature_bullets = product_data.get("feature_bullets") or product_data.get("bullets") or []
+
+    # 2. TITLE KO DESCRIPTION SE HATAYEIN (MAIN FIX)
+    clean_description = raw_description.strip()
     
-    # Check: Agar description bohot lambi hai aur usme Title jaisa text hai (e.g. comma separated words)
-    # Ya phir description khali hai, to bullets use karein.
+    if clean_description.lower() == title.strip().lower():
+        clean_description = ""
+    elif clean_description.lower().startswith(title.strip().lower()):
+        clean_description = clean_description[len(title):].strip()
+
+    # 3. ASLI BULLET POINTS KO FORMAT KAREIN
+    final_desc_html = ""
     
-    is_description_valid = False
-    if description and len(description) > 50:
-        # Simple check: Agar description mein bullet points ya paragraph structure hai
-        if "<p>" in description or "<ul>" in description or "<br>" in description:
-            is_description_valid = True
-        # Agar description sirf plain text hai aur bohot lamba title lag raha hai
-        elif len(description.split()) < 30 and "," in description:
-             # Yeh aksar title hota hai jo galti se description mein aa jata hai
-             is_description_valid = False
-        else:
-            is_description_valid = True
-
-    # Agar description valid nahi hai, to Bullets use karein
-    if not is_description_valid and feature_bullets:
-        if isinstance(feature_bullets, list):
-            # List ko HTML list mein convert karein
-            bullets_html = "".join([f"<li>{str(b).strip()}</li>" for b in feature_bullets if b])
-            description = f"<ul style='margin-bottom: 20px;'>{bullets_html}</ul>"
-        elif isinstance(feature_bullets, str):
-            # Agar string hai to paragraph banayein
-            description = f"<p>{feature_bullets}</p>"
+    # Agar feature_bullets available hain (jo aapki last image mein thay)
+    if feature_bullets and isinstance(feature_bullets, list):
+        bullets_html = "".join([
+            f"<li style='margin-bottom: 8px;'>{str(b).strip()}</li>" 
+            for b in feature_bullets if b and str(b).strip()
+        ])
+        final_desc_html = f"<ul style='padding-left: 20px; margin-bottom: 20px;'>{bullets_html}</ul>"
     
-    # Agar description abhi bhi khali hai, to default message
-    if not description:
-        description = ""
+    # Agar bullets nahi hain, to cleaned description use karein
+    elif clean_description:
+        final_desc_html = f"<p>{clean_description}</p>"
 
-    # HTML Safety: Description ke baad line break dalein taake table chipke nahi
-    if description and not description.endswith("<br>") and not description.endswith("</ul>"):
-        description += "<br>"
-    elif description.endswith("</ul>"):
-        description += "<br>"
+    # Table se pehle space dalein taake text chipke nahi
+    if final_desc_html and not final_desc_html.endswith("<br>"):
+        final_desc_html += "<br>"
 
-    # --- STEP 2: METAFIELDS TABLE BUILD KARNA ---
-
+    # 4. METAFIELDS TABLE
     FIELD_LABELS = {
         "asin": "ASIN", "brand": "Brand", "manufacturer": "Manufacturer",
         "rating": "Rating", "reviews_count": "Reviews",
-        # ❌ amazon_price HATA DIYA
         "availability": "Availability",
         "model_number": "Model Number", "item_model_number": "Item Model Number",
         "model_name": "Model Name", "part_number": "Part Number",
@@ -67,7 +59,6 @@ def _build_description_with_metafields(product_data: dict) -> str:
         "theme": "Theme", "department": "Department",
         "country_of_origin": "Country of Origin",
         "date_first_available": "Date First Available",
-        # ❌ best_sellers_rank HATA DIYA
         "language": "Language",
         "reading_age": "Reading Age", "unit_count": "Unit Count",
         "number_of_pieces": "Number of Pieces",
@@ -89,12 +80,10 @@ def _build_description_with_metafields(product_data: dict) -> str:
         "asin", "brand", "manufacturer",
         "model_number", "model_name", "part_number",
         "rating", "reviews_count",
-        # ❌ amazon_price HATA DIYA
         "availability",
         "color", "size", "material_type", "style_name",
         "item_dimensions", "item_weight", "package_dimensions",
         "department", "country_of_origin", "date_first_available",
-        # ❌ best_sellers_rank HATA DIYA
         "language", "reading_age",
         "unit_count", "number_of_pieces",
         "care_instructions", "closure_type", "fabric_type",
@@ -113,18 +102,15 @@ def _build_description_with_metafields(product_data: dict) -> str:
     for key in fields_to_show:
         if key in seen:
             continue
-        
         value = product_data.get(key)
-        
-        # Data Cleaning: None, Empty, ya 'nan' string ko skip karein
         if value is None:
             continue
-            
+        
         val_str = str(value).strip()
         if not val_str or val_str.lower() in ["none", "nan", "n/a", "null"]:
             continue
 
-        # HTML Escaping (Security & Formatting)
+        # HTML Escaping
         val_str = (
             val_str.replace("&", "&amp;")
             .replace("<", "&lt;")
@@ -133,15 +119,12 @@ def _build_description_with_metafields(product_data: dict) -> str:
 
         label = FIELD_LABELS.get(key, key.replace("_", " ").title())
 
-        # Special Formatting for Rating
         if key == "rating":
             try:
                 r = float(value)
                 val_str = f"{r} ★ out of 5"
             except (ValueError, TypeError):
                 pass
-        
-        # Special Formatting for Reviews Count
         elif key == "reviews_count":
             try:
                 c = int(float(value))
@@ -149,7 +132,6 @@ def _build_description_with_metafields(product_data: dict) -> str:
             except (ValueError, TypeError):
                 pass
 
-        # Table Row HTML
         rows.append(
             f'<tr>'
             f'<td style="padding:8px 12px;font-weight:600;'
@@ -161,8 +143,7 @@ def _build_description_with_metafields(product_data: dict) -> str:
         )
         seen.add(key)
 
-    # --- STEP 3: FINAL ASSEMBLY ---
-    
+    # 5. FINAL OUTPUT ASSEMBLY
     if rows:
         table_html = (
             '<hr style="margin:24px 0;border:none;border-top:1px solid #e1e3e5;">'
@@ -175,6 +156,6 @@ def _build_description_with_metafields(product_data: dict) -> str:
             '</tbody>'
             '</table>'
         )
-        description += table_html
+        final_desc_html += table_html
 
-    return description
+    return final_desc_html
