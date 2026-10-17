@@ -1,7 +1,7 @@
 # ============================================
 # app/services/brightdata.py
 # Bright Data Scraper API se Amazon data fetch karne ke liye
-# + ✅ FIXED v13: Feature Bullets priority (Asli Description)
+# + ✅ FIXED v14: Title ko Description se hata diya (Smart Filter)
 # ============================================
 
 import logging
@@ -65,11 +65,7 @@ def parse_price(value) -> Optional[float]:
 # ✅ PACKAGE DIMENSIONS PARSE
 # ============================================
 def parse_package_dimensions(package_dims_str: str) -> dict:
-    """
-    Parse package_dimensions string like:
-    "7.09 x 5.91 x 0.39 inches; 7.05 ounces"
-    "10 x 5 x 3 cm; 500 g"
-    """
+    """Parse package_dimensions string like: "7.09 x 5.91 x 0.39 inches; 7.05 ounces" """
     result = {}
 
     if not package_dims_str or not isinstance(package_dims_str, str):
@@ -433,7 +429,7 @@ def clean_description(description: str) -> str:
 
 # ============================================
 # BRIGHT DATA API CALL
-# ✅ FIXED v13: Feature Bullets Priority (Asli Description)
+# ✅ FIXED v14: Title ko Description se hata diya
 # ============================================
 async def fetch_product_from_brightdata(amazon_url: str) -> dict:
     """Bright Data API se product data fetch karta hai."""
@@ -496,6 +492,8 @@ async def fetch_product_from_brightdata(amazon_url: str) -> dict:
     asin = raw.get("asin") or extract_asin_from_url(amazon_url)
     if not asin:
         raise BrightDataError("ASIN nahi mila - na response mein, na URL mein")
+
+    title = raw.get("title") or "" # Title nikal liya
 
     parent_asin_raw = raw.get("parent_asin") or None
     parent_asin = validate_parent_asin(parent_asin_raw, asin)
@@ -590,7 +588,7 @@ async def fetch_product_from_brightdata(amazon_url: str) -> dict:
     tags = parse_tags(raw, categories)
     standard_fields = parse_standard_fields(raw)
 
-    # ✅ FIXED v13: FEATURE BULLETS KO PRIORITY DEIN
+    # ✅ FEATURE BULLETS KO PRIORITY DEIN
     feature_bullets_raw = raw.get("feature_bullets") or raw.get("about_item") or []
     feature_bullets_clean = []
     
@@ -598,12 +596,22 @@ async def fetch_product_from_brightdata(amazon_url: str) -> dict:
         feature_bullets_clean = [str(b).strip() for b in feature_bullets_raw if b and str(b).strip()]
     
     if feature_bullets_clean:
-        # Agar bullets hain, to unhe <br> se join karke description banayein
+        # Agar bullets hain (jaise Granny Pants aur nayi image mein), to unhe join karke description banayein
         cleaned_description = "<br>".join(feature_bullets_clean)
         logger.info(f"✅ Using Feature Bullets as Description ({len(feature_bullets_clean)} bullets)")
     else:
-        # Agar bullets nahi hain, to purane description ko clean karein
+        # Agar bullets nahi hain (jaise Tic-Tac-Toe mein), to description clean karein
         cleaned_description = clean_description(raw.get("description"))
+        
+        # ✅ NAYA FIX: Agar description mein Title ghus gaya hai, to usko hata dein
+        if title and cleaned_description:
+            if cleaned_description.lower().startswith(title.lower()):
+                cleaned_description = cleaned_description[len(title):].strip()
+            
+            # Agar title hatane ke baad kuch nahi bacha, to khali kar dein
+            if len(cleaned_description.split()) < 5:
+                cleaned_description = ""
+                
         logger.info(f"⚠️ No Feature Bullets found. Using cleaned Description.")
 
     logger.info(
@@ -618,15 +626,15 @@ async def fetch_product_from_brightdata(amazon_url: str) -> dict:
         "asin": asin,
         "parent_asin": parent_asin,
         "is_variation": is_variation,
-        "title": raw.get("title"),
+        "title": title,
         "brand": raw.get("brand"),
         "amazon_price": amazon_price,
         "list_price": list_price,
         "image_url": main_image,
         "images": unique_images,
         "specifications": specs,
-        "description": cleaned_description, # Ab yeh saaf bullets ya text hoga
-        "feature_bullets": feature_bullets_clean, # Extra safety ke liye
+        "description": cleaned_description, 
+        "feature_bullets": feature_bullets_clean,
         "rating": rating_value,
         "reviews_count": reviews_count,
         "availability": final_availability,
