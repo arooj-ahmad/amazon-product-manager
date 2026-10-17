@@ -26,6 +26,7 @@
 # + ✅ FIXED v10: hardcoded defaults hatao
 # + ✅ FIXED v11: Amazon URL normalize karo (https://, www., clean)
 # + ✅ FIXED v11: Token exchange fail → existing token use karo
+# + ✅ FIXED v12: Out-of-stock product add hone se roko
 # ============================================
 
 import asyncio
@@ -78,14 +79,7 @@ router = APIRouter(prefix="/api/shopify", tags=["Shopify"])
 # ✅ FIXED v11: Normalize Amazon URL
 # ============================================
 def _normalize_amazon_url(url: str) -> str:
-    """
-    Amazon URL ko normalize karo:
-    - https:// add karo agar missing
-    - www. add karo agar missing
-    - Sirf /dp/ASIN rakho — extra params hatao
-
-    Returns: Normalized URL ya original (agar parse fail ho)
-    """
+    """Amazon URL ko normalize karo."""
     if not url or not isinstance(url, str):
         return url
 
@@ -93,15 +87,12 @@ def _normalize_amazon_url(url: str) -> str:
     if not url:
         return url
 
-    # ✅ https:// add karo
     if not url.startswith(("http://", "https://")):
         url = "https://" + url
 
-    # ✅ www. add karo agar amazon. hai aur www. nahi hai
     if "amazon." in url and "www.amazon." not in url:
         url = url.replace("amazon.", "www.amazon.", 1)
 
-    # ✅ /dp/ASIN extract karo — baaki sab hatao
     asin_match = re.search(r"/dp/([A-Z0-9]{10})", url)
     if asin_match:
         asin = asin_match.group(1)
@@ -110,7 +101,6 @@ def _normalize_amazon_url(url: str) -> str:
             logger.info(f"🔗 URL normalized: {url[:60]}... → {normalized}")
         return normalized
 
-    # ✅ /gp/product/ASIN bhi try karo
     gp_match = re.search(r"/gp/product/([A-Z0-9]{10})", url)
     if gp_match:
         asin = gp_match.group(1)
@@ -118,7 +108,6 @@ def _normalize_amazon_url(url: str) -> str:
         logger.info(f"🔗 URL normalized (gp): {url[:60]}... → {normalized}")
         return normalized
 
-    # ✅ Agar kuch match nahi hua to original return karo
     logger.warning(f"⚠️ Could not normalize URL: {url[:80]}...")
     return url
 
@@ -181,12 +170,7 @@ async def _get_valid_access_token(
 # ✅ FIXED v10: Store default markup + tax
 # ============================================
 def _get_store_markup(store: ShopifyStore) -> tuple:
-    """
-    Store se saved markup + country + tax return karo.
-    Returns: (markup_value, markup_type, extra_percent, tax_rate)
-
-    Agar store nahi hai, to (None, None, 0.0, 0.0) return karega.
-    """
+    """Store se saved markup + country + tax return karo."""
     if not store:
         return None, None, 0.0, 0.0
 
@@ -481,13 +465,10 @@ def _verify_parent_match(
     existing_parent: Product,
     new_data: dict,
 ) -> bool:
-    """
-    Verify karo ki existing_parent actually same product family ka hai.
-    """
+    """Verify karo ki existing_parent actually same product family ka hai."""
     if not existing_parent:
         return False
 
-    # Categories check
     existing_cats = set(existing_parent.categories or [])
     new_cats = set(new_data.get("categories") or [])
 
@@ -500,7 +481,6 @@ def _verify_parent_match(
             )
             return False
 
-    # Brand check
     existing_brand = (existing_parent.brand or "").strip().lower()
     new_brand = (new_data.get("brand") or "").strip().lower()
 
@@ -1026,11 +1006,8 @@ async def push_product_to_shopify(
 
 
 # ============================================
-# ✅ FIXED v11: ADD PRODUCT FROM SHOPIFY APP
-# + URL normalize karo
-# + Token exchange fail → existing token use karo
-# + Parent verify karo
-# + tax_rate store se lo
+# ✅ FIXED v12: ADD PRODUCT FROM SHOPIFY APP
+# + Out-of-stock product add hone se roko
 # ============================================
 @router.post("/app/add-product")
 async def add_product_from_shopify_app(
@@ -1149,6 +1126,15 @@ async def add_product_from_shopify_app(
 
     asin = data["asin"]
     parent_asin = data.get("parent_asin")
+
+    # ✅ FIXED v12: Out-of-stock product add hone se roko
+    is_available = data.get("is_available", False)
+    if not is_available:
+        logger.warning(f"⚠️ ASIN={asin}: Product is OUT OF STOCK on Amazon")
+        raise HTTPException(
+            status_code=400,
+            detail="Product is currently OUT OF STOCK on Amazon. Cannot add."
+        )
 
     existing = db.query(Product).filter(Product.asin == asin).first()
     if existing:

@@ -4,6 +4,7 @@
 # + ✅ NAYA: Weight mapping to Shopify variant
 # + ✅ NAYA v2: Compare-at price store settings se aata hai
 # + ✅ NAYA v3: 4 rule types support (none/amazon/fixed/percent)
+# + ✅ FIXED v4: stock_qty = 100 bug hataya (Bright Data se jo aaye wahi set ho)
 # ============================================
 
 import logging
@@ -255,7 +256,7 @@ def _build_inventory_item(product_data: dict, sku: str) -> dict:
 
 
 # ============================================
-# ✅ PRODUCT CREATE (SIMPLE)
+# ✅ FIXED v4: PRODUCT CREATE (SIMPLE)
 # ============================================
 async def create_shopify_product(
     shop: str,
@@ -455,9 +456,12 @@ async def create_shopify_product(
             )
 
         if inventory_item_id:
+            # ✅ FIXED v4: Bright Data ka stock_quantity seedha use karo
             stock_qty = product_data.get("stock_quantity", 0)
-            if stock_qty == 0 and is_available:
-                stock_qty = 100
+            
+            # ❌ YE HATA DIYA:
+            # if stock_qty == 0 and is_available:
+            #     stock_qty = 100
 
             await set_inventory_quantity(
                 shop=shop,
