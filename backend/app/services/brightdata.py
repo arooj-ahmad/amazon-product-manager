@@ -1,8 +1,7 @@
 # ============================================
 # app/services/brightdata.py
 # Bright Data Dataset API se data fetch karne ke liye
-# + ✅ FIX: Web Unlocker hata diya, sirf Dataset API use ho rahi hai
-# + ✅ Shopify: Sirf feature_bullets (Top Highlights/Description) show honge
+# + ✅ FIX: Description ab show hogi agar bullets na hon
 # ============================================
 
 import logging
@@ -294,7 +293,7 @@ def clean_description(description: str) -> str:
 # ============================================
 async def fetch_product_from_brightdata(amazon_url: str) -> dict:
     
-    # ✅ SIRF BRIGHT DATA DATASET API (Web Scraper hata diya gaya hai)
+    # ✅ SIRF BRIGHT DATA DATASET API
     api_url = (
         f"{settings.BRIGHT_DATA_API_URL}"
         f"?dataset_id={settings.BRIGHT_DATA_DATASET_ID}"
@@ -361,21 +360,17 @@ async def fetch_product_from_brightdata(amazon_url: str) -> dict:
     # =========================================================
     feature_bullets = []
     
-    # 1. Pehle check karein agar API direct feature_bullets bhej rahi hai
     if isinstance(raw.get("feature_bullets"), list):
         feature_bullets = [str(b).strip() for b in raw["feature_bullets"] if b]
         
-    # 2. Agar nahi, toh product_details (Top Highlights) se bullets banayein
     if not feature_bullets:
         for item in product_details:
             if isinstance(item, dict) and item.get("type") and item.get("value"):
                 field_type = item["type"]
                 field_value = item["value"]
-                # Sirf important cheezein uthayen
                 if field_type.lower() in ["fabric type", "care instructions", "origin", "closure type", "item weight", "item dimensions", "material", "color", "size", "theme", "special feature", "operation mode"]:
                     feature_bullets.append(f"<b>{field_type}:</b> {field_value}")
 
-    # 3. Agar description text maujood hai, toh usko bhi shamil karein
     desc_text = raw.get("description", "") or raw.get("product_description", "")
     if desc_text:
         if "About this item" in desc_text:
@@ -392,7 +387,6 @@ async def fetch_product_from_brightdata(amazon_url: str) -> dict:
                 if line and len(line) > 10:
                     feature_bullets.append(line)
 
-    # 4. Agar abhi bhi kuch nahi mila
     if not feature_bullets:
         feature_bullets = ["Check Amazon for full product details."]
 
@@ -407,8 +401,9 @@ async def fetch_product_from_brightdata(amazon_url: str) -> dict:
         "image_url": main_image,
         "images": unique_images,
         "specifications": specs,
-        "description": "", # Shopify paragraph description NAHI jayegi
-        "feature_bullets": feature_bullets, # Sirf yahi bullets jayengi
+        # ✅ YAHAN CHANGE KIYA HAI: Ab description show hogi
+        "description": raw.get("description", "") or raw.get("product_description", ""),
+        "feature_bullets": feature_bullets,
         "availability": str(availability_text) if availability_text else "In Stock",
         "is_available": is_available,
         "stock_quantity": stock_quantity,

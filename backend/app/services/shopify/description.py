@@ -1,7 +1,7 @@
 # app/services/shopify/description.py
 # Product description builder with metafields HTML table
 # + ✅ FIXED: Amazon Price aur Best Sellers Rank exclude
-# + ✅ FIXED: Sirf feature_bullets (About this item) show, description paragraph NAHI
+# + ✅ FIXED: Agar bullets nahi hain, toh Description paragraph show karega
 # + ✅ FIXED: Bullets ke andar <b> tags allow kiye taake bold show hon
 
 import logging
@@ -21,14 +21,13 @@ def _build_bullets_html(feature_bullets) -> str:
         text = str(bullet).strip()
         
         # ✅ SAFETY CHECK: Agar default fallback text ho toh skip karein
-        if "Check Amazon for full product details" in text:
+        if "Check Amazon for full product details" in text or "No feature bullets available" in text:
             continue
             
         if not text or len(text) < 3:
             continue
             
         # ✅ FIXED: Yahan se HTML escape hata diya hai taake <b> tags kaam karein
-        # Sirf & ko escape kar rahe hain taake text theek rahe
         text = text.replace("&", "&amp;")
         
         clean_bullets.append(text)
@@ -48,11 +47,29 @@ def _build_bullets_html(feature_bullets) -> str:
 
 
 def _build_description_with_metafields(product_data: dict) -> str:
-    """About this item bullets + SAARE metafields HTML table (description paragraph NAHI)."""
-    # ✅ FIXED: description paragraph IGNORE karo, sirf feature_bullets use karo
+    """About this item bullets + Description + Metafields HTML table."""
+    
+    # 1. Pehle check karein ke bullets mili hain ya nahi
     feature_bullets = product_data.get("feature_bullets", []) or []
     description = _build_bullets_html(feature_bullets)
 
+    # 2. ✅ FIXED: Agar bullets nahi mili, toh Description (paragraph) show karein
+    raw_description = product_data.get("description", "")
+    if not description and raw_description:
+        safe_desc = (
+            str(raw_description)
+            .replace("&", "&amp;")
+            .replace("<", "&lt;")
+            .replace(">", "&gt;")
+            .replace("\n", "<br>")
+        )
+        description += (
+            '<h3 style="font-size:18px;font-weight:700;margin-bottom:12px;">'
+            '📄 Description</h3>'
+            f'<div style="margin-bottom:20px;line-height:1.6;">{safe_desc}</div>'
+        )
+
+    # 3. Metafields Table
     FIELD_LABELS = {
         "asin": "ASIN", "brand": "Brand", "manufacturer": "Manufacturer",
         "rating": "Rating", "reviews_count": "Reviews",
@@ -116,7 +133,6 @@ def _build_description_with_metafields(product_data: dict) -> str:
         if not val_str or val_str == "None":
             continue
 
-        # Table ke andar wale text ko safely escape karna zaroori hai
         val_str = (
             val_str.replace("&", "&amp;")
             .replace("<", "&lt;")
