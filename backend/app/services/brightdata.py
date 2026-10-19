@@ -1,6 +1,6 @@
 # ============================================
 # app/services/brightdata.py
-# + ✅ FINAL FIX: Sirf • (dot) se start hone wale bullets extract honge
+# + ✅ FINAL: Sirf • se start hone wale bullets extract honge
 # ============================================
 
 import logging
@@ -51,6 +51,7 @@ def parse_package_dimensions(package_dims_str: str) -> dict:
     result = {}
     if not package_dims_str or not isinstance(package_dims_str, str):
         return result
+
     s = package_dims_str.strip()
     if not s:
         return result
@@ -297,13 +298,14 @@ def parse_tags(raw: dict, categories: list[str]) -> list[str]:
 
 def clean_description(description: str) -> str:
     if not description or not isinstance(description, str): return ""
+    
     garbage_patterns = [
         r"[>›»]\s*See\s+more\s+product\s+details\.?", r"[>›»]\s*See\s+more\.?", r"[>›»]\s*Read\s+more\.?",
         r"[>›»]\s*Show\s+more\.?", r"[>›»]\s*View\s+more\.?", r"See\s+more\s+product\s+details\.?",
         r"Read\s+more\s+product\s+details\.?", r"Report\s+incorrect\s+product\s+information\.?",
         r"Show\s+more\s+product\s+details\.?", r"View\s+more\s+product\s+details\.?",
         r"\bSee\s+more\b", r"\bRead\s+more\b", r"\bShow\s+more\b", r"\bView\s+more\b",
-        r"The video showcases.*?(?=[A-Z]|$)", # Video wala kachra hata diya
+        r"The video showcases.*?(?=[A-Z]|$)", # Video wala kachra
     ]
     for pattern in garbage_patterns:
         description = re.sub(pattern, "", description, flags=re.IGNORECASE | re.DOTALL)
@@ -343,17 +345,15 @@ def parse_feature_bullets(raw: dict) -> list[str]:
             if text and len(text) > 10: bullets.append(text)
         if bullets: return bullets
 
-    # 3. ✅ NAYA: Sirf • (dot) se start hone wale text ko extract karein
+    # 3. ✅ NAYA: Extract ONLY text starting with • (bullet symbol)
     desc = str(raw.get("description") or "")
     
-    # Check if there is a bullet symbol • in the text
     if "•" in desc:
-        # Split text on the bullet symbol
+        # Split by bullet symbol
         parts = re.split(r'•', desc)
         for p in parts:
             clean_p = p.strip()
-            # Ignore the first part (which comes before the first bullet)
-            # and only take parts that are longer than 30 chars
+            # Add only if it's a proper text and not the video garbage
             if len(clean_p) > 30 and not clean_p.lower().startswith("the video"):
                 bullets.append(clean_p)
         if bullets: return bullets
@@ -365,7 +365,6 @@ def parse_feature_bullets(raw: dict) -> list[str]:
 # BRIGHT DATA API CALL
 # ============================================
 async def fetch_product_from_brightdata(amazon_url: str) -> dict:
-    # ✅ format=raw nahi lagana (400 error fix)
     api_url = (
         f"{settings.BRIGHT_DATA_API_URL}"
         f"?dataset_id={settings.BRIGHT_DATA_DATASET_ID}"
