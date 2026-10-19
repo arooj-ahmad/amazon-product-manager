@@ -1,6 +1,7 @@
 # ============================================
 # app/services/brightdata.py
-# + ✅ FINAL FIX: Direct Amazon HTML Scraping for Bullets & Clean Description
+# + ✅ FIXED: 400 Bad Request solved (format=raw removed)
+# + ✅ SMART BULLETS: JSON + HTML fallback
 # ============================================
 
 import logging
@@ -299,7 +300,6 @@ def parse_tags(raw: dict, categories: list[str]) -> list[str]:
 def clean_description(description: str) -> str:
     if not description or not isinstance(description, str): return ""
     
-    # ✅ FIXED: Kachra saaf karne ke liye aur patterns add kiye
     garbage_patterns = [
         r"[>›»]\s*See\s+more\s+product\s+details\.?", r"[>›»]\s*See\s+more\.?", r"[>›»]\s*Read\s+more\.?",
         r"[>›»]\s*Show\s+more\.?", r"[>›»]\s*View\s+more\.?", r"See\s+more\s+product\s+details\.?",
@@ -319,47 +319,51 @@ def clean_description(description: str) -> str:
 
 
 # ============================================
-# ✅ NAYA: Direct Amazon Se Bullets Fetch Karne Ka Function
+# ✅ SMART BULLETS EXTRACTION
 # ============================================
-async def fetch_amazon_html_bullets(amazon_url: str) -> list[str]:
-    """Amazon ke HTML page se 'About this item' ke bullets nikalta hai."""
-    headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-        "Accept-Language": "en-US,en;q=0.9",
-    }
+def parse_feature_bullets(raw: dict) -> list[str]:
+    bullets = []
     
-    try:
-        async with httpx.AsyncClient(timeout=20.0, follow_redirects=True) as client:
-            response = await client.get(amazon_url, headers=headers)
-            if response.status_code != 200:
-                return []
-            
-            html_content = response.text
-            
-            match = re.search(r'<div id="feature-bullets".*?>(.*?)</div>', html_content, re.DOTALL | re.IGNORECASE)
-            if not match:
-                match = re.search(r'id="feature-bullets"(.*?)</ul>', html_content, re.DOTALL | re.IGNORECASE)
-            
-            if match:
-                bullets_html = match.group(0) if match.lastindex is None else match.group(1)
-                li_matches = re.findall(r'<li.*?>(.*?)</li>', bullets_html, re.DOTALL | re.IGNORECASE)
-                
-                bullets = []
-                for li in li_matches:
-                    text = re.sub(r'<[^>]+>', '', li).strip()
-                    if text and len(text) > 10:
-                        bullets.append(text)
-                return bullets
-    except Exception as e:
-        logger.error(f"Error fetching direct HTML bullets: {e}")
-        
-    return []
+    # 1. Check Standard JSON Keys
+    possible_keys = ["feature_bullets", "feature-bullets", "featureBullets", "about_this_item", "bullets"]
+    for key in possible_keys:
+        raw_bullets = raw.get(key)
+        if isinstance(raw_bullets, list) and raw_bullets:
+            for b in raw_bullets:
+                if isinstance(b, str) and b.strip():
+                    bullets.append(b.strip())
+                elif isinstance(b, dict) and b.get("text"):
+                    bullets.append(str(b["text"]).strip())
+            if bullets: return bullets
+
+    # 2. Check inside HTML (Agar raw mein koi string me <ul><li> hai)
+    for key, val in raw.items():
+        if isinstance(val, str) and ("<ul>" in val or "<li>" in val):
+            li_matches = re.findall(r'<li.*?>(.*?)</li>', val, re.DOTALL | re.IGNORECASE)
+            for li in li_matches:
+                text = re.sub(r'<[^>]+>', '', li).strip()
+                if text and len(text) > 10: 
+                    bullets.append(text)
+            if bullets: return bullets
+
+    # 3. Fallback: Specs ko bullets banayein
+    specs = {}
+    if isinstance(raw.get("product_details"), list):
+        for item in raw["product_details"]:
+            if isinstance(item, dict) and item.get("type") and item.get("value"):
+                specs[item["type"]] = str(item["value"]).strip()
+    if specs:
+        for k, v in list(specs.items())[:5]:
+            bullets.append(f"{k}: {v}")
+
+    return bullets
 
 
 # ============================================
 # BRIGHT DATA API CALL
 # ============================================
 async def fetch_product_from_brightdata(amazon_url: str) -> dict:
+    # ❌ &format=raw hata diya hai (400 error fix)
     api_url = (
         f"{settings.BRIGHT_DATA_API_URL}"
         f"?dataset_id={settings.BRIGHT_DATA_DATASET_ID}"
@@ -386,8 +390,9 @@ async def fetch_product_from_brightdata(amazon_url: str) -> dict:
     if not asin: raise BrightDataError("ASIN nahi mila")
 
     parent_asin = validate_parent_asin(raw.get("parent_asin"), asin)
-    is_variation = bool(parent_asin) # ✅ FIXED
+    is_variation = bool(parent_asin)
 
+    # Variations
     variations = []
     if isinstance(raw.get("variations"), list):
         for v in raw.get("variations"):
@@ -400,6 +405,7 @@ async def fetch_product_from_brightdata(amazon_url: str) -> dict:
             if isinstance(attr, dict) and attr.get("name") and attr.get("value"):
                 variant_attributes.append({"name": str(attr["name"]).strip(), "value": str(attr["value"]).strip()})
 
+    # Images
     images_list = raw.get("images") or []
     main_image = raw.get("image_url") or raw.get("image")
     unique_images = [main_image] if main_image else []
@@ -421,16 +427,8 @@ async def fetch_product_from_brightdata(amazon_url: str) -> dict:
 
     cleaned_description = clean_description(raw.get("description"))
     
-    # ✅ Direct Amazon se bullets fetch karein
-    feature_bullets = await fetch_amazon_html_bullets(amazon_url)
-    
-    # Agar fail ho, toh backup JSON se try karein
-    if not feature_bullets:
-        possible_keys = ["feature_bullets", "feature-bullets", "about_this_item"]
-        for key in possible_keys:
-            if isinstance(raw.get(key), list):
-                feature_bullets = [str(b).strip() for b in raw.get(key) if b]
-                break
+    # ✅ Smart Bullets call karein
+    feature_bullets = parse_feature_bullets(raw)
 
     categories = parse_categories(raw)
 
