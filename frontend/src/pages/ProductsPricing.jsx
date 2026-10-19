@@ -9,6 +9,7 @@
 // + ✅ FIXED: Circle spinner loader
 // + ✅ FIXED: Tax Rate not saving in state on reload
 // + ✅ FIXED: Bulk tax rate now loads from store default
+// + ✅ FIXED: Refresh product list after individual save
 // ============================================
 
 import { useState, useEffect } from 'react'
@@ -134,7 +135,6 @@ export default function ProductsPricing() {
             extra_percent: defRes.data.extra_percent
               ? String(defRes.data.extra_percent)
               : '',
-            // ✅ FIXED: Bulk tax rate ab store default se aayega (0 nahi)
             tax_rate: defRes.data.tax_rate ? String(defRes.data.tax_rate) : '0',
           })
         }
@@ -422,6 +422,7 @@ export default function ProductsPricing() {
                     onSaveStart={() => setSavingId(p.id)}
                     onSaveEnd={() => setSavingId(null)}
                     onMessage={setMessage}
+                    loadProducts={loadProducts} // ✅ ADDED: Pass loadProducts
                   />
                 ))}
               </tbody>
@@ -443,6 +444,7 @@ function ProductRow({
   onSaveStart,
   onSaveEnd,
   onMessage,
+  loadProducts, // ✅ ADDED: Receive loadProducts
 }) {
   const [markup, setMarkup] = useState(
     product.markup != null && product.markup > 0 ? String(product.markup) : ''
@@ -511,6 +513,10 @@ function ProductRow({
         type: 'success',
         text: '✅ Pricing saved! (Shopify also updated)',
       })
+      
+      // ✅ ADDED: Save hone ke baad fresh data load karein
+      if (loadProducts) await loadProducts(storeId);
+
     } catch (err) {
       onMessage({ type: 'error', text: `❌ ${err.message}` })
     } finally {
