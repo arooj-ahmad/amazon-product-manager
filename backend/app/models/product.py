@@ -8,6 +8,7 @@
 # + ✅ NAYA: categories (Collections) + tags (Shopify tags)
 # + ✅ NAYA: extra_percent (Fixed + Percent markup type)
 # + ✅ FIXED: markup default 0.0 (user khud set karega)
+# + ✅ FIXED: tax_rate added to model
 # ============================================
 
 from sqlalchemy import (
@@ -110,6 +111,9 @@ class Product(Base):
     # "both" (Fixed + Percent) type ke liye
     # Example: markup=2.0, extra_percent=10 → (amazon + 2) × 1.10
     extra_percent = Column(Float, default=0.0, nullable=False)
+    
+    # ✅ YEH NAYI LINE ADD KI HAI
+    tax_rate = Column(Float, default=0.0, nullable=False)
 
     # ----------------------------------------
     # Manual Override
