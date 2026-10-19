@@ -1,6 +1,6 @@
 # ============================================
 # app/services/brightdata.py
-# + ✅ FINAL: Sirf • se start hone wale bullets extract honge
+# + ✅ FINAL FIX: Direct Amazon HTML Scraping for "About this item"
 # ============================================
 
 import logging
@@ -305,7 +305,7 @@ def clean_description(description: str) -> str:
         r"Read\s+more\s+product\s+details\.?", r"Report\s+incorrect\s+product\s+information\.?",
         r"Show\s+more\s+product\s+details\.?", r"View\s+more\s+product\s+details\.?",
         r"\bSee\s+more\b", r"\bRead\s+more\b", r"\bShow\s+more\b", r"\bView\s+more\b",
-        r"The video showcases.*?(?=[A-Z]|$)", # Video wala kachra
+        r"The video showcases.*?(?=[A-Z]|$)", 
     ]
     for pattern in garbage_patterns:
         description = re.sub(pattern, "", description, flags=re.IGNORECASE | re.DOTALL)
@@ -318,47 +318,42 @@ def clean_description(description: str) -> str:
 
 
 # ============================================
-# ✅ FINAL BULLETS EXTRACTION (Sirf • se shuru hone wale)
+# ✅ NAYA: Direct Amazon Se Bullets Fetch Karne Ka Function
 # ============================================
-def parse_feature_bullets(raw: dict) -> list[str]:
-    bullets = []
+async def fetch_amazon_html_bullets(amazon_url: str) -> list[str]:
+    """Amazon ke HTML page se 'About this item' ke bullets nikalta hai."""
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        "Accept-Language": "en-US,en;q=0.9",
+    }
     
-    # 1. Check Standard JSON Keys
-    possible_keys = ["feature_bullets", "feature-bullets", "featureBullets", "about_this_item", "bullets"]
-    for key in possible_keys:
-        raw_bullets = raw.get(key)
-        if isinstance(raw_bullets, list) and raw_bullets:
-            for b in raw_bullets:
-                if isinstance(b, str) and b.strip():
-                    bullets.append(b.strip())
-                elif isinstance(b, dict) and b.get("text"):
-                    bullets.append(str(b["text"]).strip())
-            if bullets: return bullets
-
-    # 2. Check inside HTML
-    html_content = str(raw.get("description") or "")
-    match = re.search(r'<div id="feature-bullets".*?>(.*?)</div>', html_content, re.DOTALL | re.IGNORECASE)
-    if match:
-        li_matches = re.findall(r'<li.*?>(.*?)</li>', match.group(1), re.DOTALL | re.IGNORECASE)
-        for li in li_matches:
-            text = re.sub(r'<[^>]+>', '', li).strip()
-            if text and len(text) > 10: bullets.append(text)
-        if bullets: return bullets
-
-    # 3. ✅ NAYA: Extract ONLY text starting with • (bullet symbol)
-    desc = str(raw.get("description") or "")
-    
-    if "•" in desc:
-        # Split by bullet symbol
-        parts = re.split(r'•', desc)
-        for p in parts:
-            clean_p = p.strip()
-            # Add only if it's a proper text and not the video garbage
-            if len(clean_p) > 30 and not clean_p.lower().startswith("the video"):
-                bullets.append(clean_p)
-        if bullets: return bullets
-
-    return bullets
+    try:
+        async with httpx.AsyncClient(timeout=20.0, follow_redirects=True) as client:
+            response = await client.get(amazon_url, headers=headers)
+            if response.status_code != 200:
+                return []
+            
+            html_content = response.text
+            
+            # Exact ID dhoondein jo aapne screenshot mein dikhayi
+            match = re.search(r'<div id="feature-bullets".*?>(.*?)</div>', html_content, re.DOTALL | re.IGNORECASE)
+            if not match:
+                match = re.search(r'id="feature-bullets"(.*?)</ul>', html_content, re.DOTALL | re.IGNORECASE)
+            
+            if match:
+                bullets_html = match.group(0) if match.lastindex is None else match.group(1)
+                li_matches = re.findall(r'<li.*?>(.*?)</li>', bullets_html, re.DOTALL | re.IGNORECASE)
+                
+                bullets = []
+                for li in li_matches:
+                    text = re.sub(r'<[^>]+>', '', li).strip()
+                    if text and len(text) > 10:
+                        bullets.append(text)
+                return bullets
+    except Exception as e:
+        logger.error(f"Error fetching direct HTML bullets: {e}")
+        
+    return []
 
 
 # ============================================
@@ -393,7 +388,6 @@ async def fetch_product_from_brightdata(amazon_url: str) -> dict:
     parent_asin = validate_parent_asin(raw.get("parent_asin"), asin)
     is_variation = bool(parent_asin)
 
-    # Variations
     variations = []
     if isinstance(raw.get("variations"), list):
         for v in raw.get("variations"):
@@ -406,7 +400,6 @@ async def fetch_product_from_brightdata(amazon_url: str) -> dict:
             if isinstance(attr, dict) and attr.get("name") and attr.get("value"):
                 variant_attributes.append({"name": str(attr["name"]).strip(), "value": str(attr["value"]).strip()})
 
-    # Images
     images_list = raw.get("images") or []
     main_image = raw.get("image_url") or raw.get("image")
     unique_images = [main_image] if main_image else []
@@ -427,7 +420,18 @@ async def fetch_product_from_brightdata(amazon_url: str) -> dict:
                 if item["type"] not in specs: specs[item["type"]] = str(item["value"]).strip()
 
     cleaned_description = clean_description(raw.get("description"))
-    feature_bullets = parse_feature_bullets(raw)
+    
+    # ✅ Direct Amazon se bullets fetch karein
+    feature_bullets = await fetch_amazon_html_bullets(amazon_url)
+    
+    # Agar direct fetch fail ho jaye (block ho jaye), toh Bright Data ke JSON se try karein
+    if not feature_bullets:
+        possible_keys = ["feature_bullets", "feature-bullets", "about_this_item"]
+        for key in possible_keys:
+            if isinstance(raw.get(key), list):
+                feature_bullets = [str(b).strip() for b in raw.get(key) if b]
+                break
+
     categories = parse_categories(raw)
 
     return {
