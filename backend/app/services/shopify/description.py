@@ -2,6 +2,7 @@
 # Product description builder with metafields HTML table
 # + ✅ FIXED: Amazon Price aur Best Sellers Rank exclude
 # + ✅ FIXED: Sirf feature_bullets (About this item) show, description paragraph NAHI
+# + ✅ FIXED: Bullets ke andar <b> tags allow kiye taake bold show hon
 
 import logging
 
@@ -26,12 +27,10 @@ def _build_bullets_html(feature_bullets) -> str:
         if not text or len(text) < 3:
             continue
             
-        # HTML escape
-        text = (
-            text.replace("&", "&amp;")
-            .replace("<", "&lt;")
-            .replace(">", "&gt;")
-        )
+        # ✅ FIXED: Yahan se HTML escape hata diya hai taake <b> tags kaam karein
+        # Sirf & ko escape kar rahe hain taake text theek rahe
+        text = text.replace("&", "&amp;")
+        
         clean_bullets.append(text)
 
     if not clean_bullets:
@@ -117,6 +116,7 @@ def _build_description_with_metafields(product_data: dict) -> str:
         if not val_str or val_str == "None":
             continue
 
+        # Table ke andar wale text ko safely escape karna zaroori hai
         val_str = (
             val_str.replace("&", "&amp;")
             .replace("<", "&lt;")

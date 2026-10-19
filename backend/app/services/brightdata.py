@@ -1,8 +1,8 @@
 # ============================================
 # app/services/brightdata.py
 # Bright Data Dataset API se data fetch karne ke liye
-# + ✅ FIX: Web Unlocker hata diya, Dataset API ke 'description' se bullets nikal rahe hain
-# + ✅ Shopify: Sirf feature_bullets show honge, description nahi
+# + ✅ FIX: Web Unlocker hata diya, sirf Dataset API use ho rahi hai
+# + ✅ Shopify: Sirf feature_bullets (Top Highlights/Description) show honge
 # ============================================
 
 import logging
@@ -357,33 +357,42 @@ async def fetch_product_from_brightdata(amazon_url: str) -> dict:
     categories = parse_categories(raw)
 
     # =========================================================
-    # ✅ SMART HACK: Dataset API ke 'description' se About this item nikalna
+    # ✅ SMART HACK: Dataset API se Best Possible Bullets nikalna
     # =========================================================
     feature_bullets = []
     
-    # 1. Dataset se description text uthayen
+    # 1. Pehle check karein agar API direct feature_bullets bhej rahi hai
+    if isinstance(raw.get("feature_bullets"), list):
+        feature_bullets = [str(b).strip() for b in raw["feature_bullets"] if b]
+        
+    # 2. Agar nahi, toh product_details (Top Highlights) se bullets banayein
+    if not feature_bullets:
+        for item in product_details:
+            if isinstance(item, dict) and item.get("type") and item.get("value"):
+                field_type = item["type"]
+                field_value = item["value"]
+                # Sirf important cheezein uthayen
+                if field_type.lower() in ["fabric type", "care instructions", "origin", "closure type", "item weight", "item dimensions", "material", "color", "size", "theme", "special feature", "operation mode"]:
+                    feature_bullets.append(f"<b>{field_type}:</b> {field_value}")
+
+    # 3. Agar description text maujood hai, toh usko bhi shamil karein
     desc_text = raw.get("description", "") or raw.get("product_description", "")
-    
     if desc_text:
-        # 2. Check karein agar "About this item" isme shamil hai
         if "About this item" in desc_text:
-            # "About this item" ke baad ka text alag karein
             bullets_text = desc_text.split("About this item")[-1].strip()
-            # Text ko newline ya bullet symbols se tod kar list banayein
             lines = re.split(r'\n|•|\u2022|\*', bullets_text)
             for line in lines:
                 line = line.strip()
                 if line and len(line) > 5:
                     feature_bullets.append(line)
         else:
-            # Agar "About this item" nahi mila, toh poore description ko lines mein tod dein
             lines = desc_text.split('\n')
             for line in lines:
                 line = line.strip()
                 if line and len(line) > 10:
                     feature_bullets.append(line)
 
-    # 3. Agar phir bhi kuch nahi mila, toh default message
+    # 4. Agar abhi bhi kuch nahi mila
     if not feature_bullets:
         feature_bullets = ["Check Amazon for full product details."]
 
