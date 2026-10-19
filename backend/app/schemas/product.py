@@ -4,6 +4,7 @@
 # + Out of Stock tracking
 # + ✅ NAYA: extra_percent support (Fixed + Percent)
 # + ✅ FIXED: markup default 0.0 (user khud set karega)
+# + ✅ FIXED: tax_rate added to all schemas
 # ============================================
 
 from datetime import datetime
@@ -32,6 +33,12 @@ class ProductBase(BaseModel):
     extra_percent: Optional[float] = Field(
         default=0.0, ge=0,
         description="Extra % for 'both' type",
+    )
+
+    # ✅ YEH NAYI LINE ADD KI HAI
+    tax_rate: Optional[float] = Field(
+        default=0.0, ge=0,
+        description="Tax rate percentage",
     )
 
     # ✅ Stock Tracking
@@ -89,6 +96,11 @@ class ProductCreate(BaseModel):
         default=0.0, ge=0, description="Extra % for 'both' type"
     )
 
+    # ✅ YEH NAYI LINE ADD KI HAI
+    tax_rate: Optional[float] = Field(
+        default=0.0, ge=0, description="Tax rate percentage"
+    )
+
 
 # ============================================
 # UPDATE SCHEMA
@@ -104,6 +116,9 @@ class ProductUpdate(BaseModel):
     markup: Optional[float] = Field(None, ge=0)
     markup_type: Optional[Literal["fixed", "percent", "both"]] = None
     extra_percent: Optional[float] = Field(None, ge=0)
+    
+    # ✅ YEH NAYI LINE ADD KI HAI
+    tax_rate: Optional[float] = Field(None, ge=0)
 
     # ✅ Stock Tracking (admin manually bhi change kar sakta hai)
     availability: Optional[str] = None
@@ -127,6 +142,12 @@ class MarkupUpdate(BaseModel):
     extra_percent: Optional[float] = Field(
         default=0.0, ge=0,
         description="Extra % — only used when markup_type='both'",
+    )
+    
+    # ✅ YEH NAYI LINE ADD KI HAI
+    tax_rate: Optional[float] = Field(
+        default=0.0, ge=0,
+        description="Tax rate percentage (e.g., 10 for 10%)",
     )
 
 
