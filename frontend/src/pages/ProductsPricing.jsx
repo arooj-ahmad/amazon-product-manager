@@ -7,6 +7,8 @@
 // + Search + Products table
 // + ✅ FIXED: Navigation via window.location.hash
 // + ✅ FIXED: Circle spinner loader
+// + ✅ FIXED: Tax Rate not saving in state on reload
+// + ✅ FIXED: Bulk tax rate now loads from store default
 // ============================================
 
 import { useState, useEffect } from 'react'
@@ -15,7 +17,7 @@ import {
   bulkUpdatePricing,
   getStoreIdByDomain,
 } from '../api/pricing'
-import Loader from '../components/Loader'   // ✅ NEW
+import Loader from '../components/Loader'
 
 const API_URL =
   (import.meta.env.VITE_API_URL || '').trim() ||
@@ -115,7 +117,7 @@ export default function ProductsPricing() {
 
       await loadProducts(sid)
 
-      // Load default markup
+      // Load default markup + tax
       try {
         const defRes = await safeFetch(
           `${API_URL}/api/markup/store-default?shop_domain=${encodeURIComponent(domain)}`
@@ -132,7 +134,8 @@ export default function ProductsPricing() {
             extra_percent: defRes.data.extra_percent
               ? String(defRes.data.extra_percent)
               : '',
-            tax_rate: '0',
+            // ✅ FIXED: Bulk tax rate ab store default se aayega (0 nahi)
+            tax_rate: defRes.data.tax_rate ? String(defRes.data.tax_rate) : '0',
           })
         }
       } catch (err) {
@@ -453,8 +456,10 @@ function ProductRow({
       : ''
   )
 
-  const [taxRate, setTaxRate] = useState('0')
-
+  // ✅ FIXED: Ab tax rate database se aayega, na ke hamesha 0
+  const [taxRate, setTaxRate] = useState(
+    product.tax_rate != null ? String(product.tax_rate) : '0'
+  )
 
   const calc = (() => {
     const amazon = parseFloat(product.amazon_price) || 0
