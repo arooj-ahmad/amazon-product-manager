@@ -8,8 +8,7 @@
 // + ✅ FIXED: Navigation via window.location.hash
 // + ✅ FIXED: Circle spinner loader
 // + ✅ FIXED: Tax Rate not saving in state on reload
-// + ✅ FIXED: Bulk tax rate now loads from store default
-// + ✅ FIXED: Force state update on product data change
+// + ✅ FIXED: Bulk data saved in Local Storage (no data loss)
 // ============================================
 
 import { useState, useEffect } from 'react'
@@ -91,13 +90,25 @@ export default function ProductsPricing() {
   const [savedDefault, setSavedDefault] = useState(null)
   const [searchTerm, setSearchTerm] = useState('')
 
-  const [bulkData, setBulkData] = useState({
-    markup_type: 'fixed',
-    markup_value: '',
-    extra_percent: '',
-    tax_rate: '0',
+  // ✅ FIXED: Bulk data load from Local Storage
+  const [bulkData, setBulkData] = useState(() => {
+    const saved = localStorage.getItem('bulkPricingData')
+    if (saved) {
+      try { return JSON.parse(saved) } catch (e) {}
+    }
+    return {
+      markup_type: 'fixed',
+      markup_value: '',
+      extra_percent: '',
+      tax_rate: '0',
+    }
   })
   const [bulkLoading, setBulkLoading] = useState(false)
+
+  // ✅ FIXED: Save to Local Storage whenever bulkData changes
+  useEffect(() => {
+    localStorage.setItem('bulkPricingData', JSON.stringify(bulkData))
+  }, [bulkData])
 
   useEffect(() => {
     init()
@@ -127,16 +138,20 @@ export default function ProductsPricing() {
           console.log('✅ Loaded default markup:', defRes.data)
           setSavedDefault(defRes.data)
 
-          setBulkData({
-            markup_type: defRes.data.markup_type || 'fixed',
-            markup_value: defRes.data.markup
-              ? String(defRes.data.markup)
-              : '',
-            extra_percent: defRes.data.extra_percent
-              ? String(defRes.data.extra_percent)
-              : '',
-            tax_rate: defRes.data.tax_rate ? String(defRes.data.tax_rate) : '0',
-          })
+          // ✅ FIXED: Agar Local Storage khali hai, tabhi store default use karein
+          const savedLocal = localStorage.getItem('bulkPricingData')
+          if (!savedLocal) {
+            setBulkData({
+              markup_type: defRes.data.markup_type || 'fixed',
+              markup_value: defRes.data.markup
+                ? String(defRes.data.markup)
+                : '',
+              extra_percent: defRes.data.extra_percent
+                ? String(defRes.data.extra_percent)
+                : '',
+              tax_rate: defRes.data.tax_rate ? String(defRes.data.tax_rate) : '0',
+            })
+          }
         }
       } catch (err) {
         console.warn('⚠️ Could not load default markup:', err)
@@ -420,7 +435,7 @@ export default function ProductsPricing() {
                     onSaveStart={() => setSavingId(p.id)}
                     onSaveEnd={() => setSavingId(null)}
                     onMessage={setMessage}
-                    loadProducts={loadProducts} // ✅ Passed loadProducts
+                    loadProducts={loadProducts}
                   />
                 ))}
               </tbody>
@@ -442,7 +457,7 @@ function ProductRow({
   onSaveStart,
   onSaveEnd,
   onMessage,
-  loadProducts, 
+  loadProducts,
 }) {
   const [markup, setMarkup] = useState('')
   const [type, setType] = useState('fixed')
@@ -772,7 +787,7 @@ const styles = {
     padding: '12px 16px',
     borderRadius: 6,
     fontSize: 14,
-    marginBottom: 16,
+    marginBottom: '16px',
   },
   tableWrap: {
     background: 'white',
