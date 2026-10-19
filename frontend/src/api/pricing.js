@@ -1,7 +1,7 @@
 // ============================================
 // frontend/src/api/pricing.js
 // Pricing (Markup + Country + Tax) API calls
-// + ✅ NAYA: Store ID database se nikaalo
+// + ✅ FIXED: extra_percent aur tax_rate add kiye
 // ============================================
 import axios from 'axios';
 
@@ -37,6 +37,8 @@ export const updatePricing = async (data) => {
   const res = await markupApi.patch(`/${data.product_id}`, {
     markup: data.markup_value,
     markup_type: data.markup_type,
+    extra_percent: data.extra_percent,  // ✅ YEH ADD KAREIN
+    tax_rate: data.tax_rate,            // ✅ YEH ADD KAREIN
   });
   return res.data;
 };
@@ -52,6 +54,8 @@ export const bulkUpdatePricing = async (data) => {
   const res = await markupApi.post(url, {
     markup: data.markup_value,
     markup_type: data.markup_type,
+    extra_percent: data.extra_percent,  // ✅ YEH ADD KAREIN
+    tax_rate: data.tax_rate,            // ✅ YEH ADD KAREIN
   });
   return res.data;
 };
