@@ -1,7 +1,7 @@
 # ============================================
 # app/services/brightdata.py
-# Bright Data API se data fetch karne ke liye
-# + ✅ FINAL FIX: Bright Data Web Scraper API for "About this item"
+# Bright Data Dataset API se data fetch karne ke liye
+# + ✅ FIX: Web Unlocker hata diya, Dataset API ke 'description' se bullets nikal rahe hain
 # + ✅ Shopify: Sirf feature_bullets show honge, description nahi
 # ============================================
 
@@ -290,62 +290,11 @@ def clean_description(description: str) -> str:
 
 
 # ============================================
-# ✅ EXACT BULLETS EXTRACTOR (From HTML)
-# ============================================
-def extract_bullets_from_html(html_content: str) -> list[str]:
-    if not html_content: return []
-    bullets = []
-    
-    match = re.search(r'<div id="feature-bullets".*?>(.*?)</div>', html_content, re.DOTALL | re.IGNORECASE)
-    if match:
-        li_matches = re.findall(r'<li.*?>(.*?)</li>', match.group(1), re.DOTALL | re.IGNORECASE)
-        for li in li_matches:
-            text = re.sub(r'<[^>]+>', '', li).strip()
-            if text and len(text) > 5: 
-                bullets.append(text)
-        if bullets: return bullets
-
-    match = re.search(r'<ul.*?>(.*?)</ul>', html_content, re.DOTALL | re.IGNORECASE)
-    if match:
-        li_matches = re.findall(r'<li.*?>(.*?)</li>', match.group(1), re.DOTALL | re.IGNORECASE)
-        for li in li_matches:
-            text = re.sub(r'<[^>]+>', '', li).strip()
-            if text and len(text) > 5: 
-                bullets.append(text)
-
-    return bullets
-
-
-# ============================================
 # BRIGHT DATA API CALLS
 # ============================================
 async def fetch_product_from_brightdata(amazon_url: str) -> dict:
     
-    # 1. BRIGHT DATA WEB SCRAPER API (For exact HTML)
-    web_scraper_url = "https://api.brightdata.com/request"
-    web_scraper_headers = {
-        "Authorization": f"Bearer {settings.BRIGHT_DATA_API_KEY}",
-        "Content-Type": "application/json",
-    }
-    web_scraper_body = {
-        "zone": settings.BRIGHT_DATA_DATASET_ID, # Yeh aapka zone name hai
-        "url": amazon_url,
-        "format": "raw"
-    }
-
-    feature_bullets = []
-    html_content = ""
-    
-    try:
-        async with httpx.AsyncClient(timeout=60.0) as client:
-            res = await client.post(web_scraper_url, headers=web_scraper_headers, json=web_scraper_body)
-            if res.status_code == 200:
-                html_content = res.text
-                feature_bullets = extract_bullets_from_html(html_content)
-    except Exception as e:
-        logger.warning(f"Web Scraper API failed: {e}")
-
-    # 2. BRIGHT DATA DATASET API (For standard details like Price, Images)
+    # ✅ SIRF BRIGHT DATA DATASET API (Web Scraper hata diya gaya hai)
     api_url = (
         f"{settings.BRIGHT_DATA_API_URL}"
         f"?dataset_id={settings.BRIGHT_DATA_DATASET_ID}"
@@ -407,13 +356,36 @@ async def fetch_product_from_brightdata(amazon_url: str) -> dict:
 
     categories = parse_categories(raw)
 
-    # Agar HTML se bullets nahi mile, toh JSON se fallback check karein
+    # =========================================================
+    # ✅ SMART HACK: Dataset API ke 'description' se About this item nikalna
+    # =========================================================
+    feature_bullets = []
+    
+    # 1. Dataset se description text uthayen
+    desc_text = raw.get("description", "") or raw.get("product_description", "")
+    
+    if desc_text:
+        # 2. Check karein agar "About this item" isme shamil hai
+        if "About this item" in desc_text:
+            # "About this item" ke baad ka text alag karein
+            bullets_text = desc_text.split("About this item")[-1].strip()
+            # Text ko newline ya bullet symbols se tod kar list banayein
+            lines = re.split(r'\n|•|\u2022|\*', bullets_text)
+            for line in lines:
+                line = line.strip()
+                if line and len(line) > 5:
+                    feature_bullets.append(line)
+        else:
+            # Agar "About this item" nahi mila, toh poore description ko lines mein tod dein
+            lines = desc_text.split('\n')
+            for line in lines:
+                line = line.strip()
+                if line and len(line) > 10:
+                    feature_bullets.append(line)
+
+    # 3. Agar phir bhi kuch nahi mila, toh default message
     if not feature_bullets:
-        possible_keys = ["feature_bullets", "feature-bullets", "about_this_item"]
-        for key in possible_keys:
-            if isinstance(raw.get(key), list):
-                feature_bullets = [str(b).strip() for b in raw.get(key) if b]
-                break
+        feature_bullets = ["Check Amazon for full product details."]
 
     return {
         "asin": asin,
@@ -426,10 +398,8 @@ async def fetch_product_from_brightdata(amazon_url: str) -> dict:
         "image_url": main_image,
         "images": unique_images,
         "specifications": specs,
-        # ✅ Shopify: Product Description (paragraph) show NA ho
-        "description": "",
-        # ✅ Shopify: Sirf "About this item" bullets show hon
-        "feature_bullets": feature_bullets,
+        "description": "", # Shopify paragraph description NAHI jayegi
+        "feature_bullets": feature_bullets, # Sirf yahi bullets jayengi
         "availability": str(availability_text) if availability_text else "In Stock",
         "is_available": is_available,
         "stock_quantity": stock_quantity,

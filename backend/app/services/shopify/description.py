@@ -18,8 +18,14 @@ def _build_bullets_html(feature_bullets) -> str:
         if not bullet:
             continue
         text = str(bullet).strip()
+        
+        # ✅ SAFETY CHECK: Agar default fallback text ho toh skip karein
+        if "Check Amazon for full product details" in text:
+            continue
+            
         if not text or len(text) < 3:
             continue
+            
         # HTML escape
         text = (
             text.replace("&", "&amp;")
@@ -51,7 +57,6 @@ def _build_description_with_metafields(product_data: dict) -> str:
     FIELD_LABELS = {
         "asin": "ASIN", "brand": "Brand", "manufacturer": "Manufacturer",
         "rating": "Rating", "reviews_count": "Reviews",
-        # ❌ amazon_price HATA DIYA
         "availability": "Availability",
         "model_number": "Model Number", "item_model_number": "Item Model Number",
         "model_name": "Model Name", "part_number": "Part Number",
@@ -62,7 +67,6 @@ def _build_description_with_metafields(product_data: dict) -> str:
         "theme": "Theme", "department": "Department",
         "country_of_origin": "Country of Origin",
         "date_first_available": "Date First Available",
-        # ❌ best_sellers_rank HATA DIYA
         "language": "Language",
         "reading_age": "Reading Age", "unit_count": "Unit Count",
         "number_of_pieces": "Number of Pieces",
@@ -80,17 +84,14 @@ def _build_description_with_metafields(product_data: dict) -> str:
         "warranty": "Warranty",
     }
 
-    # ✅ FIXED: fields_to_show me se amazon_price aur best_sellers_rank hataye
     fields_to_show = [
         "asin", "brand", "manufacturer",
         "model_number", "model_name", "part_number",
         "rating", "reviews_count",
-        # ❌ amazon_price HATA DIYA
         "availability",
         "color", "size", "material_type", "style_name",
         "item_dimensions", "item_weight", "package_dimensions",
         "department", "country_of_origin", "date_first_available",
-        # ❌ best_sellers_rank HATA DIYA
         "language", "reading_age",
         "unit_count", "number_of_pieces",
         "care_instructions", "closure_type", "fabric_type",
@@ -130,7 +131,6 @@ def _build_description_with_metafields(product_data: dict) -> str:
                 val_str = f"{r} ★ out of 5"
             except (ValueError, TypeError):
                 pass
-        # ❌ amazon_price formatting HATA DIYA
         elif key == "reviews_count":
             try:
                 c = int(float(value))
