@@ -9,7 +9,7 @@
 // + ✅ FIXED: Circle spinner loader
 // + ✅ FIXED: Tax Rate not saving in state on reload
 // + ✅ FIXED: Bulk tax rate now loads from store default
-// + ✅ FIXED: Refresh product list after individual save
+// + ✅ FIXED: Force state update on product data change
 // ============================================
 
 import { useState, useEffect } from 'react'
@@ -206,7 +206,6 @@ export default function ProductsPricing() {
     )
   })
 
-  // ✅ FIXED: Circle spinner loader
   if (loading) {
     return <Loader text="Loading products..." />
   }
@@ -240,7 +239,6 @@ export default function ProductsPricing() {
           </div>
         )}
 
-        {/* Current default markup banner */}
         {savedDefault && (
           <div style={styles.infoBanner}>
             <span style={styles.infoIcon}>💾</span>
@@ -422,7 +420,7 @@ export default function ProductsPricing() {
                     onSaveStart={() => setSavingId(p.id)}
                     onSaveEnd={() => setSavingId(null)}
                     onMessage={setMessage}
-                    loadProducts={loadProducts} // ✅ ADDED: Pass loadProducts
+                    loadProducts={loadProducts} // ✅ Passed loadProducts
                   />
                 ))}
               </tbody>
@@ -444,24 +442,20 @@ function ProductRow({
   onSaveStart,
   onSaveEnd,
   onMessage,
-  loadProducts, // ✅ ADDED: Receive loadProducts
+  loadProducts, 
 }) {
-  const [markup, setMarkup] = useState(
-    product.markup != null && product.markup > 0 ? String(product.markup) : ''
-  )
+  const [markup, setMarkup] = useState('')
+  const [type, setType] = useState('fixed')
+  const [extraPercent, setExtraPercent] = useState('')
+  const [taxRate, setTaxRate] = useState('0')
 
-  const [type, setType] = useState(product.markup_type || 'fixed')
-
-  const [extraPercent, setExtraPercent] = useState(
-    product.extra_percent != null && product.extra_percent > 0
-      ? String(product.extra_percent)
-      : ''
-  )
-
-  // ✅ FIXED: Ab tax rate database se aayega, na ke hamesha 0
-  const [taxRate, setTaxRate] = useState(
-    product.tax_rate != null ? String(product.tax_rate) : '0'
-  )
+  // ✅ FIXED: Force state update jab bhi product prop change ho
+  useEffect(() => {
+    setMarkup(product.markup != null && product.markup > 0 ? String(product.markup) : '')
+    setType(product.markup_type || 'fixed')
+    setExtraPercent(product.extra_percent != null && product.extra_percent > 0 ? String(product.extra_percent) : '')
+    setTaxRate(product.tax_rate != null ? String(product.tax_rate) : '0')
+  }, [product])
 
   const calc = (() => {
     const amazon = parseFloat(product.amazon_price) || 0
@@ -514,7 +508,6 @@ function ProductRow({
         text: '✅ Pricing saved! (Shopify also updated)',
       })
       
-      // ✅ ADDED: Save hone ke baad fresh data load karein
       if (loadProducts) await loadProducts(storeId);
 
     } catch (err) {
