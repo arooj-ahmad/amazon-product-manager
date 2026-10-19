@@ -426,7 +426,7 @@ async def fetch_product_from_brightdata(amazon_url: str) -> dict:
         "image_url": main_image,
         "images": unique_images,
         "specifications": specs,
-        # "description": cleaned_description,
+        "description": cleaned_description,
         "feature_bullets": feature_bullets, # ✅ Exact bullets
         "availability": str(availability_text) if availability_text else "In Stock",
         "is_available": is_available,
