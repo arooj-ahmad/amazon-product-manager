@@ -1,52 +1,77 @@
-# app/services/shopify_product.py
 # ============================================
-# ⚠️ Backward-compatibility wrapper
-# Asli functions app/services/shopify/ package mein hain
-# Isme koi logic nahi — sirf re-export
+# app/services/shopify/__init__.py
+# Package exports — backward compatible
 # ============================================
 
-from app.services.shopify import (  # noqa: F401
-    # Helpers
+# ✅ Helpers (direct module se)
+from app.services.shopify_helpers import (
     shopify_graphql,
     _safe_api_version,
     _build_shopify_tags,
     _get_product_type,
-    # Auth
+)
+
+# ✅ Auth (direct module se)
+from app.services.shopify_auth import (
     build_auth_url,
     verify_hmac,
     verify_id_token,
     exchange_code_for_token,
     exchange_id_token_for_offline_token,
     refresh_shopify_token,
-    # Taxonomy
+)
+
+# ✅ Taxonomy (direct module se)
+from app.services.shopify_taxonomy import (
     search_shopify_taxonomy,
     find_best_category,
-    # Inventory
+)
+
+# ✅ Inventory (direct module se)
+from app.services.shopify_inventory import (
     get_primary_location,
     set_inventory_quantity,
-    # Metafields
+)
+
+# ✅ Metafields (package ke andar ka module)
+from app.services.shopify.metafields import (
     METAFIELD_DEFINITIONS,
     ensure_metafield_definitions,
     _build_all_metafields,
     set_product_metafields,
-    # Description
+)
+
+# ✅ Description (package ke andar ka module)
+from app.services.shopify.description import (
     _build_description_with_metafields,
-    # Product extras
+)
+
+# ✅ Product extras (package ke andar ka module)
+from app.services.shopify.product_extras import (
     publish_product_to_channels,
     add_product_to_collections,
     add_product_images,
     update_shopify_product_tags_and_type,
     update_shopify_product_status,
-    # Variants
+)
+
+# ✅ Variants (package ke andar ka module)
+from app.services.shopify.product_variants import (
     update_variant_with_tracked,
     ensure_product_has_option,
     add_variant_to_existing_product,
-    # Product core
+)
+
+# ✅ Product core (package ke andar ka module)
+from app.services.shopify.product_core import (
     create_shopify_product,
     create_shopify_product_with_variants,
     delete_shopify_product,
     get_shopify_product_by_sku,
-    # Sync
+)
+
+# ✅ Sync (direct module se)
+from app.services.shopify_sync import (
     check_product_availability,
     sync_update_shopify_price,
 )
