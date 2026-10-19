@@ -2,6 +2,7 @@
 # app/services/brightdata.py
 # Bright Data API se data fetch karne ke liye
 # + ✅ FINAL FIX: Bright Data Web Scraper API for "About this item"
+# + ✅ Shopify: Sirf feature_bullets show honge, description nahi
 # ============================================
 
 import logging
@@ -404,7 +405,6 @@ async def fetch_product_from_brightdata(amazon_url: str) -> dict:
             if isinstance(item, dict) and item.get("type") and item.get("value"):
                 if item["type"] not in specs: specs[item["type"]] = str(item["value"]).strip()
 
-    cleaned_description = clean_description(raw.get("description"))
     categories = parse_categories(raw)
 
     # Agar HTML se bullets nahi mile, toh JSON se fallback check karein
@@ -426,8 +426,10 @@ async def fetch_product_from_brightdata(amazon_url: str) -> dict:
         "image_url": main_image,
         "images": unique_images,
         "specifications": specs,
-        "description": cleaned_description,
-        "feature_bullets": feature_bullets, # ✅ Exact bullets
+        # ✅ Shopify: Product Description (paragraph) show NA ho
+        "description": "",
+        # ✅ Shopify: Sirf "About this item" bullets show hon
+        "feature_bullets": feature_bullets,
         "availability": str(availability_text) if availability_text else "In Stock",
         "is_available": is_available,
         "stock_quantity": stock_quantity,

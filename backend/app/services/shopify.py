@@ -1,8 +1,8 @@
 # ============================================
 # app/services/shopify.py
 # ============================================
+# ⚠️ DEPRECATED — use `app.services.shopify` package instead
 # Yeh file sirf backward compatibility ke liye hai.
-# Sab functions ab chhote modules mein hain.
 # ============================================
 
 from app.services.shopify_helpers import (  # noqa: F401
@@ -31,24 +31,26 @@ from app.services.shopify_inventory import (  # noqa: F401
     set_inventory_quantity,
 )
 
-from app.services.shopify_product import (  # noqa: F401
-    create_shopify_product,
-    create_shopify_product_with_variants,
-    add_variant_to_existing_product,
-    add_product_to_collections,        # ✅ NAYA
-    add_product_images,
-    publish_product_to_channels,        # ✅ NAYA
-    update_variant_with_tracked,
-    set_product_metafields,
-    ensure_metafield_definitions,       # ✅ NAYA
-    ensure_product_has_option,
-    update_shopify_product_tags_and_type,
-    update_shopify_product_status,
-    get_shopify_product_by_sku,
-    delete_shopify_product,
-)
-
 from app.services.shopify_sync import (  # noqa: F401
     check_product_availability,
     sync_update_shopify_price,
 )
+
+# ❌ `from app.services.shopify_product import ...` HATA DIYA
+# Reason: shopify_product.py khud `app.services.shopify` package se import karta hai
+#         → circular import ho jata tha.
+#
+# Ab product functions yahan se import karein:
+#
+#   from app.services.shopify import (
+#       create_shopify_product,
+#       create_shopify_product_with_variants,
+#       ...
+#   )
+#
+# Ya direct module se:
+#
+#   from app.services.shopify.product_core import create_shopify_product
+#   from app.services.shopify.product_extras import add_product_images
+#   from app.services.shopify.product_variants import update_variant_with_tracked
+#   from app.services.shopify.metafields import set_product_metafields

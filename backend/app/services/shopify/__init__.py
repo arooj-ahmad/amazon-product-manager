@@ -1,77 +1,52 @@
+# app/services/shopify_product.py
 # ============================================
-# app/services/shopify/__init__.py
-# Package exports — backward compatible
+# ⚠️ Backward-compatibility wrapper
+# Asli functions app/services/shopify/ package mein hain
+# Isme koi logic nahi — sirf re-export
 # ============================================
 
-# ✅ Helpers
-from app.services.shopify_helpers import (
+from app.services.shopify import (  # noqa: F401
+    # Helpers
     shopify_graphql,
     _safe_api_version,
     _build_shopify_tags,
     _get_product_type,
-)
-
-# ✅ Auth
-from app.services.shopify_auth import (
+    # Auth
     build_auth_url,
     verify_hmac,
     verify_id_token,
     exchange_code_for_token,
     exchange_id_token_for_offline_token,
     refresh_shopify_token,
-)
-
-# ✅ Taxonomy
-from app.services.shopify_taxonomy import (
+    # Taxonomy
     search_shopify_taxonomy,
     find_best_category,
-)
-
-# ✅ Inventory
-from app.services.shopify_inventory import (
+    # Inventory
     get_primary_location,
     set_inventory_quantity,
-)
-
-# ✅ Metafields
-from app.services.shopify.metafields import (
+    # Metafields
     METAFIELD_DEFINITIONS,
     ensure_metafield_definitions,
     _build_all_metafields,
     set_product_metafields,
-)
-
-# ✅ Description
-from app.services.shopify.description import (
+    # Description
     _build_description_with_metafields,
-)
-
-# ✅ Product extras
-from app.services.shopify.product_extras import (
+    # Product extras
     publish_product_to_channels,
     add_product_to_collections,
     add_product_images,
     update_shopify_product_tags_and_type,
     update_shopify_product_status,
-)
-
-# ✅ Variants
-from app.services.shopify.product_variants import (
+    # Variants
     update_variant_with_tracked,
     ensure_product_has_option,
     add_variant_to_existing_product,
-)
-
-# ✅ Product core
-from app.services.shopify.product_core import (
+    # Product core
     create_shopify_product,
     create_shopify_product_with_variants,
     delete_shopify_product,
     get_shopify_product_by_sku,
-)
-
-# ✅ Sync
-from app.services.shopify_sync import (
+    # Sync
     check_product_availability,
     sync_update_shopify_price,
 )

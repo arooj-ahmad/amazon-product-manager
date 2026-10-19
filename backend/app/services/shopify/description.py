@@ -1,15 +1,52 @@
 # app/services/shopify/description.py
 # Product description builder with metafields HTML table
 # + ✅ FIXED: Amazon Price aur Best Sellers Rank exclude
+# + ✅ FIXED: Sirf feature_bullets (About this item) show, description paragraph NAHI
 
 import logging
 
 logger = logging.getLogger(__name__)
 
 
+def _build_bullets_html(feature_bullets) -> str:
+    """Feature bullets ko Shopify-friendly HTML <ul><li> mein convert karo."""
+    if not feature_bullets or not isinstance(feature_bullets, list):
+        return ""
+
+    clean_bullets = []
+    for bullet in feature_bullets:
+        if not bullet:
+            continue
+        text = str(bullet).strip()
+        if not text or len(text) < 3:
+            continue
+        # HTML escape
+        text = (
+            text.replace("&", "&amp;")
+            .replace("<", "&lt;")
+            .replace(">", "&gt;")
+        )
+        clean_bullets.append(text)
+
+    if not clean_bullets:
+        return ""
+
+    html = (
+        '<h3 style="font-size:18px;font-weight:700;margin-bottom:12px;">'
+        '📝 About this item</h3>'
+        '<ul style="padding-left:20px;margin:0 0 16px 0;line-height:1.7;">'
+    )
+    for bullet in clean_bullets:
+        html += f'<li style="margin-bottom:6px;">{bullet}</li>'
+    html += '</ul>'
+    return html
+
+
 def _build_description_with_metafields(product_data: dict) -> str:
-    """Amazon description + SAARE metafields HTML table."""
-    description = product_data.get("description", "") or ""
+    """About this item bullets + SAARE metafields HTML table (description paragraph NAHI)."""
+    # ✅ FIXED: description paragraph IGNORE karo, sirf feature_bullets use karo
+    feature_bullets = product_data.get("feature_bullets", []) or []
+    description = _build_bullets_html(feature_bullets)
 
     FIELD_LABELS = {
         "asin": "ASIN", "brand": "Brand", "manufacturer": "Manufacturer",
