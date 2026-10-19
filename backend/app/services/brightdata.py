@@ -1,7 +1,7 @@
 # ============================================
 # app/services/brightdata.py
-# Bright Data API se data fetch karne ke liye
-# + ✅ FINAL FIX: Bright Data Web Scraper API for "About this item"
+# + ✅ FIXED: 400 Error Removed (Using Dataset API)
+# + ✅ SMART: Bullets extraction from JSON/Text
 # ============================================
 
 import logging
@@ -29,8 +29,7 @@ def extract_asin_from_url(url: str) -> Optional[str]:
     ]
     for pattern in patterns:
         match = re.search(pattern, url)
-        if match:
-            return match.group(1)
+        if match: return match.group(1)
     return None
 
 
@@ -48,41 +47,24 @@ def parse_price(value) -> Optional[float]:
 
 def parse_package_dimensions(package_dims_str: str) -> dict:
     result = {}
-    if not package_dims_str or not isinstance(package_dims_str, str):
-        return result
-
+    if not package_dims_str or not isinstance(package_dims_str, str): return result
     s = package_dims_str.strip()
     if not s: return result
-
-    dims_match = re.search(
-        r"([\d.]+)\s*x\s*([\d.]+)\s*x\s*([\d.]+)\s*(inches|inch|in|cm|centimeters|centimeter|mm|millimeters|millimeter)?",
-        s, re.IGNORECASE,
-    )
+    dims_match = re.search(r"([\d.]+)\s*x\s*([\d.]+)\s*x\s*([\d.]+)\s*(inches|inch|in|cm|centimeters|centimeter|mm|millimeters|millimeter)?", s, re.IGNORECASE)
     if dims_match:
-        l, w, h = dims_match.group(1), dims_match.group(2), dims_match.group(3)
         unit = dims_match.group(4) or "inches"
-        unit_lower = unit.lower()
-        if unit_lower in ("in", "inch"): unit = "inches"
-        elif unit_lower in ("centimeter", "centimeters"): unit = "cm"
-        elif unit_lower in ("millimeter", "millimeters"): unit = "mm"
-        result["item_dimensions"] = f"{l} x {w} x {h} {unit}"
-
-    weight_match = re.search(
-        r"([\d.]+)\s*(ounces?|oz|pounds?|lbs?|lb|grams?|g|kilograms?|kg|milligrams?|mg)",
-        s, re.IGNORECASE,
-    )
+        result["item_dimensions"] = f"{dims_match.group(1)} x {dims_match.group(2)} x {dims_match.group(3)} {unit}"
+    weight_match = re.search(r"([\d.]+)\s*(ounces?|oz|pounds?|lbs?|lb|grams?|g|kilograms?|kg|milligrams?|mg)", s, re.IGNORECASE)
     if weight_match:
         result["item_weight"] = f"{weight_match.group(1)} {weight_match.group(2)}"
     return result
 
 
 def validate_parent_asin(parent_asin, asin: str) -> Optional[str]:
-    if not parent_asin or parent_asin == "None" or parent_asin == "":
-        return None
+    if not parent_asin or parent_asin == "None" or parent_asin == "": return None
     if not isinstance(parent_asin, str): return None
     parent_asin = parent_asin.strip()
-    if parent_asin == asin or len(parent_asin) != 10 or not parent_asin.isalnum():
-        return None
+    if parent_asin == asin or len(parent_asin) != 10 or not parent_asin.isalnum(): return None
     return parent_asin.upper()
 
 
@@ -116,7 +98,6 @@ def check_availability(raw: dict) -> tuple[bool, str, str]:
         return False, availability_text, "availability_text (out)"
     if any(kw in avail_lower for kw in in_stock_keywords):
         return True, availability_text, "availability_text (in)"
-
     return True, availability_text, "availability_text (unknown)"
 
 
@@ -128,8 +109,7 @@ def parse_categories(raw: dict) -> list[str]:
             if isinstance(cat, dict):
                 name = cat.get("name") or cat.get("title")
                 if name and isinstance(name, str): categories.append(name.strip())
-            elif isinstance(cat, str):
-                categories.append(cat.strip())
+            elif isinstance(cat, str): categories.append(cat.strip())
 
     if not categories:
         raw_cats = raw.get("categories") or []
@@ -289,62 +269,51 @@ def clean_description(description: str) -> str:
 
 
 # ============================================
-# ✅ EXACT BULLETS EXTRACTOR (From HTML)
+# ✅ SMART BULLETS EXTRACTION
 # ============================================
-def extract_bullets_from_html(html_content: str) -> list[str]:
-    if not html_content: return []
+def parse_feature_bullets(raw: dict) -> list[str]:
     bullets = []
     
-    match = re.search(r'<div id="feature-bullets".*?>(.*?)</div>', html_content, re.DOTALL | re.IGNORECASE)
-    if match:
-        li_matches = re.findall(r'<li.*?>(.*?)</li>', match.group(1), re.DOTALL | re.IGNORECASE)
-        for li in li_matches:
-            text = re.sub(r'<[^>]+>', '', li).strip()
-            if text and len(text) > 5: 
-                bullets.append(text)
-        if bullets: return bullets
+    # 1. Standard JSON Keys check karein
+    possible_keys = ["feature_bullets", "feature-bullets", "featureBullets", "about_this_item", "bullets"]
+    for key in possible_keys:
+        raw_bullets = raw.get(key)
+        if isinstance(raw_bullets, list) and raw_bullets:
+            for b in raw_bullets:
+                if isinstance(b, str) and b.strip():
+                    bullets.append(b.strip())
+                elif isinstance(b, dict) and b.get("text"):
+                    bullets.append(str(b["text"]).strip())
+            if bullets: return bullets
 
-    match = re.search(r'<ul.*?>(.*?)</ul>', html_content, re.DOTALL | re.IGNORECASE)
-    if match:
-        li_matches = re.findall(r'<li.*?>(.*?)</li>', match.group(1), re.DOTALL | re.IGNORECASE)
-        for li in li_matches:
-            text = re.sub(r'<[^>]+>', '', li).strip()
-            if text and len(text) > 5: 
-                bullets.append(text)
+    # 2. Check inside HTML (Agar raw mein koi string me <ul><li> hai)
+    for key, val in raw.items():
+        if isinstance(val, str) and ("<ul>" in val or "<li>" in val):
+            li_matches = re.findall(r'<li.*?>(.*?)</li>', val, re.DOTALL | re.IGNORECASE)
+            for li in li_matches:
+                text = re.sub(r'<[^>]+>', '', li).strip()
+                if text and len(text) > 10: 
+                    bullets.append(text)
+            if bullets: return bullets
+
+    # 3. Check if description has bullet symbol • 
+    desc = str(raw.get("description") or "")
+    if "•" in desc:
+        parts = re.split(r'•', desc)
+        for p in parts:
+            clean_p = p.strip()
+            if len(clean_p) > 20 and not clean_p.lower().startswith("the video"):
+                bullets.append(clean_p)
+        if bullets: return bullets
 
     return bullets
 
 
 # ============================================
-# BRIGHT DATA API CALLS
+# BRIGHT DATA API CALL
 # ============================================
 async def fetch_product_from_brightdata(amazon_url: str) -> dict:
-    
-    # 1. BRIGHT DATA WEB SCRAPER API (For exact HTML)
-    web_scraper_url = "https://api.brightdata.com/request"
-    web_scraper_headers = {
-        "Authorization": f"Bearer {settings.BRIGHT_DATA_API_KEY}",
-        "Content-Type": "application/json",
-    }
-    web_scraper_body = {
-        "zone": settings.BRIGHT_DATA_DATASET_ID, # Yeh aapka zone name hai
-        "url": amazon_url,
-        "format": "raw"
-    }
-
-    feature_bullets = []
-    html_content = ""
-    
-    try:
-        async with httpx.AsyncClient(timeout=60.0) as client:
-            res = await client.post(web_scraper_url, headers=web_scraper_headers, json=web_scraper_body)
-            if res.status_code == 200:
-                html_content = res.text
-                feature_bullets = extract_bullets_from_html(html_content)
-    except Exception as e:
-        logger.warning(f"Web Scraper API failed: {e}")
-
-    # 2. BRIGHT DATA DATASET API (For standard details like Price, Images)
+    # ✅ API URL sahi format mein hai (No format=raw)
     api_url = (
         f"{settings.BRIGHT_DATA_API_URL}"
         f"?dataset_id={settings.BRIGHT_DATA_DATASET_ID}"
@@ -362,10 +331,10 @@ async def fetch_product_from_brightdata(amazon_url: str) -> dict:
             response.raise_for_status()
             data = response.json()
     except Exception as e:
-        raise BrightDataError(f"Bright Data API Error: {str(e)}")
+        raise BrightDataError(f"Bright Data Error: {str(e)}")
 
     raw = data[0] if isinstance(data, list) and len(data) > 0 else data
-    if "error" in raw: raise BrightDataError(f"Bright Data error: {raw['error']}")
+    if "error" in raw: raise BrightDataError(raw["error"])
 
     asin = raw.get("asin") or extract_asin_from_url(amazon_url)
     if not asin: raise BrightDataError("ASIN nahi mila")
@@ -373,6 +342,7 @@ async def fetch_product_from_brightdata(amazon_url: str) -> dict:
     parent_asin = validate_parent_asin(raw.get("parent_asin"), asin)
     is_variation = bool(parent_asin)
 
+    # Variations
     variations = []
     if isinstance(raw.get("variations"), list):
         for v in raw.get("variations"):
@@ -385,6 +355,7 @@ async def fetch_product_from_brightdata(amazon_url: str) -> dict:
             if isinstance(attr, dict) and attr.get("name") and attr.get("value"):
                 variant_attributes.append({"name": str(attr["name"]).strip(), "value": str(attr["value"]).strip()})
 
+    # Images
     images_list = raw.get("images") or []
     main_image = raw.get("image_url") or raw.get("image")
     unique_images = [main_image] if main_image else []
@@ -405,15 +376,11 @@ async def fetch_product_from_brightdata(amazon_url: str) -> dict:
                 if item["type"] not in specs: specs[item["type"]] = str(item["value"]).strip()
 
     cleaned_description = clean_description(raw.get("description"))
+    
+    # ✅ Bullets Extract karein
+    feature_bullets = parse_feature_bullets(raw)
+    
     categories = parse_categories(raw)
-
-    # Agar HTML se bullets nahi mile, toh JSON se fallback check karein
-    if not feature_bullets:
-        possible_keys = ["feature_bullets", "feature-bullets", "about_this_item"]
-        for key in possible_keys:
-            if isinstance(raw.get(key), list):
-                feature_bullets = [str(b).strip() for b in raw.get(key) if b]
-                break
 
     return {
         "asin": asin,
@@ -427,7 +394,7 @@ async def fetch_product_from_brightdata(amazon_url: str) -> dict:
         "images": unique_images,
         "specifications": specs,
         "description": cleaned_description,
-        "feature_bullets": feature_bullets, # ✅ Exact bullets
+        "feature_bullets": feature_bullets, # ✅ Passed
         "availability": str(availability_text) if availability_text else "In Stock",
         "is_available": is_available,
         "stock_quantity": stock_quantity,
