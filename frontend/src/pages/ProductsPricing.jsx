@@ -1,14 +1,7 @@
 // ============================================
 // frontend/src/pages/ProductsPricing.jsx
 // Product-wise Pricing Editor
-// + ✅ Bulk Update section (top)
-// + ✅ Saved default markup auto-fill
-// + ✅ Current default banner
-// + Search + Products table
-// + ✅ FIXED: Navigation via window.location.hash
-// + ✅ FIXED: Circle spinner loader
-// + ✅ FIXED: Tax Rate not saving in state on reload
-// + ✅ FIXED: Bulk data saved in Local Storage (no data loss)
+// + ✅ FIXED: User ki set ki hui values overwrite nahi hongi
 // ============================================
 
 import { useState, useEffect } from 'react'
