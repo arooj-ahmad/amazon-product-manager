@@ -1054,7 +1054,8 @@ async def add_product_from_shopify_app(
         if store:
             store.access_token = token_data["access_token"]
             store.refresh_token = token_data.get("refresh_token")
-            store.expires_at = expires_at            store.refresh_token_expires_at = refresh_token_expires_at
+            store.expires_at = expires_at
+            store.refresh_token_expires_at = refresh_token_expires_at
             store.scopes = token_data.get("scope") or settings.SHOPIFY_SCOPES
         else:
             store = ShopifyStore(
