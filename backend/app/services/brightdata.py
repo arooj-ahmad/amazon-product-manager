@@ -1,8 +1,7 @@
 # ============================================
 # app/services/brightdata.py
 # Bright Data Dataset API se data fetch karne ke liye
-# + ✅ FIXED: Web Scraper hata diya, "About this item" ka paragraph utha rahe hain
-# + ✅ FIXED: Price calculation formula ab Frontend se match karta hai
+# + ✅ FIXED: Product aur Package dimensions/weight sahi uthayega
 # ============================================
 
 import logging
@@ -53,11 +52,13 @@ def parse_package_dimensions(package_dims_str: str) -> dict:
         return result
     s = package_dims_str.strip()
     if not s: return result
+    
     dims_match = re.search(r"([\d.]+)\s*x\s*([\d.]+)\s*x\s*([\d.]+)\s*(inches|inch|in|cm|centimeters|centimeter|mm|millimeters|millimeter)?", s, re.IGNORECASE)
     if dims_match:
         l, w, h = dims_match.group(1), dims_match.group(2), dims_match.group(3)
         unit = dims_match.group(4) or "inches"
         result["item_dimensions"] = f"{l} x {w} x {h} {unit}"
+        
     weight_match = re.search(r"([\d.]+)\s*(ounces?|oz|pounds?|lbs?|lb|grams?|g|kilograms?|kg|milligrams?|mg)", s, re.IGNORECASE)
     if weight_match:
         result["item_weight"] = f"{weight_match.group(1)} {weight_match.group(2)}"
@@ -98,22 +99,58 @@ def parse_categories(raw: dict) -> list[str]:
     return [c for c in dict.fromkeys(categories) if c and len(c) < 100]
 
 
+# ============================================
+# ✅ FIXED: Product/Weight Dimensions Sahi Uthayega
+# ============================================
 def parse_standard_fields(raw: dict) -> dict:
     fields = {}
     fields["model_number"] = raw.get("model_number")
     fields["manufacturer"] = raw.get("manufacturer")
-    fields["item_dimensions"] = raw.get("package_dimensions") or ""
-    fields["item_weight"] = raw.get("package_weight") or ""
     
+    # 1. Pehle Product Dimensions/Weight dhoondein
+    fields["item_dimensions"] = (
+        raw.get("item_dimensions") or 
+        raw.get("product_dimensions") or 
+        ""
+    )
+    fields["item_weight"] = (
+        raw.get("item_weight") or 
+        raw.get("product_weight") or 
+        ""
+    )
+
+    # 2. Agar nahi mile, toh Package Dimensions/Weight use karein
+    package_dims_raw = raw.get("package_dimensions") or ""
+    if package_dims_raw and isinstance(package_dims_raw, str):
+        fields["package_dimensions"] = package_dims_raw.strip()
+        parsed = parse_package_dimensions(package_dims_raw)
+        
+        if not fields["item_dimensions"] and parsed.get("item_dimensions"):
+            fields["item_dimensions"] = parsed["item_dimensions"]
+            
+        if not fields["item_weight"] and parsed.get("item_weight"):
+            fields["item_weight"] = parsed["item_weight"]
+
+    # 3. Agar abhi bhi khali hain, toh product_details (specs) se dhoondein
     product_details = raw.get("product_details") or []
-    for item in product_details:
-        if isinstance(item, dict) and item.get("type") and item.get("value"):
-            field_type = item["type"].strip().lower()
-            value_str = str(item["value"]).strip()
-            if field_type == "item weight": fields["item_weight"] = value_str
-            if field_type == "color": fields["color"] = value_str
-            if field_type == "material": fields["material_type"] = value_str
-    return {k: v for k, v in fields.items() if v}
+    if isinstance(product_details, list):
+        for item in product_details:
+            if not isinstance(item, dict): continue
+            field_type = (item.get("type") or "").strip().lower()
+            field_value = item.get("value")
+            if not field_value: continue
+            value_str = str(field_value).strip()
+
+            if field_type in ("item dimensions", "item dimensions l x w x h", "product dimensions"):
+                if not fields["item_dimensions"]:
+                    fields["item_dimensions"] = value_str
+            elif field_type in ("item weight", "shipping weight"):
+                if not fields["item_weight"]:
+                    fields["item_weight"] = value_str
+            elif field_type == "color": fields["color"] = value_str
+            elif field_type == "material": fields["material_type"] = value_str
+            
+    return {k: v for k, v in fields.items() if v is not None and str(v).strip() and str(v).strip() != "None"}
 
 
 def parse_tags(raw: dict, categories: list[str]) -> list[str]:
@@ -187,15 +224,13 @@ async def fetch_product_from_brightdata(amazon_url: str) -> dict:
     categories = parse_categories(raw)
 
     # =========================================================
-    # ✅ FIXED: "About this item" ka PARAGRAPH nikalna
+    # ✅ "About this item" ka PARAGRAPH nikalna
     # =========================================================
     feature_bullets = []
     
-    # 1. Check karein agar API direct 'feature_bullets' bhej rahi hai
     if isinstance(raw.get("feature_bullets"), list) and len(raw["feature_bullets"]) > 0:
         feature_bullets = [str(b).strip() for b in raw["feature_bullets"] if b]
         
-    # 2. Agar nahi, toh description se "About this item" ka paragraph uthayen
     if not feature_bullets:
         desc_text = raw.get("description", "") or raw.get("product_description", "") or raw.get("about_this_item", "")
         if desc_text:
@@ -213,7 +248,6 @@ async def fetch_product_from_brightdata(amazon_url: str) -> dict:
                     if line:
                         feature_bullets.append(line)
 
-    # 3. Agar abhi bhi kuch nahi mila
     if not feature_bullets:
         feature_bullets = ["Check Amazon for full product details."]
 
@@ -228,7 +262,6 @@ async def fetch_product_from_brightdata(amazon_url: str) -> dict:
         "image_url": main_image,
         "images": unique_images,
         "specifications": specs,
-        # ✅ Description empty, bullets mein paragraph
         "description": "",
         "feature_bullets": feature_bullets,
         "availability": str(availability_text) if availability_text else "In Stock",
@@ -265,13 +298,10 @@ def calculate_final_price(
     if markup_type == "percent":
         base_price = amazon_price + (amazon_price * (markup / 100.0))
     elif markup_type == "both":
-        # ✅ FIXED: Frontend wala exact formula
-        # (Amazon + Markup) par Extra % lagao
         base_price = (amazon_price + markup) * (1 + extra_percent / 100.0)
     else:
         base_price = amazon_price + markup
 
-    # Tax laga kar final price nikalo
     final_price = base_price + (base_price * (tax_rate / 100.0))
 
     if is_manual_override and admin_price is not None:
