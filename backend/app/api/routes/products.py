@@ -1,6 +1,6 @@
 # ============================================
 # app/api/routes/products.py
-# + ✅ FIXED: Frontend se aayi value direct save hogi
+# + ✅ FIXED: Bulk update aur single update mein tax direct save hoga
 # ============================================
 
 import logging
@@ -174,6 +174,7 @@ def get_all_products_admin(db: Session = Depends(get_db), current_admin: Admin =
     products = db.query(Product).order_by(Product.created_at.desc()).all()
     return ProductListResponse(total=len(products), products=products)
 
+
 @router.post("/admin/fetch", response_model=ProductFetchResponse, status_code=201)
 async def admin_fetch_product(payload: ProductCreate, db: Session = Depends(get_db), current_admin: Admin = Depends(get_current_admin)):
     amazon_url = payload.amazon_url
@@ -197,7 +198,6 @@ async def admin_fetch_product(payload: ProductCreate, db: Session = Depends(get_
     else:
         raise HTTPException(status_code=400, detail="Markup required")
 
-    # ✅ YAHAN CHANGE KIYA HAI: Ab hamesha Settings wala Tax uthayega
     user_tax_rate = store_tax_rate if store_tax_rate is not None else 0.0
 
     final_price = calculate_final_price(
@@ -277,7 +277,6 @@ async def update_product_markup(product_id: int, payload: MarkupUpdate, db: Sess
     store = _get_store_for_product(db, product)
     _, _, _, store_tax = _get_store_defaults(store)
 
-    # ✅ FIX: Direct user value uthayen
     extra_pct = payload.extra_percent if payload.extra_percent is not None else 0.0
     tax_rate = payload.tax_rate if payload.tax_rate is not None else store_tax
 
@@ -317,14 +316,12 @@ async def bulk_update_markup(payload: MarkupUpdate, store_id: int = None, db: Se
     updated, shopify_updated, shopify_failed = 0, 0, 0
     token_refreshed_stores = set()
     
-    # ✅ FIX: Direct user value uthayen
     extra_pct = payload.extra_percent if payload.extra_percent is not None else 0.0
 
     for product in products:
         product_store = _get_store_for_product(db, product, fallback_store_id=store_id)
         _, _, _, store_tax = _get_store_defaults(product_store)
 
-        # ✅ FIX: Direct user value uthayen
         tax_rate = payload.tax_rate if payload.tax_rate is not None else store_tax
 
         new_price = calculate_final_price(amazon_price=product.amazon_price, markup=payload.markup, markup_type=payload.markup_type, extra_percent=extra_pct, tax_rate=tax_rate)
@@ -332,9 +329,12 @@ async def bulk_update_markup(payload: MarkupUpdate, store_id: int = None, db: Se
         product.markup = payload.markup
         product.markup_type = payload.markup_type
         product.extra_percent = extra_pct
-        product.tax_rate = tax_rate
         product.price = new_price
         product.is_manual_override = True
+        
+        # ✅ YEH LINE ADD KAREIN (Yeh bulk update mein missing thi)
+        db.query(Product).filter(Product.id == product.id).update({"tax_rate": tax_rate})
+        
         updated += 1
 
         if product_store and product_store.access_token and product.shopify_product_id:
