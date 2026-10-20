@@ -1,6 +1,6 @@
 # ============================================
 # app/api/routes/products.py
-# + ✅ FIXED: Direct tax_rate update (bina hasattr ke)
+# + ✅ FIXED: Frontend se aayi value direct save hogi
 # ============================================
 
 import logging
@@ -261,6 +261,9 @@ def list_products_for_markup(store_id: int = None, db: Session = Depends(get_db)
     return query.order_by(Product.created_at.desc()).all()
 
 
+# ============================================
+# ✅ FIXED: SINGLE PRODUCT UPDATE
+# ============================================
 @router.patch("/markup/{product_id}", response_model=ProductResponse)
 async def update_product_markup(product_id: int, payload: MarkupUpdate, db: Session = Depends(get_db)):
     product = db.query(Product).filter(Product.id == product_id).first()
@@ -269,16 +272,16 @@ async def update_product_markup(product_id: int, payload: MarkupUpdate, db: Sess
     store = _get_store_for_product(db, product)
     _, _, _, store_tax = _get_store_defaults(store)
 
-    extra_pct = getattr(payload, "extra_percent", 0.0) or 0.0
-    tax_rate = getattr(payload, "tax_rate", None)
-    if tax_rate is None: tax_rate = store_tax
+    # ✅ FIX: Direct user value uthayen
+    extra_pct = payload.extra_percent if payload.extra_percent is not None else 0.0
+    tax_rate = payload.tax_rate if payload.tax_rate is not None else store_tax
 
     new_price = calculate_final_price(amazon_price=product.amazon_price, markup=payload.markup, markup_type=payload.markup_type, extra_percent=extra_pct, tax_rate=tax_rate)
 
     product.markup = payload.markup
     product.markup_type = payload.markup_type
     product.extra_percent = extra_pct
-    product.tax_rate = tax_rate  # ✅ DIRECT UPDATE
+    product.tax_rate = tax_rate
     product.price = new_price
     product.is_manual_override = True
 
@@ -295,6 +298,9 @@ async def update_product_markup(product_id: int, payload: MarkupUpdate, db: Sess
     return product
 
 
+# ============================================
+# ✅ FIXED: BULK UPDATE
+# ============================================
 @router.post("/markup/bulk-update")
 async def bulk_update_markup(payload: MarkupUpdate, store_id: int = None, db: Session = Depends(get_db)):
     query = db.query(Product).filter(Product.shopify_status == "active")
@@ -303,21 +309,23 @@ async def bulk_update_markup(payload: MarkupUpdate, store_id: int = None, db: Se
     products = query.all()
     updated, shopify_updated, shopify_failed = 0, 0, 0
     token_refreshed_stores = set()
-    extra_pct = getattr(payload, "extra_percent", 0.0) or 0.0
+    
+    # ✅ FIX: Direct user value uthayen
+    extra_pct = payload.extra_percent if payload.extra_percent is not None else 0.0
 
     for product in products:
         product_store = _get_store_for_product(db, product, fallback_store_id=store_id)
         _, _, _, store_tax = _get_store_defaults(product_store)
 
-        tax_rate = getattr(payload, "tax_rate", None)
-        if tax_rate is None: tax_rate = store_tax
+        # ✅ FIX: Direct user value uthayen
+        tax_rate = payload.tax_rate if payload.tax_rate is not None else store_tax
 
         new_price = calculate_final_price(amazon_price=product.amazon_price, markup=payload.markup, markup_type=payload.markup_type, extra_percent=extra_pct, tax_rate=tax_rate)
         
         product.markup = payload.markup
         product.markup_type = payload.markup_type
         product.extra_percent = extra_pct
-        product.tax_rate = tax_rate  # ✅ DIRECT UPDATE
+        product.tax_rate = tax_rate
         product.price = new_price
         product.is_manual_override = True
         updated += 1
