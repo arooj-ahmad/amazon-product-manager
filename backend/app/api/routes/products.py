@@ -283,12 +283,14 @@ async def update_product_markup(product_id: int, payload: MarkupUpdate, db: Sess
 
     new_price = calculate_final_price(amazon_price=product.amazon_price, markup=payload.markup, markup_type=payload.markup_type, extra_percent=extra_pct, tax_rate=tax_rate)
 
-    product.markup = payload.markup
+     product.markup = payload.markup
     product.markup_type = payload.markup_type
     product.extra_percent = extra_pct
-    product.tax_rate = tax_rate
     product.price = new_price
     product.is_manual_override = True
+
+    # ✅ YEH LINE ADD KAREIN (Direct Database Update)
+    db.query(Product).filter(Product.id == product.id).update({"tax_rate": tax_rate})
 
     db.commit()
     db.refresh(product)
