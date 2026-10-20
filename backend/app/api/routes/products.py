@@ -174,7 +174,6 @@ def get_all_products_admin(db: Session = Depends(get_db), current_admin: Admin =
     products = db.query(Product).order_by(Product.created_at.desc()).all()
     return ProductListResponse(total=len(products), products=products)
 
-
 @router.post("/admin/fetch", response_model=ProductFetchResponse, status_code=201)
 async def admin_fetch_product(payload: ProductCreate, db: Session = Depends(get_db), current_admin: Admin = Depends(get_current_admin)):
     amazon_url = payload.amazon_url
@@ -198,10 +197,16 @@ async def admin_fetch_product(payload: ProductCreate, db: Session = Depends(get_
     else:
         raise HTTPException(status_code=400, detail="Markup required")
 
-    user_tax_rate = getattr(payload, "tax_rate", None)
-    if user_tax_rate is None: user_tax_rate = store_tax_rate
+    # ✅ YAHAN CHANGE KIYA HAI: Ab hamesha Settings wala Tax uthayega
+    user_tax_rate = store_tax_rate if store_tax_rate is not None else 0.0
 
-    final_price = calculate_final_price(amazon_price=data["amazon_price"], markup=user_markup, markup_type=user_markup_type, extra_percent=user_extra_percent, tax_rate=user_tax_rate)
+    final_price = calculate_final_price(
+        amazon_price=data["amazon_price"], 
+        markup=user_markup, 
+        markup_type=user_markup_type, 
+        extra_percent=user_extra_percent, 
+        tax_rate=user_tax_rate
+    )
 
     new_product = Product(
         asin=asin, parent_asin=data["parent_asin"], is_variation=data["is_variation"],
