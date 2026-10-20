@@ -1,7 +1,7 @@
 // ============================================
 // frontend/src/pages/ProductsPricing.jsx
 // Product-wise Pricing Editor
-// + ✅ FIXED: User ki set ki hui values overwrite nahi hongi
+// + ✅ FIXED: Bulk Update hamesha Settings se values load karega
 // ============================================
 
 import { useState, useEffect } from 'react'
@@ -83,7 +83,7 @@ export default function ProductsPricing() {
   const [savedDefault, setSavedDefault] = useState(null)
   const [searchTerm, setSearchTerm] = useState('')
 
-  // ✅ FIXED: Bulk data load from Local Storage
+  // ✅ FIXED: Bulk data load from Local Storage (pehle se hai)
   const [bulkData, setBulkData] = useState(() => {
     const saved = localStorage.getItem('bulkPricingData')
     if (saved) {
@@ -131,20 +131,17 @@ export default function ProductsPricing() {
           console.log('✅ Loaded default markup:', defRes.data)
           setSavedDefault(defRes.data)
 
-          // ✅ FIXED: Agar Local Storage khali hai, tabhi store default use karein
-          const savedLocal = localStorage.getItem('bulkPricingData')
-          if (!savedLocal) {
-            setBulkData({
-              markup_type: defRes.data.markup_type || 'fixed',
-              markup_value: defRes.data.markup
-                ? String(defRes.data.markup)
-                : '',
-              extra_percent: defRes.data.extra_percent
-                ? String(defRes.data.extra_percent)
-                : '',
-              tax_rate: defRes.data.tax_rate ? String(defRes.data.tax_rate) : '0',
-            })
-          }
+          // ✅ FIXED: Ab hamesha Settings se values load hongi (Local Storage check hata diya)
+          setBulkData({
+            markup_type: defRes.data.markup_type || 'fixed',
+            markup_value: defRes.data.markup
+              ? String(defRes.data.markup)
+              : '',
+            extra_percent: defRes.data.extra_percent
+              ? String(defRes.data.extra_percent)
+              : '',
+            tax_rate: defRes.data.tax_rate ? String(defRes.data.tax_rate) : '0',
+          })
         }
       } catch (err) {
         console.warn('⚠️ Could not load default markup:', err)
