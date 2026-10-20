@@ -1,7 +1,7 @@
 # ============================================
 # app/api/routes/shopify_routes.py
 # Shopify OAuth + Product Push + Embedded App
-# + ✅ FIXED v14: Out-of-stock product add hoga (stock 0), price sahi aayegi
+# + ✅ FIXED: Naye product add karte waqt tax_rate save hoga
 # ============================================
 
 import asyncio
@@ -164,7 +164,6 @@ def _get_store_markup(store: ShopifyStore) -> tuple:
 
 # ============================================
 # ✅ FIXED v14: Build product_data
-# Agar price None hai to $0.00 set karo (fallback markup nahi)
 # ============================================
 def _build_product_data_for_shopify(data: dict, product=None) -> dict:
     base = {}
@@ -172,7 +171,6 @@ def _build_product_data_for_shopify(data: dict, product=None) -> dict:
     if product:
         product_price = product.price
 
-        # ✅ FIXED v14: Agar price 0/None hai, to fallback markup mat lagao
         if product_price is None or float(product_price or 0) <= 0:
             amazon = float(product.amazon_price or 0)
 
@@ -828,7 +826,6 @@ async def get_price_update_status():
 
 # ============================================
 # PUSH PRODUCT TO SHOPIFY
-# ✅ FIXED v10: Parent verify karo
 # ============================================
 @router.post("/push-product/{product_id}")
 async def push_product_to_shopify(
@@ -991,9 +988,8 @@ async def push_product_to_shopify(
 
 
 # ============================================
-# ✅ FIXED v14: ADD PRODUCT FROM SHOPIFY APP
-# + Out-of-stock product ADD HOGA, lekin stock 0 hoga
-# + Price sahi aayegi (fallback nahi)
+# ✅ FIXED: ADD PRODUCT FROM SHOPIFY APP
+# + Tax Rate ab database mein save hoga
 # ============================================
 @router.post("/app/add-product")
 async def add_product_from_shopify_app(
@@ -1012,7 +1008,6 @@ async def add_product_from_shopify_app(
     if not token:
         raise HTTPException(status_code=401, detail="Empty ID token")
 
-    # ✅ FIXED v11: Amazon URL normalize karo
     amazon_url = _normalize_amazon_url(amazon_url)
     logger.info(f"🔗 Normalized Amazon URL: {amazon_url}")
 
@@ -1059,8 +1054,7 @@ async def add_product_from_shopify_app(
         if store:
             store.access_token = token_data["access_token"]
             store.refresh_token = token_data.get("refresh_token")
-            store.expires_at = expires_at
-            store.refresh_token_expires_at = refresh_token_expires_at
+            store.expires_at = expires_at            store.refresh_token_expires_at = refresh_token_expires_at
             store.scopes = token_data.get("scope") or settings.SHOPIFY_SCOPES
         else:
             store = ShopifyStore(
@@ -1080,7 +1074,6 @@ async def add_product_from_shopify_app(
 
     refreshed_ok = await refresh_store_token()
 
-    # ✅ FIXED v11: Agar token exchange fail ho, to existing token use karo
     if not refreshed_ok:
         if not store:
             raise HTTPException(
@@ -1111,8 +1104,6 @@ async def add_product_from_shopify_app(
     asin = data["asin"]
     parent_asin = data.get("parent_asin")
 
-    # ✅ FIXED v14: Out-of-stock product ADD HOGA, par stock 0 hoga
-
     existing = db.query(Product).filter(Product.asin == asin).first()
     if existing:
         raise HTTPException(
@@ -1132,7 +1123,6 @@ async def add_product_from_shopify_app(
             .first()
         )
 
-        # ✅ FIXED v10: Verify parent match karo
         if existing_parent:
             if not _verify_parent_match(existing_parent, data):
                 logger.warning(
@@ -1155,14 +1145,12 @@ async def add_product_from_shopify_app(
             logger.warning("⚠️ Variant exists — new product")
             existing_parent = None
 
-    # ✅ FIXED v10: Markup — user se lo ya store se
     if markup is not None and markup > 0:
         user_markup = float(markup)
         user_markup_type = (
             markup_type if markup_type in ("fixed", "percent", "both") else "fixed"
         )
         user_extra = float(extra_percent or 0.0)
-        # ✅ FIXED: tax_rate store se lo — 0.0 nahi
         _, _, _, user_tax_rate = _get_store_markup(store)
         logger.info(
             f"💰 Using frontend markup: {user_markup} ({user_markup_type}), "
@@ -1173,7 +1161,6 @@ async def add_product_from_shopify_app(
             _get_store_markup(store)
         )
 
-        # ✅ FIXED v10: Agar store mein markup set nahi hai to error
         if user_markup is None or user_markup_type is None:
             raise HTTPException(
                 status_code=400,
@@ -1209,6 +1196,7 @@ async def add_product_from_shopify_app(
     if weight_str:
         logger.info(f"⚖️ Weight available: {weight_str}")
 
+    # ✅ YAHAN tax_rate ADD KIYA HAI
     new_product = Product(
         asin=asin,
         parent_asin=parent_asin,
@@ -1229,6 +1217,7 @@ async def add_product_from_shopify_app(
         markup=user_markup,
         markup_type=user_markup_type,
         extra_percent=user_extra,
+        tax_rate=user_tax_rate,  # ✅ YEH LINE ADD KI HAI
         is_manual_override=False,
         variant_attributes=data.get("variant_attributes", []),
         categories=data.get("categories", []),

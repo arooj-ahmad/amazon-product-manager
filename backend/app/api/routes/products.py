@@ -1,6 +1,6 @@
 # ============================================
 # app/api/routes/products.py
-# + ✅ FIXED: Bulk update aur single update mein tax direct save hoga
+# + ✅ FIXED: Frontend se aayi value direct save hogi
 # ============================================
 
 import logging
@@ -198,6 +198,7 @@ async def admin_fetch_product(payload: ProductCreate, db: Session = Depends(get_
     else:
         raise HTTPException(status_code=400, detail="Markup required")
 
+    # ✅ FIX: Hamesha Settings wala Tax uthayen
     user_tax_rate = store_tax_rate if store_tax_rate is not None else 0.0
 
     final_price = calculate_final_price(
