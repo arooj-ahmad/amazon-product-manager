@@ -2,7 +2,6 @@
 # app/services/brightdata.py
 # Bright Data Dataset API se data fetch karne ke liye
 # + ✅ FIXED: Web Scraper hata diya, "About this item" ka paragraph utha rahe hain
-# + ✅ FIXED: Price calculation formula ab Frontend se match karta hai
 # ============================================
 
 import logging
@@ -244,37 +243,17 @@ async def fetch_product_from_brightdata(amazon_url: str) -> dict:
 
 
 # ============================================
-# CALCULATE FINAL PRICE (FIXED FORMULA)
+# CALCULATE FINAL PRICE
 # ============================================
-def calculate_final_price(
-    amazon_price: Optional[float],
-    markup: Optional[float] = None,
-    markup_type: Optional[str] = None,
-    admin_price: Optional[float] = None,
-    is_manual_override: bool = False,
-    extra_percent: float = 0.0,
-    tax_rate: float = 0.0,
-) -> Optional[float]:
+def calculate_final_price(amazon_price, markup=None, markup_type=None, admin_price=None, is_manual_override=False, extra_percent=0.0, tax_rate=0.0):
     if amazon_price is None: return admin_price
     if markup is None or markup_type is None: return admin_price
-
     markup = markup or 0.0
     extra_percent = extra_percent or 0.0
     tax_rate = tax_rate or 0.0
-
-    if markup_type == "percent":
-        base_price = amazon_price + (amazon_price * (markup / 100.0))
-    elif markup_type == "both":
-        # ✅ FIXED: Frontend wala exact formula
-        # (Amazon + Markup) par Extra % lagao
-        base_price = (amazon_price + markup) * (1 + extra_percent / 100.0)
-    else:
-        base_price = amazon_price + markup
-
-    # Tax laga kar final price nikalo
+    if markup_type == "percent": base_price = amazon_price + (amazon_price * (markup / 100.0))
+    elif markup_type == "both": base_price = amazon_price + markup + (amazon_price * (extra_percent / 100.0))
+    else: base_price = amazon_price + markup
     final_price = base_price + (base_price * (tax_rate / 100.0))
-
-    if is_manual_override and admin_price is not None:
-        return round(max(admin_price, final_price), 2)
-
+    if is_manual_override and admin_price is not None: return round(max(admin_price, final_price), 2)
     return round(final_price, 2)
