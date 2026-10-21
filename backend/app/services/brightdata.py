@@ -1,7 +1,7 @@
 # ============================================
 # app/services/brightdata.py
-# Bright Data Dataset API se data fetch karne ke liye
 # + ✅ FIXED: Product aur Package dimensions/weight sahi uthayega
+# + ✅ NAYA: Apify function for "About this item"
 # ============================================
 
 import logging
@@ -9,6 +9,7 @@ import re
 from typing import Optional
 
 import httpx
+from apify_client import ApifyClient
 
 from app.config import settings
 
@@ -99,15 +100,11 @@ def parse_categories(raw: dict) -> list[str]:
     return [c for c in dict.fromkeys(categories) if c and len(c) < 100]
 
 
-# ============================================
-# ✅ FIXED: Product/Weight Dimensions Sahi Uthayega
-# ============================================
 def parse_standard_fields(raw: dict) -> dict:
     fields = {}
     fields["model_number"] = raw.get("model_number")
     fields["manufacturer"] = raw.get("manufacturer")
     
-    # 1. Pehle Product Dimensions/Weight dhoondein
     fields["item_dimensions"] = (
         raw.get("item_dimensions") or 
         raw.get("product_dimensions") or 
@@ -119,7 +116,6 @@ def parse_standard_fields(raw: dict) -> dict:
         ""
     )
 
-    # 2. Agar nahi mile, toh Package Dimensions/Weight use karein
     package_dims_raw = raw.get("package_dimensions") or ""
     if package_dims_raw and isinstance(package_dims_raw, str):
         fields["package_dimensions"] = package_dims_raw.strip()
@@ -131,7 +127,6 @@ def parse_standard_fields(raw: dict) -> dict:
         if not fields["item_weight"] and parsed.get("item_weight"):
             fields["item_weight"] = parsed["item_weight"]
 
-    # 3. Agar abhi bhi khali hain, toh product_details (specs) se dhoondein
     product_details = raw.get("product_details") or []
     if isinstance(product_details, list):
         for item in product_details:
@@ -162,7 +157,7 @@ def parse_tags(raw: dict, categories: list[str]) -> list[str]:
 
 
 # ============================================
-# MAIN FETCH FUNCTION
+# BRIGHT DATA FETCH (For Cron Job)
 # ============================================
 async def fetch_product_from_brightdata(amazon_url: str) -> dict:
     
@@ -223,11 +218,7 @@ async def fetch_product_from_brightdata(amazon_url: str) -> dict:
 
     categories = parse_categories(raw)
 
-    # =========================================================
-    # ✅ "About this item" ka PARAGRAPH nikalna
-    # =========================================================
     feature_bullets = []
-    
     if isinstance(raw.get("feature_bullets"), list) and len(raw["feature_bullets"]) > 0:
         feature_bullets = [str(b).strip() for b in raw["feature_bullets"] if b]
         
@@ -274,6 +265,52 @@ async def fetch_product_from_brightdata(amazon_url: str) -> dict:
         **parse_standard_fields(raw),
         "product_details": product_details,
     }
+
+
+# ============================================
+# ✅ NAYA: APIFY FETCH (For New Products)
+# ============================================
+def fetch_product_from_apify(amazon_url: str) -> dict:
+    """Apify se product ki saari details + 'About this item' fetch karta hai."""
+    client = ApifyClient(settings.APIFY_API_TOKEN)
+    actor_id = "delicious_zebu/amazon-product-details-scraper"
+    
+    run_input = {"productUrls": [amazon_url]}
+    
+    try:
+        run = client.actor(actor_id).call(run_input=run_input)
+        items = client.dataset(run.default_dataset_id).iterate_items()
+        
+        for item in items:
+            asin = item.get("asin") or extract_asin_from_url(amazon_url)
+            images = item.get("images", [])
+            
+            price_raw = item.get("buybox_price") or item.get("price")
+            price = parse_price(price_raw) if price_raw else None
+            
+            return {
+                "asin": asin,
+                "parent_asin": None,
+                "is_variation": False,
+                "title": item.get("title"),
+                "brand": item.get("brand") or item.get("manufacturer"),
+                "amazon_price": price,
+                "image_url": images[0] if images else None,
+                "images": images,
+                "description": "",
+                "feature_bullets": item.get("about_item", []),
+                "availability": "In Stock",
+                "is_available": True,
+                "stock_quantity": 100,
+                "categories": [item.get("category")] if item.get("category") else [],
+                "tags": [],
+                "specifications": {},
+                "product_details": []
+            }
+    except Exception as e:
+        logger.error(f"Apify fetch failed: {e}")
+        raise BrightDataError(f"Apify Error: {str(e)}")
+    return {}
 
 
 # ============================================

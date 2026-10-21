@@ -1,7 +1,8 @@
 # ============================================
 # app/api/routes/shopify_routes.py
 # Shopify OAuth + Product Push + Embedded App
-# + ✅ FIXED: Naye product add karte waqt tax_rate save hoga
+# + ✅ FIXED: Naya product Apify se fetch hoga (About this item ke liye)
+# + ✅ FIXED: Cron job Bright Data use karega
 # ============================================
 
 import asyncio
@@ -28,7 +29,8 @@ from app.models import Admin, Product, ShopifyStore
 from app.services.brightdata import (
     BrightDataError,
     calculate_final_price,
-    fetch_product_from_brightdata,
+    fetch_product_from_brightdata, # Cron Job ke liye
+    fetch_product_from_apify,      # ✅ Naye product ke liye (About this item)
 )
 from app.services.shopify import (
     build_auth_url,
@@ -989,7 +991,7 @@ async def push_product_to_shopify(
 
 # ============================================
 # ✅ FIXED: ADD PRODUCT FROM SHOPIFY APP
-# + Tax Rate ab database mein save hoga
+# + Ab naye product add karne ke liye Apify use hoga
 # ============================================
 @router.post("/app/add-product")
 async def add_product_from_shopify_app(
@@ -1095,11 +1097,13 @@ async def add_product_from_shopify_app(
                 ),
             )
 
+    # ✅ YAHAN CHANGE KIYA HAI: Ab Apify use hoga
     try:
-        data = await fetch_product_from_brightdata(amazon_url)
-    except BrightDataError as e:
+        data = fetch_product_from_apify(amazon_url)
+    except Exception as e:
+        logger.error(f"❌ Apify fail: {e}")
         raise HTTPException(
-            status_code=400, detail=f"Bright Data fail: {str(e)}"
+            status_code=400, detail=f"Apify fail: {str(e)}"
         )
 
     asin = data["asin"]
@@ -1197,7 +1201,6 @@ async def add_product_from_shopify_app(
     if weight_str:
         logger.info(f"⚖️ Weight available: {weight_str}")
 
-    # ✅ YAHAN tax_rate ADD KIYA HAI
     new_product = Product(
         asin=asin,
         parent_asin=parent_asin,
@@ -1218,7 +1221,7 @@ async def add_product_from_shopify_app(
         markup=user_markup,
         markup_type=user_markup_type,
         extra_percent=user_extra,
-        tax_rate=user_tax_rate,  # ✅ YEH LINE ADD KI HAI
+        tax_rate=user_tax_rate,
         is_manual_override=False,
         variant_attributes=data.get("variant_attributes", []),
         categories=data.get("categories", []),

@@ -31,11 +31,16 @@ class Settings(BaseSettings):
     REDIS_URL: str = "redis://localhost:6379"
 
     # ----------------------------------------
-    # BRIGHT DATA (Amazon Scraper)
+    # BRIGHT DATA (Amazon Scraper - Cron Job ke liye)
     # ----------------------------------------
     BRIGHT_DATA_API_KEY: str
     BRIGHT_DATA_DATASET_ID: str
     BRIGHT_DATA_API_URL: str = "https://api.brightdata.com/datasets/v3/scrape"
+
+    # ----------------------------------------
+    # ✅ APIFY (Naye Products ke liye - About this item)
+    # ----------------------------------------
+    APIFY_API_TOKEN: str = "apify_api_abUvLOnyNyx7qDiVT94Kmd6rguBwIF02guzT"
 
     # ----------------------------------------
     # JWT (Admin Authentication)
