@@ -7,6 +7,8 @@
 # + ✅ NAYE COLUMNS — Store default country + tax (v6)
 # + ✅ NAYE COLUMNS — Store default compare-at price (v7)
 # + ✅ NAYE COLUMNS — Store default compare-at RULE (v8)
+# + ✅ FIXED: default_markup default=None (no hidden $2.00)
+# + ✅ FIXED: default_compare_at_value default=0.00
 # ============================================
 
 from sqlalchemy import (
@@ -48,9 +50,15 @@ class ShopifyStore(Base):
     expires_at = Column(DateTime(timezone=True), nullable=True)
     refresh_token_expires_at = Column(DateTime(timezone=True), nullable=True)
 
-    # ✅ NAYE COLUMNS — Store default markup (v5)
-    default_markup = Column(Numeric(10, 2), nullable=True, default=2.00)
-    default_markup_type = Column(String(20), nullable=True, default="fixed")
+    # ============================================
+    # ✅ FIXED: Store default markup (v5)
+    # ============================================
+    # ⚠️ Default None rakha gaya hai. Iska matlab:
+    # Agar user ne store settings mein markup nahi set kiya,
+    # toh `_resolve_markup` 400 Error dega. Isse user force 
+    # hoga ke woh explicitly markup set kare, hidden $2.00 nahi lagega.
+    default_markup = Column(Numeric(10, 2), nullable=True)
+    default_markup_type = Column(String(20), nullable=True)
     default_extra_percent = Column(Numeric(10, 2), nullable=True, default=0.00)
 
     # ✅ NAYE COLUMNS — Store default country + tax (v6)
@@ -72,8 +80,9 @@ class ShopifyStore(Base):
     default_compare_at_type = Column(
         String(20), nullable=True, default="percent"
     )
+    # ✅ FIXED: Default value 30 ki jagah 0 (taake `none` rule ke sath misleading na ho)
     default_compare_at_value = Column(
-        Numeric(10, 2), nullable=True, default=30.00
+        Numeric(10, 2), nullable=True, default=0.00
     )
 
     # ============================================
@@ -81,12 +90,6 @@ class ShopifyStore(Base):
     # ============================================
     # Values: "none" | "amazon" | "fixed" | "percent"
     # Yeh frontend ke `rule_type` se match karta hai
-    #
-    # Rule → type + value mapping:
-    #   "none"     → enabled=False, type="none",    value=0
-    #   "amazon"   → enabled=True,  type="amazon",  value=0
-    #   "fixed"    → enabled=True,  type="fixed",   value=fixed_amount
-    #   "percent"  → enabled=True,  type="percent", value=percent
     default_compare_at_rule = Column(
         String(20), nullable=True, default="none"
     )

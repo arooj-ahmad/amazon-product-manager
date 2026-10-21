@@ -1,7 +1,8 @@
 # ============================================
 # app/services/brightdata.py
-# + ✅ FIXED: Product aur Package dimensions/weight sahi uthayega
-# + ✅ NAYA: Apify function for "About this item"
+# + ✅ Bright Data: Only for Cron Job (Price Update)
+# + ✅ Apify: 100% Product Fetch, Variations & Details
+# + ✅ FIXED: Apify parses variants, availability, specs
 # ============================================
 
 import logging
@@ -16,12 +17,25 @@ from app.config import settings
 logger = logging.getLogger(__name__)
 
 
+# ============================================
+# EXCEPTIONS
+# ============================================
 class BrightDataError(Exception):
     """Bright Data API se related errors"""
     pass
 
 
+class ApifyError(Exception):
+    """Apify API se related errors"""
+    pass
+
+
+# ============================================
+# HELPERS
+# ============================================
 def extract_asin_from_url(url: str) -> Optional[str]:
+    if not url or not isinstance(url, str):
+        return None
     patterns = [
         r"/dp/([A-Z0-9]{10})",
         r"/gp/product/([A-Z0-9]{10})",
@@ -36,11 +50,13 @@ def extract_asin_from_url(url: str) -> Optional[str]:
 
 
 def parse_price(value) -> Optional[float]:
-    if value is None: return None
+    if value is None:
+        return None
     try:
         if isinstance(value, str):
             cleaned = value.replace("$", "").replace(",", "").strip()
-            if not cleaned: return None
+            if not cleaned:
+                return None
             return float(cleaned)
         return float(value)
     except (ValueError, TypeError):
@@ -52,25 +68,38 @@ def parse_package_dimensions(package_dims_str: str) -> dict:
     if not package_dims_str or not isinstance(package_dims_str, str):
         return result
     s = package_dims_str.strip()
-    if not s: return result
-    
-    dims_match = re.search(r"([\d.]+)\s*x\s*([\d.]+)\s*x\s*([\d.]+)\s*(inches|inch|in|cm|centimeters|centimeter|mm|millimeters|millimeter)?", s, re.IGNORECASE)
+    if not s:
+        return result
+
+    dims_match = re.search(
+        r"([\d.]+)\s*x\s*([\d.]+)\s*x\s*([\d.]+)\s*"
+        r"(inches|inch|in|cm|centimeters|centimeter|mm|millimeters|millimeter)?",
+        s,
+        re.IGNORECASE,
+    )
     if dims_match:
         l, w, h = dims_match.group(1), dims_match.group(2), dims_match.group(3)
         unit = dims_match.group(4) or "inches"
         result["item_dimensions"] = f"{l} x {w} x {h} {unit}"
-        
-    weight_match = re.search(r"([\d.]+)\s*(ounces?|oz|pounds?|lbs?|lb|grams?|g|kilograms?|kg|milligrams?|mg)", s, re.IGNORECASE)
+
+    weight_match = re.search(
+        r"([\d.]+)\s*(ounces?|oz|pounds?|lbs?|lb|grams?|g|kilograms?|kg|milligrams?|mg)",
+        s,
+        re.IGNORECASE,
+    )
     if weight_match:
         result["item_weight"] = f"{weight_match.group(1)} {weight_match.group(2)}"
     return result
 
 
 def validate_parent_asin(parent_asin, asin: str) -> Optional[str]:
-    if not parent_asin or parent_asin == "None" or parent_asin == "": return None
-    if not isinstance(parent_asin, str): return None
+    if not parent_asin or parent_asin == "None" or parent_asin == "":
+        return None
+    if not isinstance(parent_asin, str):
+        return None
     parent_asin = parent_asin.strip()
-    if parent_asin == asin or len(parent_asin) != 10 or not parent_asin.isalnum(): return None
+    if parent_asin == asin or len(parent_asin) != 10 or not parent_asin.isalnum():
+        return None
     return parent_asin.upper()
 
 
@@ -79,15 +108,23 @@ def check_availability(raw: dict) -> tuple[bool, str, str]:
     buybox = raw.get("buybox_available")
     in_stock = raw.get("in_stock")
 
-    if add_to_cart is True: return True, "In Stock", "add_to_cart_available"
-    if buybox is True: return True, "In Stock", "buybox_available"
-    if in_stock is True: return True, "In Stock", "in_stock"
+    if add_to_cart is True:
+        return True, "In Stock", "add_to_cart_available"
+    if buybox is True:
+        return True, "In Stock", "buybox_available"
+    if in_stock is True:
+        return True, "In Stock", "in_stock"
 
     availability_text = raw.get("availability") or raw.get("stock_status") or ""
-    if not availability_text: return False, "Unknown", "no_info"
+    if not availability_text:
+        return False, "Unknown", "no_info"
 
     avail_lower = availability_text.lower().strip()
-    if any(kw in avail_lower for kw in ["out of stock", "unavailable", "not available", "sold out"]): return False, availability_text, "out"
+    if any(
+        kw in avail_lower
+        for kw in ["out of stock", "unavailable", "not available", "sold out"]
+    ):
+        return False, availability_text, "out"
     return True, availability_text, "in"
 
 
@@ -95,8 +132,10 @@ def parse_categories(raw: dict) -> list[str]:
     categories = []
     category_tree = raw.get("category_tree") or []
     for cat in category_tree:
-        if isinstance(cat, dict) and cat.get("name"): categories.append(cat["name"].strip())
-        elif isinstance(cat, str): categories.append(cat.strip())
+        if isinstance(cat, dict) and cat.get("name"):
+            categories.append(cat["name"].strip())
+        elif isinstance(cat, str):
+            categories.append(cat.strip())
     return [c for c in dict.fromkeys(categories) if c and len(c) < 100]
 
 
@@ -104,64 +143,215 @@ def parse_standard_fields(raw: dict) -> dict:
     fields = {}
     fields["model_number"] = raw.get("model_number")
     fields["manufacturer"] = raw.get("manufacturer")
-    
+
     fields["item_dimensions"] = (
-        raw.get("item_dimensions") or 
-        raw.get("product_dimensions") or 
-        ""
+        raw.get("item_dimensions")
+        or raw.get("product_dimensions")
+        or ""
     )
     fields["item_weight"] = (
-        raw.get("item_weight") or 
-        raw.get("product_weight") or 
-        ""
+        raw.get("item_weight")
+        or raw.get("product_weight")
+        or ""
     )
 
     package_dims_raw = raw.get("package_dimensions") or ""
     if package_dims_raw and isinstance(package_dims_raw, str):
         fields["package_dimensions"] = package_dims_raw.strip()
         parsed = parse_package_dimensions(package_dims_raw)
-        
+
         if not fields["item_dimensions"] and parsed.get("item_dimensions"):
             fields["item_dimensions"] = parsed["item_dimensions"]
-            
+
         if not fields["item_weight"] and parsed.get("item_weight"):
             fields["item_weight"] = parsed["item_weight"]
 
     product_details = raw.get("product_details") or []
     if isinstance(product_details, list):
         for item in product_details:
-            if not isinstance(item, dict): continue
+            if not isinstance(item, dict):
+                continue
             field_type = (item.get("type") or "").strip().lower()
             field_value = item.get("value")
-            if not field_value: continue
+            if not field_value:
+                continue
             value_str = str(field_value).strip()
 
-            if field_type in ("item dimensions", "item dimensions l x w x h", "product dimensions"):
+            if field_type in (
+                "item dimensions",
+                "item dimensions l x w x h",
+                "product dimensions",
+            ):
                 if not fields["item_dimensions"]:
                     fields["item_dimensions"] = value_str
             elif field_type in ("item weight", "shipping weight"):
                 if not fields["item_weight"]:
                     fields["item_weight"] = value_str
-            elif field_type == "color": fields["color"] = value_str
-            elif field_type == "material": fields["material_type"] = value_str
-            
-    return {k: v for k, v in fields.items() if v is not None and str(v).strip() and str(v).strip() != "None"}
+            elif field_type == "color":
+                fields["color"] = value_str
+            elif field_type == "material":
+                fields["material_type"] = value_str
+
+    return {
+        k: v
+        for k, v in fields.items()
+        if v is not None and str(v).strip() and str(v).strip() != "None"
+    }
 
 
 def parse_tags(raw: dict, categories: list[str]) -> list[str]:
     tags = list(categories)
     raw_tags = raw.get("tags") or []
     for t in raw_tags:
-        if isinstance(t, str): tags.append(t.strip())
+        if isinstance(t, str):
+            tags.append(t.strip())
     return list(dict.fromkeys(tags))[:15]
 
 
 # ============================================
-# BRIGHT DATA FETCH (For Cron Job)
+# 1. APIFY FETCH (100% Product Details)
+# ============================================
+def fetch_product_from_apify(amazon_url: str) -> dict:
+    """
+    Apify se product ki SAARI details fetch karta hai:
+    Title, Brand, Price, Images, Variations, Availability, Specs, Bullets.
+    """
+    client = ApifyClient(settings.APIFY_API_TOKEN)
+    actor_id = "delicious_zebu/amazon-product-details-scraper"
+
+    run_input = {"productUrls": [amazon_url]}
+
+    try:
+        run = client.actor(actor_id).call(run_input=run_input)
+        items = client.dataset(run.default_dataset_id).iterate_items()
+
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+
+            asin = item.get("asin") or extract_asin_from_url(amazon_url)
+            
+            # Parent ASIN & Variations
+            raw_parent = item.get("parent_asin")
+            parent_asin = validate_parent_asin(raw_parent, asin)
+            is_variation = bool(parent_asin)
+
+            variant_attributes = []
+            variations = []
+            
+            # Apify "variants" parse karein
+            apify_variants = item.get("variants") or []
+            for v in apify_variants:
+                if isinstance(v, dict):
+                    attrs = v.get("attributes") or v.get("attributes_list") or []
+                    if isinstance(attrs, str):
+                        attrs = [attrs]
+                    
+                    for attr in attrs:
+                        if isinstance(attr, str) and ":" in attr:
+                            name, value = attr.split(":", 1)
+                            variant_attributes.append({"name": name.strip(), "value": value.strip()})
+                            variations.append({"name": name.strip(), "value": value.strip()})
+
+            # Default variant fallback
+            if not variant_attributes:
+                default_vars = item.get("default_variant") or []
+                if isinstance(default_vars, str):
+                    default_vars = [default_vars]
+                for dv in default_vars:
+                    if isinstance(dv, str) and ":" in dv:
+                        name, value = dv.split(":", 1)
+                        variant_attributes.append({"name": name.strip(), "value": value.strip()})
+                        variations.append({"name": name.strip(), "value": value.strip()})
+
+            # Availability & Stock
+            avail_text = item.get("availability") or "In Stock"
+            is_available = "out of stock" not in avail_text.lower()
+            stock_qty = 1000 if is_available else 0
+
+            # Images
+            images_raw = item.get("images") or []
+            if isinstance(images_raw, str):
+                images = [images_raw]
+            elif isinstance(images_raw, list):
+                images = [img for img in images_raw if isinstance(img, str)]
+            else:
+                images = []
+
+            # Price
+            price_raw = item.get("buybox_price") or item.get("price")
+            price = parse_price(price_raw) if price_raw else None
+
+            # About this item (Bullets)
+            bullets = item.get("about_item") or []
+            if not bullets and item.get("description"):
+                bullets = [line.strip() for line in item["description"].split("\n") if line.strip()]
+            if not isinstance(bullets, list):
+                bullets = []
+                
+            if not bullets:
+                bullets = ["Check Amazon for full product details."]
+
+            # Specs
+            specs = {}
+            product_details = item.get("product_details") or []
+            if isinstance(product_details, list):
+                for detail in product_details:
+                    if isinstance(detail, dict) and detail.get("type") and detail.get("value"):
+                        specs[detail["type"]] = str(detail["value"]).strip()
+
+            if item.get("specifications") and isinstance(item["specifications"], dict):
+                specs.update(item["specifications"])
+
+            title = item.get("title") or "Untitled Product"
+            brand = item.get("brand") or item.get("manufacturer") or ""
+
+            return {
+                "asin": asin,
+                "parent_asin": parent_asin,
+                "is_variation": is_variation,
+                "title": title,
+                "brand": brand,
+                "amazon_price": price,
+                "list_price": None,
+                "image_url": images[0] if images else None,
+                "images": images,
+                "description": "",
+                "feature_bullets": bullets,
+                "availability": avail_text,
+                "is_available": is_available,
+                "stock_quantity": stock_qty,
+                "categories": [item.get("category")] if item.get("category") else [],
+                "tags": [],
+                "specifications": specs,
+                "product_details": product_details,
+                "variant_attributes": variant_attributes,
+                "variations": variations,
+                "item_weight": item.get("item_weight") or item.get("weight"),
+                "item_dimensions": item.get("item_dimensions") or item.get("dimensions"),
+                "package_dimensions": item.get("package_dimensions"),
+                "model_number": item.get("model_number"),
+                "manufacturer": item.get("manufacturer"),
+            }
+
+        logger.warning(f"⚠️ Apify: no item found for {amazon_url}")
+        return {}
+
+    except Exception as e:
+        logger.error(f"Apify fetch failed: {e}")
+        raise ApifyError(f"Apify Error: {str(e)}")
+
+
+# ============================================
+# 2. BRIGHT DATA FETCH (Only for Cron / Price Update)
 # ============================================
 async def fetch_product_from_brightdata(amazon_url: str) -> dict:
-    
-    api_url = f"{settings.BRIGHT_DATA_API_URL}?dataset_id={settings.BRIGHT_DATA_DATASET_ID}&include_errors=true"
+    """Yeh function sirf Cron Job (Price update) ke liye use hoga."""
+    api_url = (
+        f"{settings.BRIGHT_DATA_API_URL}"
+        f"?dataset_id={settings.BRIGHT_DATA_DATASET_ID}"
+        f"&include_errors=true"
+    )
     headers = {
         "Authorization": f"Bearer {settings.BRIGHT_DATA_API_KEY}",
         "Content-Type": "application/json",
@@ -177,10 +367,12 @@ async def fetch_product_from_brightdata(amazon_url: str) -> dict:
         raise BrightDataError(f"Bright Data API Error: {str(e)}")
 
     raw = data[0] if isinstance(data, list) and len(data) > 0 else data
-    if "error" in raw: raise BrightDataError(f"Bright Data error: {raw['error']}")
+    if "error" in raw:
+        raise BrightDataError(f"Bright Data error: {raw['error']}")
 
     asin = raw.get("asin") or extract_asin_from_url(amazon_url)
-    if not asin: raise BrightDataError("ASIN nahi mila")
+    if not asin:
+        raise BrightDataError("ASIN nahi mila")
 
     parent_asin = validate_parent_asin(raw.get("parent_asin"), asin)
     is_variation = bool(parent_asin)
@@ -204,7 +396,8 @@ async def fetch_product_from_brightdata(amazon_url: str) -> dict:
         for img in images_list:
             if isinstance(img, str) and img not in unique_images:
                 unique_images.append(img)
-    if not main_image and unique_images: main_image = unique_images[0]
+    if not main_image and unique_images:
+        main_image = unique_images[0]
 
     is_available, availability_text, _ = check_availability(raw)
     stock_quantity = 100 if is_available else 0
@@ -214,7 +407,8 @@ async def fetch_product_from_brightdata(amazon_url: str) -> dict:
     if isinstance(product_details, list):
         for item in product_details:
             if isinstance(item, dict) and item.get("type") and item.get("value"):
-                if item["type"] not in specs: specs[item["type"]] = str(item["value"]).strip()
+                if item["type"] not in specs:
+                    specs[item["type"]] = str(item["value"]).strip()
 
     categories = parse_categories(raw)
 
@@ -268,53 +462,7 @@ async def fetch_product_from_brightdata(amazon_url: str) -> dict:
 
 
 # ============================================
-# ✅ NAYA: APIFY FETCH (For New Products)
-# ============================================
-def fetch_product_from_apify(amazon_url: str) -> dict:
-    """Apify se product ki saari details + 'About this item' fetch karta hai."""
-    client = ApifyClient(settings.APIFY_API_TOKEN)
-    actor_id = "delicious_zebu/amazon-product-details-scraper"
-    
-    run_input = {"productUrls": [amazon_url]}
-    
-    try:
-        run = client.actor(actor_id).call(run_input=run_input)
-        items = client.dataset(run.default_dataset_id).iterate_items()
-        
-        for item in items:
-            asin = item.get("asin") or extract_asin_from_url(amazon_url)
-            images = item.get("images", [])
-            
-            price_raw = item.get("buybox_price") or item.get("price")
-            price = parse_price(price_raw) if price_raw else None
-            
-            return {
-                "asin": asin,
-                "parent_asin": None,
-                "is_variation": False,
-                "title": item.get("title"),
-                "brand": item.get("brand") or item.get("manufacturer"),
-                "amazon_price": price,
-                "image_url": images[0] if images else None,
-                "images": images,
-                "description": "",
-                "feature_bullets": item.get("about_item", []),
-                "availability": "In Stock",
-                "is_available": True,
-                "stock_quantity": 100,
-                "categories": [item.get("category")] if item.get("category") else [],
-                "tags": [],
-                "specifications": {},
-                "product_details": []
-            }
-    except Exception as e:
-        logger.error(f"Apify fetch failed: {e}")
-        raise BrightDataError(f"Apify Error: {str(e)}")
-    return {}
-
-
-# ============================================
-# CALCULATE FINAL PRICE (FIXED FORMULA)
+# CALCULATE FINAL PRICE
 # ============================================
 def calculate_final_price(
     amazon_price: Optional[float],
@@ -325,8 +473,10 @@ def calculate_final_price(
     extra_percent: float = 0.0,
     tax_rate: float = 0.0,
 ) -> Optional[float]:
-    if amazon_price is None: return admin_price
-    if markup is None or markup_type is None: return admin_price
+    if amazon_price is None:
+        return admin_price
+    if markup is None or markup_type is None:
+        return admin_price
 
     markup = markup or 0.0
     extra_percent = extra_percent or 0.0
