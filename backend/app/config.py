@@ -40,7 +40,9 @@ class Settings(BaseSettings):
     # ----------------------------------------
     # ✅ APIFY (Naye Products ke liye - About this item)
     # ----------------------------------------
-    APIFY_API_TOKEN: str = "apify_api_abUvLOnyNyx7qDiVT94Kmd6rguBwIF02guzT"
+    # FIX: Hardcoded token hata diya gaya hai. 
+    # Ab ye .env file se load hoga.
+    APIFY_API_TOKEN: str = ""
 
     # ----------------------------------------
     # JWT (Admin Authentication)
