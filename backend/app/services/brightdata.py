@@ -2,8 +2,7 @@
 # app/services/brightdata.py
 # + ✅ Bright Data: Only for Cron Job (Price Update)
 # + ✅ Apify: 100% Product Fetch, Variations & Details
-# + ✅ FIXED: USA Zip Code (30024) for Apify
-# + ✅ FIXED: Strict Availability check (Add to Cart logic)
+# + ✅ FIXED: Manual HTML Check for "Add to Cart" button
 # ============================================
 
 import logging
@@ -22,12 +21,10 @@ logger = logging.getLogger(__name__)
 # EXCEPTIONS
 # ============================================
 class BrightDataError(Exception):
-    """Bright Data API se related errors"""
     pass
 
 
 class ApifyError(Exception):
-    """Apify API se related errors"""
     pass
 
 
@@ -165,17 +162,35 @@ def parse_standard_fields(raw: dict) -> dict:
 
 
 # ============================================
+# HELPER: Amazon HTML se "Add to Cart" Check karo
+# ============================================
+def _check_amazon_html_for_cart(amazon_url: str) -> bool:
+    """Check karta hai ke Amazon par 'Add to Cart' button hai ya nahi."""
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        "Accept-Language": "en-US,en;q=0.9",
+    }
+    try:
+        with httpx.Client(timeout=15.0, follow_redirects=True) as client:
+            res = client.get(amazon_url, headers=headers)
+            html = res.text.lower()
+            
+            # Agar "add to cart" ya "buy now" nahi hai, toh Out of Stock hai
+            if "add to cart" not in html and "buy now" not in html:
+                return False
+            return True
+    except Exception as e:
+        logger.warning(f"HTML check fail: {e}")
+        return True
+
+
+# ============================================
 # 1. APIFY FETCH (100% Product Details)
 # ============================================
 def fetch_product_from_apify(amazon_url: str) -> dict:
-    """
-    Apify se product ki SAARI details fetch karta hai.
-    USA (Zip Code: 30024) ka data fetch karega.
-    """
     client = ApifyClient(settings.APIFY_API_TOKEN)
     actor_id = "delicious_zebu/amazon-product-details-scraper"
 
-    # ✅ FIXED: USA Zip Code aur Details add ki gayi hain
     run_input = {
         "Params": [amazon_url],
         "scrapeProductDetails": True,
@@ -226,28 +241,34 @@ def fetch_product_from_apify(amazon_url: str) -> dict:
                         variant_attributes.append({"name": name.strip(), "value": value.strip()})
                         variations.append({"name": name.strip(), "value": value.strip()})
 
-            # ✅ FIXED: Strict Availability Check (Add to cart button logic)
-            avail_text = str(item.get("availability") or "In Stock").strip()
+            # ✅ FIXED: HTML Check + Apify Logic
+            avail_text = str(item.get("availability") or "").strip()
             avail_lower = avail_text.lower()
-            
             price_raw = item.get("buybox_price") or item.get("price")
             
-            # Agar availability text mein out of stock likha hai
+            # 1. Agar text mein out of stock likha hai
             if any(kw in avail_lower for kw in ["out of stock", "unavailable", "currently unavailable", "not available", "sold out"]):
                 is_available = False
                 stock_qty = 0
                 avail_text = "Out of Stock"
-            # Agar price hi nahi hai (yani buybox nahi hai)
+            # 2. Agar price hi nahi hai
             elif price_raw is None:
                 is_available = False
                 stock_qty = 0
                 avail_text = "Out of Stock"
-            # Warna In Stock
+            # 3. Double Check with HTML (Kyunki Apify ghalat data de raha hai)
             else:
-                is_available = True
-                stock_qty = 100
-                if not avail_text:
-                    avail_text = "In Stock"
+                is_really_available = _check_amazon_html_for_cart(amazon_url)
+                if not is_really_available:
+                    is_available = False
+                    stock_qty = 0
+                    avail_text = "Out of Stock (HTML Check)"
+                    logger.warning("⚠️ Apify ne In Stock bataya, magar HTML check mein Add to Cart nahi mila.")
+                else:
+                    is_available = True
+                    stock_qty = 100
+                    if not avail_text:
+                        avail_text = "In Stock"
 
             # Images
             images_raw = item.get("images") or []
@@ -352,7 +373,6 @@ def fetch_product_from_apify(amazon_url: str) -> dict:
 # 2. BRIGHT DATA FETCH (Only for Cron / Price Update)
 # ============================================
 async def fetch_product_from_brightdata(amazon_url: str) -> dict:
-    """Yeh function sirf Cron Job (Price update) ke liye use hoga."""
     api_url = (
         f"{settings.BRIGHT_DATA_API_URL}"
         f"?dataset_id={settings.BRIGHT_DATA_DATASET_ID}"
@@ -405,7 +425,6 @@ async def fetch_product_from_brightdata(amazon_url: str) -> dict:
     if not main_image and unique_images:
         main_image = unique_images[0]
 
-    # Availability check for Bright Data
     in_stock = raw.get("in_stock")
     if in_stock is True:
         is_available = True
