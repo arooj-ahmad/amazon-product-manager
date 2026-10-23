@@ -1,6 +1,8 @@
 # ============================================
 # app/services/brightdata.py
-# + ✅ FIXED: Playwright HTML Check for "add-to-cart-button"
+# + ✅ Bright Data: Only for Cron Job (Price Update)
+# + ✅ Apify: 100% Product Fetch, Variations & Details
+# + ✅ FIXED: Removed httpx HTML check (100% Apify Data)
 # ============================================
 
 import logging
@@ -9,7 +11,6 @@ from typing import Optional
 
 import httpx
 from apify_client import ApifyClient
-from playwright.sync_api import sync_playwright
 
 from app.config import settings
 
@@ -20,10 +21,12 @@ logger = logging.getLogger(__name__)
 # EXCEPTIONS
 # ============================================
 class BrightDataError(Exception):
+    """Bright Data API se related errors"""
     pass
 
 
 class ApifyError(Exception):
+    """Apify API se related errors"""
     pass
 
 
@@ -161,51 +164,13 @@ def parse_standard_fields(raw: dict) -> dict:
 
 
 # ============================================
-# ✅ FIXED: Playwright se "add-to-cart-button" check karo
-# ============================================
-def _check_amazon_html_for_cart(amazon_url: str) -> bool:
-    """
-    Playwright (Headless Chrome) use karke check karta hai ke 
-    Amazon par 'add-to-cart-button' hai ya nahi.
-    """
-    try:
-        with sync_playwright() as p:
-            # Browser launch karein (headless mode)
-            browser = p.chromium.launch(headless=True)
-            page = browser.new_page()
-
-            # Amazon ko bot na samjhe iske liye User-Agent set karein
-            page.set_extra_http_headers({
-                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-                "Accept-Language": "en-US,en;q=0.9",
-            })
-
-            # Page load karein (60 sec timeout)
-            page.goto(amazon_url, timeout=60000, wait_until="domcontentloaded")
-            
-            # Page ka HTML content lein
-            html = page.content().lower()
-            browser.close()
-
-            # ✅ YEH HAI ASLI CHECK
-            if 'id="add-to-cart-button"' in html or "add-to-cart-button" in html:
-                return True
-            
-            # Agar Buy Now button bhi hai toh available maan lein
-            if 'id="buy-now-button"' in html or "buy-now-button" in html:
-                return True
-                
-            return False
-    except Exception as e:
-        logger.warning(f"Playwright HTML check fail: {e}")
-        # Agar browser fail ho jaye toh default True (available) return karein taake product add na ruk jaye
-        return True
-
-
-# ============================================
 # 1. APIFY FETCH (100% Product Details)
 # ============================================
 def fetch_product_from_apify(amazon_url: str) -> dict:
+    """
+    Apify se product ki SAARI details fetch karta hai.
+    USA (Zip Code: 30024) ka data fetch karega.
+    """
     client = ApifyClient(settings.APIFY_API_TOKEN)
     actor_id = "delicious_zebu/amazon-product-details-scraper"
 
@@ -259,8 +224,8 @@ def fetch_product_from_apify(amazon_url: str) -> dict:
                         variant_attributes.append({"name": name.strip(), "value": value.strip()})
                         variations.append({"name": name.strip(), "value": value.strip()})
 
-            # ✅ FIXED: Playwright HTML Check + Apify Logic
-            avail_text = str(item.get("availability") or "").strip()
+            # ✅ FIXED: 100% Apify Data (No HTML check)
+            avail_text = str(item.get("availability") or "In Stock").strip()
             avail_lower = avail_text.lower()
             price_raw = item.get("buybox_price") or item.get("price")
             
@@ -274,19 +239,12 @@ def fetch_product_from_apify(amazon_url: str) -> dict:
                 is_available = False
                 stock_qty = 0
                 avail_text = "Out of Stock"
-            # 3. Double Check with Playwright HTML
+            # 3. Warna In Stock
             else:
-                is_really_available = _check_amazon_html_for_cart(amazon_url)
-                if not is_really_available:
-                    is_available = False
-                    stock_qty = 0
-                    avail_text = "Out of Stock (HTML Check)"
-                    logger.warning("⚠️ Apify ne In Stock bataya, magar HTML check mein Add to Cart nahi mila.")
-                else:
-                    is_available = True
-                    stock_qty = 100
-                    if not avail_text:
-                        avail_text = "In Stock"
+                is_available = True
+                stock_qty = 100
+                if not avail_text:
+                    avail_text = "In Stock"
 
             # Images
             images_raw = item.get("images") or []
@@ -391,6 +349,7 @@ def fetch_product_from_apify(amazon_url: str) -> dict:
 # 2. BRIGHT DATA FETCH (Only for Cron / Price Update)
 # ============================================
 async def fetch_product_from_brightdata(amazon_url: str) -> dict:
+    """Yeh function sirf Cron Job (Price update) ke liye use hoga."""
     api_url = (
         f"{settings.BRIGHT_DATA_API_URL}"
         f"?dataset_id={settings.BRIGHT_DATA_DATASET_ID}"
