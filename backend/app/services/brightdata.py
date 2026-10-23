@@ -1,6 +1,7 @@
 # ============================================
 # app/services/brightdata.py
 # + ✅ INVENTORY: Proper check_availability function
+# + ✅ FIXED: Prime Exclusive check BEFORE Buybox check
 # ============================================
 
 import logging
@@ -145,30 +146,33 @@ def parse_standard_fields(raw: dict) -> dict:
 
 
 # ============================================
-# ✅ NAYA: Availability Checker
+# ✅ FIXED: Availability Checker (Prime First!)
 # ============================================
 def check_availability(raw: dict) -> tuple[bool, str, str]:
-    """Aapki requirement ke mutabiq Add to Cart / Buybox check karta hai."""
+    """Aapki requirement ke mutabiq: Pehle Prime check, phir Buybox."""
     
-    # Apify data ko map karte hain
+    # 1. SABSE PEHLE JOIN PRIME / PRIME EXCLUSIVE CHECK KARO
+    # (Kyunke Prime Exclusive products par price hoti hai lekin Add to Cart nahi hota)
+    item_str = str(raw).lower()
+    if "join prime" in item_str or "prime exclusive" in item_str or "prime member price" in item_str:
+        return False, "Prime Exclusive (No Add to Cart)", "prime"
+
+    # 2. Ab Apify data map karo
     add_to_cart = raw.get("add_to_cart_available")
     buybox = raw.get("buybox_available")
     in_stock = raw.get("in_stock")
-    
-    # Apify ke buybox_price ko as a buybox indicator use karte hain
-    if buybox is None and raw.get("buybox_price"):
+    price_raw = raw.get("buybox_price") or raw.get("price")
+
+    # 3. Buybox indicator check (sirf tab jab Prime nahi hai)
+    if buybox is None and price_raw:
         buybox = True
 
-    # Prime exclusive / Join prime ka check
-    item_str = str(raw).lower()
-    if "join prime" in item_str or "prime exclusive" in item_str:
-        return False, "Prime Exclusive", "prime"
-
-    # Logic as per aapka code
+    # 4. Standard checks
     if add_to_cart is True: return True, "In Stock", "add_to_cart_available"
     if buybox is True: return True, "In Stock", "buybox_available"
     if in_stock is True: return True, "In Stock", "in_stock"
 
+    # 5. Availability text check
     availability_text = raw.get("availability") or raw.get("stock_status") or ""
     if not availability_text: 
         return False, "Unknown", "no_info"
@@ -177,7 +181,11 @@ def check_availability(raw: dict) -> tuple[bool, str, str]:
     if any(kw in avail_lower for kw in ["out of stock", "unavailable", "not available", "sold out", "currently unavailable"]): 
         return False, availability_text, "out"
     
-    return True, availability_text, "in"
+    # 6. Agar price hai to In Stock
+    if price_raw:
+        return True, "In Stock", "price_available"
+
+    return False, "Out of Stock", "no_price"
 
 
 # ============================================
