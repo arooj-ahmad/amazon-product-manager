@@ -1,7 +1,6 @@
 # ============================================
 # app/services/shopify/product_core.py
-# + ✅ FIXED v11: Category set karne ke liye alag mutation (updateProductCategory)
-# + ✅ FIXED v11: ProductType aur Tags ka sahi GraphQL mutation
+# + ✅ FIXED v12: Category Update (productUpdate with 'category' field)
 # ============================================
 
 import logging
@@ -36,10 +35,9 @@ logger = logging.getLogger(__name__)
 
 
 # ============================================
-# ✅ FIXED v11: Shopify se asli Category ID fetch karo
+# ✅ FIXED: Shopify se asli Category ID fetch karo
 # ============================================
 async def _get_default_category_id(shop: str, access_token: str) -> Optional[str]:
-    """Shopify Taxonomy API se 'Toys & Games' category ki asli ID nikalta hai."""
     query = """
     query {
       taxonomy {
@@ -62,11 +60,11 @@ async def _get_default_category_id(shop: str, access_token: str) -> Optional[str
     except Exception as e:
         logger.error(f"❌ Failed to fetch default category ID: {e}")
     
-    return "gid://shopify/TaxonomyCategory/tg" # Default fallback
+    return "gid://shopify/TaxonomyCategory/tg"
 
 
 # ============================================
-# ✅ FIXED v11: Category, Type & Tags explicitly update karo
+# ✅ FIXED: Category, Type & Tags explicitly update karo
 # ============================================
 async def _update_product_details(
     shop: str,
@@ -78,39 +76,33 @@ async def _update_product_details(
 ):
     """Shopify mein category, type aur tags ko explicitly update karta hai."""
     
-    # 1. Product Type Update (productUpdate)
-    if product_type:
-        type_mutation = """
+    # 1. Product Update (Category + ProductType)
+    # ✅ SAHI FIELDS: 'category' aur 'productType'
+    if category_id or product_type:
+        update_input = {"id": product_id}
+        
+        if category_id:
+            update_input["category"] = category_id
+            
+        if product_type:
+            update_input["productType"] = product_type
+
+        cat_mutation = """
         mutation productUpdate($input: ProductInput!) {
           productUpdate(input: $input) {
-            product { id productType }
-            userErrors { field message }
-          }
-        }
-        """
-        await shopify_graphql(
-            shop, access_token, type_mutation, 
-            {"input": {"id": product_id, "productType": product_type}}
-        )
-
-    # 2. Category Update (updateProductCategory) - ✅ YEH NAYA HAI
-    if category_id:
-        cat_mutation = """
-        mutation updateProductCategory($productId: ID!, $categoryId: ID!) {
-          updateProductCategory(productId: $productId, categoryId: $categoryId) {
-            product { id category { id name } }
+            product { id category { id name } productType }
             userErrors { field message }
           }
         }
         """
         cat_result = await shopify_graphql(
             shop, access_token, cat_mutation, 
-            {"productId": product_id, "categoryId": category_id}
+            {"input": update_input}
         )
-        if "errors" in cat_result or cat_result.get("data", {}).get("updateProductCategory", {}).get("userErrors"):
-            logger.warning(f"⚠️ Category update failed: {cat_result}")
+        if "errors" in cat_result or cat_result.get("data", {}).get("productUpdate", {}).get("userErrors"):
+            logger.warning(f"⚠️ Product type/category update failed: {cat_result}")
 
-    # 3. Tags Update (tagsAdd)
+    # 2. Tags Update (tagsAdd)
     if tags:
         tags_mutation = """
         mutation tagsAdd($id: ID!, $tags: [String!]!) {
@@ -398,7 +390,7 @@ async def create_shopify_product(
 
     logger.info(f"✅ Product created: {shopify_product.get('title')}")
 
-    # ✅ FIXED v11: Category, Type aur Tags explicitly update karein
+    # ✅ Category, Type aur Tags explicitly update karein
     if product_id:
         await _update_product_details(
             shop=shop,
