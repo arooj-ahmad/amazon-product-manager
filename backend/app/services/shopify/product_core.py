@@ -1,11 +1,7 @@
 # ============================================
 # app/services/shopify/product_core.py
-# Product create (simple + variants) + delete + search
-# + ✅ NAYA: Weight mapping to Shopify variant
-# + ✅ NAYA v2: Compare-at price store settings se aata hai
-# + ✅ NAYA v3: 4 rule types support (none/amazon/fixed/percent)
-# + ✅ FIXED v6: Out-of-stock product add hoga, lekin stock 0 hoga (ACTIVE/DRAFT fix)
-# + ✅ FIXED v9: Category ID dynamically fetch hogi, Type & Tags explicitly update honge
+# + ✅ FIXED v10: Category ID dynamically fetch hogi (No Invalid ID error)
+# + ✅ FIXED v10: ProductType fallback to "General"
 # ============================================
 
 import logging
@@ -40,14 +36,14 @@ logger = logging.getLogger(__name__)
 
 
 # ============================================
-# ✅ FIXED v9: "Toys & Games" ki asli ID Shopify se fetch karo
+# ✅ FIXED v10: Shopify se asli Category ID fetch karo
 # ============================================
 async def _get_default_category_id(shop: str, access_token: str) -> Optional[str]:
-    """Shopify API se 'Toys & Games' category ki asli ID fetch karta hai."""
+    """Shopify Taxonomy API se 'Toys & Games' category ki asli ID nikalta hai."""
     query = """
     query {
       taxonomy {
-        categories(first: 10, search: "Toys & Games") {
+        categories(first: 5, search: "Toys & Games") {
           edges {
             node {
               id
@@ -62,17 +58,16 @@ async def _get_default_category_id(shop: str, access_token: str) -> Optional[str
         result = await shopify_graphql(shop, access_token, query)
         edges = result.get("data", {}).get("taxonomy", {}).get("categories", {}).get("edges", [])
         if edges:
-            # Jo pehli category mile uski ID return karein
             return edges[0]["node"]["id"]
     except Exception as e:
         logger.error(f"❌ Failed to fetch default category ID: {e}")
     
-    # Agar API fail ho jaye toh fallback (magar yeh ID Shopify ki API se fetch karni chahiye)
-    return "gid://shopify/TaxonomyCategory/aa-1-2" 
+    # Fallback ID (agar API fail ho jaye)
+    return "gid://shopify/TaxonomyCategory/aa-1-2"
 
 
 # ============================================
-# ✅ FIXED v9: Category, Type & Tags explicitly update karo
+# ✅ FIXED v10: Category, Type & Tags explicitly update karo
 # ============================================
 async def _update_product_details(
     shop: str,
@@ -305,7 +300,7 @@ async def create_shopify_product(
             categories=categories,
         )
     
-    # ✅ FIXED v9: Agar taxonomy match fail ho, toh API se asli ID fetch karein
+    # ✅ FIXED v10: Agar taxonomy match fail ho, toh API se asli ID fetch karein
     if not shopify_category_id:
         logger.warning("⚠️ Taxonomy match failed. Fetching default 'Toys & Games' ID.")
         shopify_category_id = await _get_default_category_id(shop, access_token)
@@ -399,7 +394,7 @@ async def create_shopify_product(
 
     logger.info(f"✅ Product created: {shopify_product.get('title')}")
 
-    # ✅ FIXED v9: Category, Type aur Tags explicitly update karein
+    # ✅ FIXED v10: Category, Type aur Tags explicitly update karein
     if product_id:
         await _update_product_details(
             shop=shop,
