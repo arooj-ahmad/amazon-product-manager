@@ -2,8 +2,7 @@
 # app/services/brightdata.py
 # + ✅ Bright Data: Only for Cron Job (Price Update)
 # + ✅ Apify: 100% Product Fetch, Variations & Details
-# + ✅ FIXED: Apify scrapes Product Details (Bullets)
-# + ✅ FIXED: Ultra-Strict Availability check + HTML Double Check
+# + ✅ FIXED: Stock 100/0 based on Apify Data (No HTML block)
 # + ✅ FIXED: Categories & Tags extraction added
 # ============================================
 
@@ -191,29 +190,6 @@ def parse_standard_fields(raw: dict) -> dict:
 
 
 # ============================================
-# HELPER: Double Check Amazon HTML for Cart
-# ============================================
-def _check_amazon_html_for_cart(amazon_url: str) -> bool:
-    """Check karta hai ke Amazon par 'Add to Cart' button hai ya nahi (Sync)."""
-    headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-        "Accept-Language": "en-US,en;q=0.9",
-    }
-    try:
-        with httpx.Client(timeout=15.0, follow_redirects=True) as client:
-            res = client.get(amazon_url, headers=headers)
-            html = res.text.lower()
-            
-            # Agar "add to cart" ya "buy now" nahi hai, toh Out of Stock hai
-            if "add to cart" not in html and "buy now" not in html:
-                return False
-            return True
-    except Exception as e:
-        logger.warning(f"HTML check fail: {e}")
-        return True # Agar check fail ho jaye toh default available maan lein
-
-
-# ============================================
 # 1. APIFY FETCH (100% Product Details)
 # ============================================
 def fetch_product_from_apify(amazon_url: str) -> dict:
@@ -275,7 +251,7 @@ def fetch_product_from_apify(amazon_url: str) -> dict:
                         variant_attributes.append({"name": name.strip(), "value": value.strip()})
                         variations.append({"name": name.strip(), "value": value.strip()})
 
-            # ✅ FIXED: Ultra-Strict Availability Check + HTML Double Check
+            # ✅ FIXED: Strict Availability Check based on Apify Data (No HTML Bot Block)
             avail_text = str(item.get("availability") or "").strip()
             avail_lower = avail_text.lower()
             
@@ -283,11 +259,8 @@ def fetch_product_from_apify(amazon_url: str) -> dict:
             has_buybox = item.get("buybox_available")
             price_raw = item.get("buybox_price") or item.get("price")
             
+            # Agar price nahi hai, ya "out of stock" likha hai, ya cart False hai
             if price_raw is None:
-                is_available = False
-                stock_qty = 0
-                avail_text = "Out of Stock"
-            elif has_cart is False and has_buybox is False:
                 is_available = False
                 stock_qty = 0
                 avail_text = "Out of Stock"
@@ -295,19 +268,16 @@ def fetch_product_from_apify(amazon_url: str) -> dict:
                 is_available = False
                 stock_qty = 0
                 avail_text = "Out of Stock"
+            elif has_cart is False and has_buybox is False:
+                is_available = False
+                stock_qty = 0
+                avail_text = "Out of Stock"
             else:
-                # Apify keh raha hai available hai, magar HTML se double check karein
-                is_really_available = _check_amazon_html_for_cart(amazon_url)
-                if not is_really_available:
-                    is_available = False
-                    stock_qty = 0
-                    avail_text = "Out of Stock (HTML Check)"
-                    logger.warning("⚠️ Apify ne In Stock bataya, magar HTML check mein Add to Cart nahi mila.")
-                else:
-                    is_available = True
-                    stock_qty = 1000
-                    if not avail_text:
-                        avail_text = "In Stock"
+                # Agar data available hai, toh stock 100
+                is_available = True
+                stock_qty = 100
+                if not avail_text:
+                    avail_text = "In Stock"
 
             # Images
             images_raw = item.get("images") or []
