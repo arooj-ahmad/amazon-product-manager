@@ -3,8 +3,7 @@
 # + ✅ Bright Data: Only for Cron Job (Price Update)
 # + ✅ Apify: 100% Product Fetch, Variations & Details
 # + ✅ FIXED: Apify scrapes Product Details (Bullets)
-# + ✅ FIXED: run_input added scrapeProductDetails: True
-# + ✅ FIXED: Strict Availability check (Out of Stock = 0)
+# + ✅ FIXED: Strict Availability check (Checks add_to_cart/buybox)
 # ============================================
 
 import logging
@@ -273,17 +272,31 @@ def fetch_product_from_apify(amazon_url: str) -> dict:
                         variations.append({"name": name.strip(), "value": value.strip()})
 
             # ✅ FIXED: Strict Availability & Stock Check
-            avail_text = str(item.get("availability") or "In Stock").strip()
+            avail_text = str(item.get("availability") or "").strip()
             avail_lower = avail_text.lower()
             
-            # Agar Amazon ka text out of stock, unavailable, ya currently unavailable hai
+            # Apify kabhi "add_to_cart" ya "buybox" field bhi bhejta hai, unhe check karein
+            has_cart = item.get("add_to_cart_available") or item.get("buybox_available")
+            
+            # Agar text mein out of stock likha hai, ya cart available nahi hai
             if "out of stock" in avail_lower or "unavailable" in avail_lower or "currently unavailable" in avail_lower or "not available" in avail_lower:
+                is_available = False
+                stock_qty = 0
+                avail_text = "Out of Stock"
+            elif has_cart is False:
+                is_available = False
+                stock_qty = 0
+                avail_text = "Out of Stock"
+            elif not avail_text and not has_cart: 
+                # Agar Apify ne availability blank chhod di hai aur cart bhi nahi hai
                 is_available = False
                 stock_qty = 0
                 avail_text = "Out of Stock"
             else:
                 is_available = True
                 stock_qty = 1000
+                if not avail_text:
+                    avail_text = "In Stock"
 
             # Images
             images_raw = item.get("images") or []
