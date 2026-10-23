@@ -2,7 +2,7 @@
 # app/services/brightdata.py
 # + ✅ Bright Data: Only for Cron Job (Price Update)
 # + ✅ Apify: 100% Product Fetch, Variations & Details
-# + ✅ FIXED: Stock 100/0 based on Apify Data (No HTML block)
+# + ✅ FIXED: Stock 100/0 based STRICTLY on Apify Data
 # + ✅ FIXED: Categories & Tags extraction added
 # ============================================
 
@@ -200,7 +200,6 @@ def fetch_product_from_apify(amazon_url: str) -> dict:
     client = ApifyClient(settings.APIFY_API_TOKEN)
     actor_id = "delicious_zebu/amazon-product-details-scraper"
 
-    # ✅ FIXED: Add scrapeProductDetails: True to force Apify to fetch bullets
     run_input = {
         "Params": [amazon_url],
         "scrapeProductDetails": True
@@ -226,7 +225,6 @@ def fetch_product_from_apify(amazon_url: str) -> dict:
             variant_attributes = []
             variations = []
             
-            # Apify "variants" parse karein
             apify_variants = item.get("variants") or []
             for v in apify_variants:
                 if isinstance(v, dict):
@@ -240,7 +238,6 @@ def fetch_product_from_apify(amazon_url: str) -> dict:
                             variant_attributes.append({"name": name.strip(), "value": value.strip()})
                             variations.append({"name": name.strip(), "value": value.strip()})
 
-            # Default variant fallback
             if not variant_attributes:
                 default_vars = item.get("default_variant") or []
                 if isinstance(default_vars, str):
@@ -251,7 +248,7 @@ def fetch_product_from_apify(amazon_url: str) -> dict:
                         variant_attributes.append({"name": name.strip(), "value": value.strip()})
                         variations.append({"name": name.strip(), "value": value.strip()})
 
-            # ✅ FIXED: Strict Availability Check based on Apify Data (No HTML Bot Block)
+            # ✅ FIXED: STRICT AVAILABILITY CHECK (Only based on Apify Data)
             avail_text = str(item.get("availability") or "").strip()
             avail_lower = avail_text.lower()
             
@@ -259,21 +256,23 @@ def fetch_product_from_apify(amazon_url: str) -> dict:
             has_buybox = item.get("buybox_available")
             price_raw = item.get("buybox_price") or item.get("price")
             
-            # Agar price nahi hai, ya "out of stock" likha hai, ya cart False hai
+            # 1. Agar price hi nahi hai
             if price_raw is None:
                 is_available = False
                 stock_qty = 0
                 avail_text = "Out of Stock"
+            # 2. Agar text mein out of stock likha hai
             elif any(kw in avail_lower for kw in ["out of stock", "unavailable", "currently unavailable", "not available", "sold out"]):
                 is_available = False
                 stock_qty = 0
                 avail_text = "Out of Stock"
+            # 3. Agar cart aur buybox dono False hain
             elif has_cart is False and has_buybox is False:
                 is_available = False
                 stock_qty = 0
                 avail_text = "Out of Stock"
+            # 4. Warna In Stock
             else:
-                # Agar data available hai, toh stock 100
                 is_available = True
                 stock_qty = 100
                 if not avail_text:
@@ -291,17 +290,12 @@ def fetch_product_from_apify(amazon_url: str) -> dict:
             # Price
             price = parse_price(price_raw) if price_raw else None
 
-            # ✅ FIXED: Apify "About this item" (Bullets) parsing
+            # Bullets
             bullets = item.get("about_item") or item.get("feature_bullets") or []
-            
-            # Agar bullets list nahi hai (string hai), toh newline se split karein
             if isinstance(bullets, str):
                 bullets = [line.strip() for line in bullets.split("\n") if line.strip()]
-                
-            # Agar abhi bhi bullets nahi mile, toh description se dhoondein
             if not bullets and item.get("description"):
                 bullets = [line.strip() for line in item["description"].split("\n") if line.strip()]
-                
             if not isinstance(bullets, list) or len(bullets) == 0:
                 bullets = ["Check Amazon for full product details."]
 
@@ -319,7 +313,7 @@ def fetch_product_from_apify(amazon_url: str) -> dict:
             title = item.get("title") or "Untitled Product"
             brand = item.get("brand") or item.get("manufacturer") or ""
 
-            # ✅ FIXED: Extract Categories & Tags
+            # Categories & Tags
             categories = []
             raw_cat = item.get("categories") or item.get("category") or item.get("category_tree")
             if isinstance(raw_cat, list):
@@ -344,7 +338,6 @@ def fetch_product_from_apify(amazon_url: str) -> dict:
             elif isinstance(raw_tags, str):
                 tags.append(raw_tags)
 
-            # Combine clean categories and tags
             categories = list(dict.fromkeys([str(c).strip() for c in categories if c and str(c).strip() and len(str(c)) < 100]))
             tags = list(dict.fromkeys([str(t).strip() for t in tags if t and str(t).strip()]))[:15]
 
@@ -363,8 +356,8 @@ def fetch_product_from_apify(amazon_url: str) -> dict:
                 "availability": avail_text,
                 "is_available": is_available,
                 "stock_quantity": stock_qty,
-                "categories": categories, # ✅ Added
-                "tags": tags,             # ✅ Added
+                "categories": categories,
+                "tags": tags,
                 "specifications": specs,
                 "product_details": product_details,
                 "variant_attributes": variant_attributes,
@@ -533,6 +526,6 @@ def calculate_final_price(
     final_price = base_price + (base_price * (tax_rate / 100.0))
 
     if is_manual_override and admin_price is not None:
-        return round(max(admin_price, final_price), 2)
+        return max(admin_price, final_price)
 
     return round(final_price, 2)

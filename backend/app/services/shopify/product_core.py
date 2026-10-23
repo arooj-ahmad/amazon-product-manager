@@ -5,6 +5,7 @@
 # + ✅ NAYA v2: Compare-at price store settings se aata hai
 # + ✅ NAYA v3: 4 rule types support (none/amazon/fixed/percent)
 # + ✅ FIXED v6: Out-of-stock product add hoga, lekin stock 0 hoga (ACTIVE/DRAFT fix)
+# + ✅ FIXED v7: Category & Tags explicitly update honge
 # ============================================
 
 import logging
@@ -36,6 +37,53 @@ from app.services.shopify.product_variants import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+# ============================================
+# ✅ NAYA v7: Category & Tags ko explicitly update karo
+# ============================================
+async def _update_product_category_and_tags(
+    shop: str,
+    access_token: str,
+    product_id: str,
+    category_id: str,
+    tags: list,
+):
+    """Shopify mein category aur tags ko explicitly update karta hai."""
+    
+    # 1. Category Update (productUpdate)
+    if category_id:
+        cat_mutation = """
+        mutation productUpdate($input: ProductInput!) {
+          productUpdate(input: $input) {
+            product { id category { id name } }
+            userErrors { field message }
+          }
+        }
+        """
+        cat_result = await shopify_graphql(
+            shop, access_token, cat_mutation, 
+            {"input": {"id": product_id, "category": category_id}}
+        )
+        if "errors" in cat_result or cat_result.get("data", {}).get("productUpdate", {}).get("userErrors"):
+            logger.warning(f"⚠️ Category update failed: {cat_result}")
+
+    # 2. Tags Update (tagsAdd)
+    if tags:
+        tags_mutation = """
+        mutation tagsAdd($id: ID!, $tags: [String!]!) {
+          tagsAdd(id: $id, tags: $tags) {
+            node { id }
+            userErrors { field message }
+          }
+        }
+        """
+        tags_result = await shopify_graphql(
+            shop, access_token, tags_mutation, 
+            {"id": product_id, "tags": tags}
+        )
+        if "errors" in tags_result or tags_result.get("data", {}).get("tagsAdd", {}).get("userErrors"):
+            logger.warning(f"⚠️ Tags update failed: {tags_result}")
 
 
 # ============================================
@@ -303,14 +351,8 @@ async def create_shopify_product(
         "status": status,
     }
 
-    if shopify_tags:
-        input_data["tags"] = shopify_tags
-
     if product_type:
         input_data["productType"] = product_type
-
-    if shopify_category_id:
-        input_data["category"] = shopify_category_id
 
     variant_attrs = product_data.get("variant_attributes") or []
     product_options = []
@@ -398,6 +440,16 @@ async def create_shopify_product(
     product_id = shopify_product.get("id")
 
     logger.info(f"✅ Product created: {shopify_product.get('title')}")
+
+    # ✅ FIXED v7: Category aur Tags explicitly update karein
+    if product_id:
+        await _update_product_category_and_tags(
+            shop=shop,
+            access_token=access_token,
+            product_id=product_id,
+            category_id=shopify_category_id,
+            tags=shopify_tags
+        )
 
     if product_id and is_available:
         # Sirf tab publish karein jab product available ho
@@ -506,14 +558,8 @@ async def create_shopify_product_with_variants(
         ],
     }
 
-    if shopify_tags:
-        input_data["tags"] = shopify_tags
-
     if product_type:
         input_data["productType"] = product_type
-
-    if shopify_category_id:
-        input_data["category"] = shopify_category_id
 
     mutation_create = """
     mutation productSet($input: ProductSetInput!) {
@@ -550,6 +596,16 @@ async def create_shopify_product_with_variants(
     product_id = shopify_product.get("id")
 
     logger.info(f"✅ Product created: {shopify_product.get('title')}")
+
+    # ✅ FIXED v7: Category aur Tags explicitly update karein
+    if product_id:
+        await _update_product_category_and_tags(
+            shop=shop,
+            access_token=access_token,
+            product_id=product_id,
+            category_id=shopify_category_id,
+            tags=shopify_tags
+        )
 
     if product_id and is_available:
         await publish_product_to_channels(
