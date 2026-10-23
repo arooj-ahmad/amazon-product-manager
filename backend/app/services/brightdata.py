@@ -1,7 +1,6 @@
 # ============================================
 # app/services/brightdata.py
-# + ✅ INVENTORY: Prime check (0) + Buybox check (100)
-# + ✅ Category: breadCrumbs parse karke categories mein daala
+# + ✅ INVENTORY: Proper check_availability function
 # ============================================
 
 import logging
@@ -149,27 +148,27 @@ def parse_standard_fields(raw: dict) -> dict:
 # ✅ NAYA: Availability Checker
 # ============================================
 def check_availability(raw: dict) -> tuple[bool, str, str]:
-    """Check Add to Cart / Prime Exclusive / Out of Stock."""
+    """Aapki requirement ke mutabiq Add to Cart / Buybox check karta hai."""
     
-    # 1. Prime Exclusive Check (Sabse pehle, kyunke Prime par price hoti hai lekin button nahi)
-    item_str = str(raw).lower()
-    if "join prime" in item_str or "prime exclusive" in item_str or "prime member price" in item_str:
-        return False, "Prime Exclusive (No Add to Cart)", "prime"
-
-    # 2. Apify Data Mapping
+    # Apify data ko map karte hain
     add_to_cart = raw.get("add_to_cart_available")
     buybox = raw.get("buybox_available")
     in_stock = raw.get("in_stock")
-    price_raw = raw.get("buybox_price") or raw.get("price")
-
-    if buybox is None and price_raw:
+    
+    # Apify ke buybox_price ko as a buybox indicator use karte hain
+    if buybox is None and raw.get("buybox_price"):
         buybox = True
 
+    # Prime exclusive / Join prime ka check
+    item_str = str(raw).lower()
+    if "join prime" in item_str or "prime exclusive" in item_str:
+        return False, "Prime Exclusive", "prime"
+
+    # Logic as per aapka code
     if add_to_cart is True: return True, "In Stock", "add_to_cart_available"
     if buybox is True: return True, "In Stock", "buybox_available"
     if in_stock is True: return True, "In Stock", "in_stock"
 
-    # 3. Availability Text Check
     availability_text = raw.get("availability") or raw.get("stock_status") or ""
     if not availability_text: 
         return False, "Unknown", "no_info"
@@ -178,11 +177,7 @@ def check_availability(raw: dict) -> tuple[bool, str, str]:
     if any(kw in avail_lower for kw in ["out of stock", "unavailable", "not available", "sold out", "currently unavailable"]): 
         return False, availability_text, "out"
     
-    # 4. Fallback to price
-    if price_raw:
-        return True, "In Stock", "price_available"
-
-    return False, "Out of Stock", "no_price"
+    return True, availability_text, "in"
 
 
 # ============================================
@@ -241,6 +236,7 @@ def fetch_product_from_apify(amazon_url: str) -> dict:
             # ✅ INVENTORY FIX: check_availability use kiya
             # =====================================================
             is_available, avail_text, reason = check_availability(item)
+            
             stock_qty = 100 if is_available else 0
             logger.info(f"   Inventory Check: {avail_text} (Reason: {reason}) -> Stock: {stock_qty}")
 
@@ -278,7 +274,7 @@ def fetch_product_from_apify(amazon_url: str) -> dict:
             title = item.get("title") or "Untitled Product"
             brand = item.get("brand") or item.get("manufacturer") or ""
 
-            # ✅ Category: breadCrumbs se parse karo (› ya > dono handle karega)
+            # ✅ Category: breadCrumbs se parse karo
             categories = []
             breadcrumbs = item.get("breadCrumbs") or item.get("breadcrumbs") or ""
             if breadcrumbs and isinstance(breadcrumbs, str):
@@ -348,7 +344,7 @@ def fetch_product_from_apify(amazon_url: str) -> dict:
 
 
 # ============================================
-# 2. BRIGHT DATA FETCH (Only for Cron / Price Update)
+# 2. BRIGHT DATA FETCH
 # ============================================
 async def fetch_product_from_brightdata(amazon_url: str) -> dict:
     api_url = (
