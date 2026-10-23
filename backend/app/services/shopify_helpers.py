@@ -1,8 +1,6 @@
 # ============================================
 # app/services/shopify_helpers.py
-# Shared helpers, GraphQL caller, API version
-# + ✅ AUTO TOKEN REFRESH (expire hone se pehle refresh)
-# + ✅ FIXED: Tags cleaning (removes # and ,)
+# + ✅ FIXED: Strict Tags (No Brand / No Title Fallback)
 # ============================================
 
 import logging
@@ -17,11 +15,7 @@ from app.services.shopify_auth import refresh_shopify_token
 logger = logging.getLogger(__name__)
 
 
-# ============================================
-# HELPER: Safe API version
-# ============================================
 def _safe_api_version() -> str:
-    """2026-10 / unstable / empty ko 2025-01 pe fallback karo."""
     v = (settings.SHOPIFY_API_VERSION or "2025-01").strip()
     if v in ("2026-10", "unstable", ""):
         return "2025-01"
@@ -29,38 +23,41 @@ def _safe_api_version() -> str:
 
 
 # ============================================
-# HELPER: Build Shopify tags (string array)
+# HELPER: Build Shopify tags (Only actual data)
 # ============================================
 def _build_shopify_tags(product_data: dict) -> list[str]:
-    """Product data se Shopify tags ka array banao."""
+    """Product data se Shopify tags ka array banao (No Fallback)."""
     tags: list[str] = []
 
+    def clean_tag(t: str) -> str:
+        return str(t).replace("#", "").replace(",", "").strip()
+
+    # 1. Amazon Tags (jo brightdata.py se aayenge)
     raw_tags = product_data.get("tags") or []
     if isinstance(raw_tags, list):
         for t in raw_tags:
-            if isinstance(t, str):
-                # ✅ FIX: # aur , hata dein (Shopify tags ke liye allowed nahi)
-                clean = t.replace("#", "").replace(",", "").strip()
-                if clean and len(clean) < 50:
+            if t:
+                clean = clean_tag(t)
+                if clean and len(clean) < 50 and clean not in tags:
                     tags.append(clean)
 
+    # 2. Categories/Breadcrumbs (jo brightdata.py se aayenge)
     raw_cats = product_data.get("categories") or []
     if isinstance(raw_cats, list):
         for c in raw_cats:
-            if isinstance(c, str):
-                clean = c.replace("#", "").replace(",", "").strip()
+            if c:
+                clean = clean_tag(c)
                 if clean and len(clean) < 50 and clean not in tags:
                     tags.append(clean)
+
+    # ✅ No Brand fallback
+    # ✅ No Title fallback
 
     tags = list(dict.fromkeys(tags))
     return tags[:50]
 
 
-# ============================================
-# HELPER: First category → productType
-# ============================================
 def _get_product_type(product_data: dict) -> str:
-    """Shopify mein ek hi productType hota hai."""
     categories = product_data.get("categories") or []
     if isinstance(categories, list) and categories:
         first = categories[0]
@@ -69,159 +66,75 @@ def _get_product_type(product_data: dict) -> str:
     return ""
 
 
-# ============================================
-# ✅ NAYA: Fresh access token get karo (auto-refresh)
-# ============================================
+# Baqi token refresh aur GraphQL functions waisay hi rahenge...
 async def get_fresh_access_token(shop_domain: str, db) -> Optional[str]:
-    """
-    Store ka access token return karta hai.
-    Agar expire ho raha hai (10 min buffer), to refresh karta hai
-    aur database me naya token save karta hai.
-    """
     from app.models.shopify_store import ShopifyStore
-
     store = db.query(ShopifyStore).filter_by(shop_domain=shop_domain).first()
     if not store:
-        logger.error(f"Store not found: {shop_domain}")
         return None
-
     now = datetime.now(timezone.utc)
     buffer = timedelta(minutes=10)
-
     needs_refresh = bool(store.expires_at and store.expires_at <= (now + buffer))
-
     if needs_refresh and store.refresh_token:
-        logger.info(f"🔄 Refreshing expired token for {shop_domain}")
         result = await refresh_shopify_token(shop_domain, store.refresh_token)
-
         if not result:
-            logger.error(f"❌ Token refresh failed for {shop_domain}")
             return None
-
         store.access_token = result["access_token"]
         if result.get("refresh_token"):
             store.refresh_token = result["refresh_token"]
         if result.get("expires_in"):
             store.expires_at = now + timedelta(seconds=int(result["expires_in"]))
         if result.get("refresh_token_expires_in"):
-            store.refresh_token_expires_at = now + timedelta(
-                seconds=int(result["refresh_token_expires_in"])
-            )
+            store.refresh_token_expires_at = now + timedelta(seconds=int(result["refresh_token_expires_in"]))
         store.updated_at = now
-
         db.commit()
         db.refresh(store)
-        logger.info(f"✅ Token refreshed & saved for {shop_domain}")
-
     return store.access_token
 
-
-# ============================================
-# GRAPHQL API CALL
-# ============================================
-async def shopify_graphql(
-    shop: str,
-    access_token: str,
-    query: str,
-    variables: dict = None,
-) -> dict:
+async def shopify_graphql(shop: str, access_token: str, query: str, variables: dict = None) -> dict:
     api_version = _safe_api_version()
     url = f"https://{shop}/admin/api/{api_version}/graphql.json"
-
-    headers = {
-        "X-Shopify-Access-Token": access_token,
-        "Content-Type": "application/json",
-    }
-
+    headers = {"X-Shopify-Access-Token": access_token, "Content-Type": "application/json"}
     payload = {"query": query}
     if variables is not None:
         payload["variables"] = variables
-
     try:
         async with httpx.AsyncClient(timeout=60.0) as client:
             response = await client.post(url, headers=headers, json=payload)
             if response.status_code >= 400:
-                body = response.text[:1000]
-                logger.error(f"GraphQL HTTP {response.status_code} for {shop}: {body}")
-                return {
-                    "errors": [
-                        {
-                            "message": f"HTTP {response.status_code}: {body}",
-                            "status": response.status_code,
-                        }
-                    ]
-                }
+                return {"errors": [{"message": f"HTTP {response.status_code}", "status": response.status_code}]}
             return response.json()
     except Exception as e:
-        logger.error(f"GraphQL call fail: {e}")
         return {"errors": [{"message": str(e)}]}
 
-
-# ============================================
-# ✅ NAYA: Auto-refresh + GraphQL combined
-# ============================================
-async def shopify_graphql_with_refresh(
-    shop: str,
-    query: str,
-    variables: dict = None,
-    db=None,
-) -> dict:
-    """
-    Ye function automatically token refresh karta hai (agar zaroori ho),
-    phir GraphQL call karta hai.
-    Agar 401 aata hai, to force refresh karke dobara try karta hai.
-    """
+async def shopify_graphql_with_refresh(shop: str, query: str, variables: dict = None, db=None) -> dict:
     should_close = False 
-    
     if db is None:
         from app.db.session import SessionLocal
         db = SessionLocal()
         should_close = True
-
     try:
         access_token = await get_fresh_access_token(shop, db)
         if not access_token:
-            return {
-                "errors": [{"message": f"Could not get access token for {shop}"}]
-            }
-
+            return {"errors": [{"message": "Could not get access token"}]}
         result = await shopify_graphql(shop, access_token, query, variables)
-
         errors = result.get("errors") or []
-        is_unauthorized = any(
-            e.get("status") == 401 or "401" in str(e.get("message", "")) 
-            for e in errors
-        )
-
+        is_unauthorized = any(e.get("status") == 401 or "401" in str(e.get("message", "")) for e in errors)
         if is_unauthorized:
-            logger.warning(f"⚠️ 401 received, forcing token refresh for {shop}")
-
             from app.models.shopify_store import ShopifyStore
             store = db.query(ShopifyStore).filter_by(shop_domain=shop).first()
-            
             if store and store.refresh_token:
                 refresh_result = await refresh_shopify_token(shop, store.refresh_token)
-                
                 if refresh_result:
                     now = datetime.now(timezone.utc)
                     store.access_token = refresh_result["access_token"]
-                    
-                    if refresh_result.get("refresh_token"):
-                        store.refresh_token = refresh_result["refresh_token"]
-                    if refresh_result.get("expires_in"):
-                        store.expires_at = now + timedelta(seconds=int(refresh_result["expires_in"]))
-                    if refresh_result.get("refresh_token_expires_in"):
-                        store.refresh_token_expires_at = now + timedelta(seconds=int(refresh_result["refresh_token_expires_in"]))
-                    
+                    if refresh_result.get("refresh_token"): store.refresh_token = refresh_result["refresh_token"]
+                    if refresh_result.get("expires_in"): store.expires_at = now + timedelta(seconds=int(refresh_result["expires_in"]))
+                    if refresh_result.get("refresh_token_expires_in"): store.refresh_token_expires_at = now + timedelta(seconds=int(refresh_result["refresh_token_expires_in"]))
                     store.updated_at = now
                     db.commit()
-
-                    result = await shopify_graphql(
-                        shop, refresh_result["access_token"], query, variables
-                    )
-
+                    result = await shopify_graphql(shop, refresh_result["access_token"], query, variables)
         return result
-
     finally:
         if should_close:
             db.close()

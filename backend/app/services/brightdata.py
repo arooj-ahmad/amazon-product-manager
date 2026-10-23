@@ -1,6 +1,6 @@
 # ============================================
 # app/services/brightdata.py
-# + ✅ Inventory: buybox_price mojood ho to 100, warna 0
+# + ✅ INVENTORY: Prime check (0) + Buybox check (100)
 # + ✅ Category: breadCrumbs parse karke categories mein daala
 # ============================================
 
@@ -146,6 +146,46 @@ def parse_standard_fields(raw: dict) -> dict:
 
 
 # ============================================
+# ✅ NAYA: Availability Checker
+# ============================================
+def check_availability(raw: dict) -> tuple[bool, str, str]:
+    """Check Add to Cart / Prime Exclusive / Out of Stock."""
+    
+    # 1. Prime Exclusive Check (Sabse pehle, kyunke Prime par price hoti hai lekin button nahi)
+    item_str = str(raw).lower()
+    if "join prime" in item_str or "prime exclusive" in item_str or "prime member price" in item_str:
+        return False, "Prime Exclusive (No Add to Cart)", "prime"
+
+    # 2. Apify Data Mapping
+    add_to_cart = raw.get("add_to_cart_available")
+    buybox = raw.get("buybox_available")
+    in_stock = raw.get("in_stock")
+    price_raw = raw.get("buybox_price") or raw.get("price")
+
+    if buybox is None and price_raw:
+        buybox = True
+
+    if add_to_cart is True: return True, "In Stock", "add_to_cart_available"
+    if buybox is True: return True, "In Stock", "buybox_available"
+    if in_stock is True: return True, "In Stock", "in_stock"
+
+    # 3. Availability Text Check
+    availability_text = raw.get("availability") or raw.get("stock_status") or ""
+    if not availability_text: 
+        return False, "Unknown", "no_info"
+
+    avail_lower = availability_text.lower().strip()
+    if any(kw in avail_lower for kw in ["out of stock", "unavailable", "not available", "sold out", "currently unavailable"]): 
+        return False, availability_text, "out"
+    
+    # 4. Fallback to price
+    if price_raw:
+        return True, "In Stock", "price_available"
+
+    return False, "Out of Stock", "no_price"
+
+
+# ============================================
 # 1. APIFY FETCH (100% Product Details)
 # ============================================
 def fetch_product_from_apify(amazon_url: str) -> dict:
@@ -197,31 +237,12 @@ def fetch_product_from_apify(amazon_url: str) -> dict:
                         variant_attributes.append({"name": name.strip(), "value": value.strip()})
                         variations.append({"name": name.strip(), "value": value.strip()})
 
-            # ✅ Inventory: buybox_price mojood ho to In Stock
-            price_raw = item.get("buybox_price") or item.get("price")
-            avail_text = str(item.get("availability") or "").strip()
-            avail_lower = avail_text.lower()
-
-            out_of_stock_keywords = [
-                "out of stock", "unavailable", "currently unavailable",
-                "not available", "sold out", "no featured offers"
-            ]
-
-            # Pehle out-of-stock keywords check karo
-            if any(kw in avail_lower for kw in out_of_stock_keywords):
-                is_available = False
-                stock_qty = 0
-                avail_text = "Out of Stock"
-            # Phir buybox_price check karo — agar price hai to khareeda ja sakta hai
-            elif price_raw is None or price_raw == "":
-                is_available = False
-                stock_qty = 0
-                avail_text = "Out of Stock"
-            else:
-                is_available = True
-                stock_qty = 100
-                if not avail_text:
-                    avail_text = "In Stock"
+            # =====================================================
+            # ✅ INVENTORY FIX: check_availability use kiya
+            # =====================================================
+            is_available, avail_text, reason = check_availability(item)
+            stock_qty = 100 if is_available else 0
+            logger.info(f"   Inventory Check: {avail_text} (Reason: {reason}) -> Stock: {stock_qty}")
 
             # Images
             images_raw = item.get("images") or []
@@ -232,6 +253,7 @@ def fetch_product_from_apify(amazon_url: str) -> dict:
             else:
                 images = []
 
+            price_raw = item.get("buybox_price") or item.get("price")
             price = parse_price(price_raw) if price_raw else None
 
             # Bullets
@@ -256,12 +278,12 @@ def fetch_product_from_apify(amazon_url: str) -> dict:
             title = item.get("title") or "Untitled Product"
             brand = item.get("brand") or item.get("manufacturer") or ""
 
-            # ✅ Category: breadCrumbs se parse karo
+            # ✅ Category: breadCrumbs se parse karo (› ya > dono handle karega)
             categories = []
             breadcrumbs = item.get("breadCrumbs") or item.get("breadcrumbs") or ""
             if breadcrumbs and isinstance(breadcrumbs, str):
-                # "Toys & Games > Vehicles > Vehicle Playsets > Motor Vehicles"
-                categories = [c.strip() for c in breadcrumbs.split(">") if c.strip()]
+                clean_breadcrumbs = breadcrumbs.replace("›", ">")
+                categories = [c.strip() for c in clean_breadcrumbs.split(">") if c.strip()]
             else:
                 raw_cat = item.get("categories") or item.get("category") or item.get("category_tree")
                 if isinstance(raw_cat, list):
@@ -381,14 +403,8 @@ async def fetch_product_from_brightdata(amazon_url: str) -> dict:
     if not main_image and unique_images:
         main_image = unique_images[0]
 
-    in_stock = raw.get("in_stock")
-    if in_stock is True:
-        is_available = True
-        availability_text = "In Stock"
-    else:
-        is_available = False
-        availability_text = "Out of Stock"
-
+    # Bright data ke liye bhi check_availability use karte hain
+    is_available, availability_text, _ = check_availability(raw)
     stock_quantity = 100 if is_available else 0
 
     specs = {}
