@@ -2,7 +2,7 @@
 # app/services/brightdata.py
 # + ✅ Bright Data: Only for Cron Job (Price Update)
 # + ✅ Apify: 100% Product Fetch, Variations & Details
-# + ✅ FIXED: Removed httpx HTML check (100% Apify Data)
+# + ✅ FIXED: Inventory check — availability + price dono check
 # ============================================
 
 import logging
@@ -224,22 +224,24 @@ def fetch_product_from_apify(amazon_url: str) -> dict:
                         variant_attributes.append({"name": name.strip(), "value": value.strip()})
                         variations.append({"name": name.strip(), "value": value.strip()})
 
-            # ✅ FIXED: 100% Apify Data (No HTML check)
-            avail_text = str(item.get("availability") or "In Stock").strip()
+            # ✅ FIXED: Inventory check — availability + price dono check karo
+            avail_text = str(item.get("availability") or "").strip()
             avail_lower = avail_text.lower()
             price_raw = item.get("buybox_price") or item.get("price")
-            
-            # 1. Agar text mein out of stock likha hai
-            if any(kw in avail_lower for kw in ["out of stock", "unavailable", "currently unavailable", "not available", "sold out"]):
+
+            out_of_stock_keywords = [
+                "out of stock", "unavailable", "currently unavailable",
+                "not available", "sold out", "no featured offers"
+            ]
+
+            if any(kw in avail_lower for kw in out_of_stock_keywords):
                 is_available = False
                 stock_qty = 0
                 avail_text = "Out of Stock"
-            # 2. Agar price hi nahi hai
-            elif price_raw is None:
+            elif price_raw is None or price_raw == "":
                 is_available = False
                 stock_qty = 0
                 avail_text = "Out of Stock"
-            # 3. Warna In Stock
             else:
                 is_available = True
                 stock_qty = 100

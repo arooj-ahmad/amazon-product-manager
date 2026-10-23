@@ -1,6 +1,8 @@
 # ============================================
 # app/services/shopify/product_core.py
-# + ✅ FIXED v12: Category Update (productUpdate with 'category' field)
+# + ✅ FIXED: Default category fallback removed
+# + ✅ FIXED: Category passed via productSet input
+# + ✅ FIXED: Tags overwritten via productSet input
 # ============================================
 
 import logging
@@ -32,92 +34,6 @@ from app.services.shopify.product_variants import (
 )
 
 logger = logging.getLogger(__name__)
-
-
-# ============================================
-# ✅ FIXED: Shopify se asli Category ID fetch karo
-# ============================================
-async def _get_default_category_id(shop: str, access_token: str) -> Optional[str]:
-    query = """
-    query {
-      taxonomy {
-        categories(first: 5, search: "Toys & Games") {
-          edges {
-            node {
-              id
-              name
-            }
-          }
-        }
-      }
-    }
-    """
-    try:
-        result = await shopify_graphql(shop, access_token, query)
-        edges = result.get("data", {}).get("taxonomy", {}).get("categories", {}).get("edges", [])
-        if edges:
-            return edges[0]["node"]["id"]
-    except Exception as e:
-        logger.error(f"❌ Failed to fetch default category ID: {e}")
-    
-    return "gid://shopify/TaxonomyCategory/tg"
-
-
-# ============================================
-# ✅ FIXED: Category, Type & Tags explicitly update karo
-# ============================================
-async def _update_product_details(
-    shop: str,
-    access_token: str,
-    product_id: str,
-    category_id: str,
-    product_type: str,
-    tags: list,
-):
-    """Shopify mein category, type aur tags ko explicitly update karta hai."""
-    
-    # 1. Product Update (Category + ProductType)
-    # ✅ SAHI FIELDS: 'category' aur 'productType'
-    if category_id or product_type:
-        update_input = {"id": product_id}
-        
-        if category_id:
-            update_input["category"] = category_id
-            
-        if product_type:
-            update_input["productType"] = product_type
-
-        cat_mutation = """
-        mutation productUpdate($input: ProductInput!) {
-          productUpdate(input: $input) {
-            product { id category { id name } productType }
-            userErrors { field message }
-          }
-        }
-        """
-        cat_result = await shopify_graphql(
-            shop, access_token, cat_mutation, 
-            {"input": update_input}
-        )
-        if "errors" in cat_result or cat_result.get("data", {}).get("productUpdate", {}).get("userErrors"):
-            logger.warning(f"⚠️ Product type/category update failed: {cat_result}")
-
-    # 2. Tags Update (tagsAdd)
-    if tags:
-        tags_mutation = """
-        mutation tagsAdd($id: ID!, $tags: [String!]!) {
-          tagsAdd(id: $id, tags: $tags) {
-            node { id }
-            userErrors { field message }
-          }
-        }
-        """
-        tags_result = await shopify_graphql(
-            shop, access_token, tags_mutation, 
-            {"id": product_id, "tags": tags}
-        )
-        if "errors" in tags_result or tags_result.get("data", {}).get("tagsAdd", {}).get("userErrors"):
-            logger.warning(f"⚠️ Tags update failed: {tags_result}")
 
 
 # ============================================
@@ -286,9 +202,18 @@ async def create_shopify_product(
     shopify_tags = _build_shopify_tags(product_data)
     product_type = _get_product_type(product_data)
 
+    # ProductType: agar category na mile to Title ka pehla word
+    if not product_type:
+        title = product_data.get("title") or ""
+        if title:
+            product_type = title.split()[0][:255]
+        else:
+            product_type = "General"
+
     categories = product_data.get("categories") or []
     product_title = product_data.get("title", "")
 
+    # ✅ No default category fallback — agar match na mile to None
     shopify_category_id = None
     if product_title or categories:
         shopify_category_id = await find_best_category(
@@ -297,13 +222,6 @@ async def create_shopify_product(
             product_title=product_title,
             categories=categories,
         )
-    
-    if not shopify_category_id:
-        logger.warning("⚠️ Taxonomy match failed. Fetching default 'Toys & Games' ID.")
-        shopify_category_id = await _get_default_category_id(shop, access_token)
-
-    if not product_type:
-        product_type = "General"
 
     description_html = _build_description_with_metafields(product_data)
 
@@ -323,7 +241,16 @@ async def create_shopify_product(
         "descriptionHtml": description_html,
         "vendor": product_data.get("brand", ""),
         "status": status,
+        "productType": product_type,
     }
+
+    # ✅ Category seedha productSet mein
+    if shopify_category_id:
+        input_data["category"] = shopify_category_id
+
+    # ✅ Tags seedha productSet mein (overwrite)
+    if shopify_tags:
+        input_data["tags"] = shopify_tags
 
     variant_attrs = product_data.get("variant_attributes") or []
     product_options = []
@@ -390,17 +317,6 @@ async def create_shopify_product(
 
     logger.info(f"✅ Product created: {shopify_product.get('title')}")
 
-    # ✅ Category, Type aur Tags explicitly update karein
-    if product_id:
-        await _update_product_details(
-            shop=shop,
-            access_token=access_token,
-            product_id=product_id,
-            category_id=shopify_category_id,
-            product_type=product_type,
-            tags=shopify_tags
-        )
-
     if product_id and is_available:
         await publish_product_to_channels(
             shop=shop, access_token=access_token, shopify_product_id=product_id,
@@ -454,20 +370,22 @@ async def create_shopify_product_with_variants(
     shopify_tags = _build_shopify_tags(product_data)
     product_type = _get_product_type(product_data)
 
+    if not product_type:
+        title = product_data.get("title") or ""
+        if title:
+            product_type = title.split()[0][:255]
+        else:
+            product_type = "General"
+
     categories = product_data.get("categories") or []
     product_title = product_data.get("title", "")
 
+    # ✅ No default category fallback
     shopify_category_id = None
     if product_title or categories:
         shopify_category_id = await find_best_category(
             shop=shop, access_token=access_token, product_title=product_title, categories=categories,
         )
-
-    if not shopify_category_id:
-        shopify_category_id = await _get_default_category_id(shop, access_token)
-
-    if not product_type:
-        product_type = "General"
 
     asin_value = str(product_data.get("asin", "") or "").strip() or "NO-SKU"
 
@@ -476,6 +394,7 @@ async def create_shopify_product_with_variants(
         "descriptionHtml": _build_description_with_metafields(product_data),
         "vendor": product_data.get("brand", ""),
         "status": status,
+        "productType": product_type,
         "productOptions": [
             {
                 "name": "Style",
@@ -483,6 +402,14 @@ async def create_shopify_product_with_variants(
             }
         ],
     }
+
+    # ✅ Category seedha productSet mein
+    if shopify_category_id:
+        input_data["category"] = shopify_category_id
+
+    # ✅ Tags seedha productSet mein (overwrite)
+    if shopify_tags:
+        input_data["tags"] = shopify_tags
 
     mutation_create = """
     mutation productSet($input: ProductSetInput!) {
@@ -513,12 +440,6 @@ async def create_shopify_product_with_variants(
 
     shopify_product = product_create.get("product", {})
     product_id = shopify_product.get("id")
-
-    if product_id:
-        await _update_product_details(
-            shop=shop, access_token=access_token, product_id=product_id, 
-            category_id=shopify_category_id, product_type=product_type, tags=shopify_tags
-        )
 
     if product_id and is_available:
         await publish_product_to_channels(shop=shop, access_token=access_token, shopify_product_id=product_id)
