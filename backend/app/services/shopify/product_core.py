@@ -6,6 +6,7 @@
 # + ✅ NAYA v3: 4 rule types support (none/amazon/fixed/percent)
 # + ✅ FIXED v6: Out-of-stock product add hoga, lekin stock 0 hoga (ACTIVE/DRAFT fix)
 # + ✅ FIXED v7: Category & Tags explicitly update honge
+# + ✅ FIXED v8: Taxonomy fallback (agar category na mile toh "Toys & Games" set karein)
 # ============================================
 
 import logging
@@ -279,7 +280,7 @@ def _build_inventory_item(product_data: dict, sku: str) -> dict:
 
 # ============================================
 # ✅ PRODUCT CREATE (SIMPLE)
-# ✅ FIXED v6: Out-of-stock = 0, lekin product add hoga
+# ✅ FIXED v8: Out-of-stock = 0, Category fallback
 # ============================================
 async def create_shopify_product(
     shop: str,
@@ -328,6 +329,11 @@ async def create_shopify_product(
             product_title=product_title,
             categories=categories,
         )
+    
+    # ✅ FIXED v8: Fallback Category (Agar Shopify taxonomy match na ho)
+    if not shopify_category_id:
+        logger.warning("⚠️ Taxonomy match failed. Using default 'Toys & Games' category.")
+        shopify_category_id = "gid://shopify/TaxonomyCategory/toys-games"
 
     description_html = _build_description_with_metafields(product_data)
 
@@ -513,7 +519,7 @@ async def create_shopify_product(
 
 # ============================================
 # CREATE PRODUCT WITH VARIANTS
-# ✅ FIXED v6: Out-of-stock = 0, lekin product add hoga
+# ✅ FIXED v8: Out-of-stock = 0, Category fallback
 # ============================================
 async def create_shopify_product_with_variants(
     shop: str,
@@ -540,6 +546,10 @@ async def create_shopify_product_with_variants(
             product_title=product_title,
             categories=categories,
         )
+
+    # ✅ FIXED v8: Fallback Category
+    if not shopify_category_id:
+        shopify_category_id = "gid://shopify/TaxonomyCategory/toys-games"
 
     asin_value = str(product_data.get("asin", "") or "").strip() or "NO-SKU"
 
