@@ -3,6 +3,7 @@
 # + ✅ Bright Data: Only for Cron Job (Price Update)
 # + ✅ Apify: 100% Product Fetch, Variations & Details
 # + ✅ FIXED: Apify parses variants, availability, specs
+# + ✅ FIXED: Apify run_input uses "Params" key
 # ============================================
 
 import logging
@@ -219,7 +220,8 @@ def fetch_product_from_apify(amazon_url: str) -> dict:
     client = ApifyClient(settings.APIFY_API_TOKEN)
     actor_id = "delicious_zebu/amazon-product-details-scraper"
 
-    run_input = {"productUrls": [amazon_url]}
+    # ✅ FIXED: Apify ko "Params" chahiye hota hai "productUrls" nahi
+    run_input = {"Params": [amazon_url]}
 
     try:
         run = client.actor(actor_id).call(run_input=run_input)
