@@ -4,7 +4,7 @@
 # + ✅ NAYA: Weight mapping to Shopify variant
 # + ✅ NAYA v2: Compare-at price store settings se aata hai
 # + ✅ NAYA v3: 4 rule types support (none/amazon/fixed/percent)
-# + ✅ FIXED v6: Out-of-stock product add hoga, lekin stock 0 hoga
+# + ✅ FIXED v6: Out-of-stock product add hoga, lekin stock 0 hoga (ACTIVE/DRAFT fix)
 # ============================================
 
 import logging
@@ -204,7 +204,7 @@ def _build_inventory_item(product_data: dict, sku: str) -> dict:
     """Build inventoryItem dict with SKU, tracked, and weight."""
     inventory_item = {
         "sku": sku,
-        "tracked": True,
+        "tracked": True, # ✅ Shopify ko batata hai ke stock track karo
     }
 
     weight_str = (
@@ -239,7 +239,12 @@ async def create_shopify_product(
     product_data: dict,
 ) -> dict:
     is_available = product_data.get("is_available", False)
+    
+    # ✅ FIXED: Agar Out of Stock hai toh DRAFT karein (taake 1000 stock ke sath live na ho)
     status = "ACTIVE" if is_available else "DRAFT"
+    
+    if not is_available:
+        logger.warning("⚠️ Product is OUT OF STOCK. Setting status to DRAFT and stock to 0.")
 
     price_float = 0.0
     try:
@@ -394,7 +399,8 @@ async def create_shopify_product(
 
     logger.info(f"✅ Product created: {shopify_product.get('title')}")
 
-    if product_id:
+    if product_id and is_available:
+        # Sirf tab publish karein jab product available ho
         await publish_product_to_channels(
             shop=shop,
             access_token=access_token,
@@ -464,6 +470,8 @@ async def create_shopify_product_with_variants(
     variants: list,
 ) -> dict:
     is_available = product_data.get("is_available", False)
+    
+    # ✅ FIXED: Out of stock product ko DRAFT rakhein
     status = "ACTIVE" if is_available else "DRAFT"
 
     shopify_tags = _build_shopify_tags(product_data)
@@ -543,7 +551,7 @@ async def create_shopify_product_with_variants(
 
     logger.info(f"✅ Product created: {shopify_product.get('title')}")
 
-    if product_id:
+    if product_id and is_available:
         await publish_product_to_channels(
             shop=shop,
             access_token=access_token,
