@@ -4,6 +4,7 @@
 # + ✅ Apify: 100% Product Fetch, Variations & Details
 # + ✅ FIXED: Apify scrapes Product Details (Bullets)
 # + ✅ FIXED: Ultra-Strict Availability check + HTML Double Check
+# + ✅ FIXED: Categories & Tags extraction added
 # ============================================
 
 import logging
@@ -129,17 +130,6 @@ def check_availability(raw: dict) -> tuple[bool, str, str]:
     return True, availability_text, "in"
 
 
-def parse_categories(raw: dict) -> list[str]:
-    categories = []
-    category_tree = raw.get("category_tree") or []
-    for cat in category_tree:
-        if isinstance(cat, dict) and cat.get("name"):
-            categories.append(cat["name"].strip())
-        elif isinstance(cat, str):
-            categories.append(cat.strip())
-    return [c for c in dict.fromkeys(categories) if c and len(c) < 100]
-
-
 def parse_standard_fields(raw: dict) -> dict:
     fields = {}
     fields["model_number"] = raw.get("model_number")
@@ -200,15 +190,6 @@ def parse_standard_fields(raw: dict) -> dict:
     }
 
 
-def parse_tags(raw: dict, categories: list[str]) -> list[str]:
-    tags = list(categories)
-    raw_tags = raw.get("tags") or []
-    for t in raw_tags:
-        if isinstance(t, str):
-            tags.append(t.strip())
-    return list(dict.fromkeys(tags))[:15]
-
-
 # ============================================
 # HELPER: Double Check Amazon HTML for Cart
 # ============================================
@@ -238,7 +219,7 @@ def _check_amazon_html_for_cart(amazon_url: str) -> bool:
 def fetch_product_from_apify(amazon_url: str) -> dict:
     """
     Apify se product ki SAARI details fetch karta hai:
-    Title, Brand, Price, Images, Variations, Availability, Specs, Bullets.
+    Title, Brand, Price, Images, Variations, Availability, Specs, Bullets, Categories, Tags.
     """
     client = ApifyClient(settings.APIFY_API_TOKEN)
     actor_id = "delicious_zebu/amazon-product-details-scraper"
@@ -368,6 +349,35 @@ def fetch_product_from_apify(amazon_url: str) -> dict:
             title = item.get("title") or "Untitled Product"
             brand = item.get("brand") or item.get("manufacturer") or ""
 
+            # ✅ FIXED: Extract Categories & Tags
+            categories = []
+            raw_cat = item.get("categories") or item.get("category") or item.get("category_tree")
+            if isinstance(raw_cat, list):
+                for c in raw_cat:
+                    if isinstance(c, dict) and c.get("name"):
+                        categories.append(c.get("name"))
+                    elif isinstance(c, str):
+                        categories.append(c)
+            elif isinstance(raw_cat, str):
+                categories.append(raw_cat)
+
+            tags = []
+            raw_tags = item.get("tags") or item.get("best_sellers_rank") or []
+            if isinstance(raw_tags, list):
+                for t in raw_tags:
+                    if isinstance(t, str):
+                        tags.append(t)
+                    elif isinstance(t, dict) and t.get("category"):
+                        tags.append(t.get("category"))
+                    elif isinstance(t, dict) and t.get("name"):
+                        tags.append(t.get("name"))
+            elif isinstance(raw_tags, str):
+                tags.append(raw_tags)
+
+            # Combine clean categories and tags
+            categories = list(dict.fromkeys([str(c).strip() for c in categories if c and str(c).strip() and len(str(c)) < 100]))
+            tags = list(dict.fromkeys([str(t).strip() for t in tags if t and str(t).strip()]))[:15]
+
             return {
                 "asin": asin,
                 "parent_asin": parent_asin,
@@ -383,8 +393,8 @@ def fetch_product_from_apify(amazon_url: str) -> dict:
                 "availability": avail_text,
                 "is_available": is_available,
                 "stock_quantity": stock_qty,
-                "categories": [item.get("category")] if item.get("category") else [],
-                "tags": [],
+                "categories": categories, # ✅ Added
+                "tags": tags,             # ✅ Added
                 "specifications": specs,
                 "product_details": product_details,
                 "variant_attributes": variant_attributes,
@@ -472,8 +482,7 @@ async def fetch_product_from_brightdata(amazon_url: str) -> dict:
                 if item["type"] not in specs:
                     specs[item["type"]] = str(item["value"]).strip()
 
-    categories = parse_categories(raw)
-
+    categories = raw.get("categories") or []
     feature_bullets = []
     if isinstance(raw.get("feature_bullets"), list) and len(raw["feature_bullets"]) > 0:
         feature_bullets = [str(b).strip() for b in raw["feature_bullets"] if b]
@@ -517,7 +526,7 @@ async def fetch_product_from_brightdata(amazon_url: str) -> dict:
         "variations": variations,
         "variant_attributes": variant_attributes,
         "categories": categories,
-        "tags": parse_tags(raw, categories),
+        "tags": raw.get("tags") or [],
         **parse_standard_fields(raw),
         "product_details": product_details,
     }
