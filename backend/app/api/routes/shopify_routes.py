@@ -3,11 +3,12 @@
 # Shopify OAuth + Product Push + Embedded App
 # + ✅ 100% APIFY for Product Add
 # + ✅ BackgroundTasks (no frontend timeout)
-# + ✅ FIXED: Removed manual HTML description (handled by description.py)
+# + ✅ FIXED: Normalize search URLs to valid product URLs
 # ============================================
 
 import asyncio
 import logging
+import re
 from datetime import datetime, timedelta, timezone
 
 from fastapi import (
@@ -65,7 +66,7 @@ def _safe_float(value, default=None):
 
 
 # ============================================
-# HELPER: Normalize Amazon URL
+# HELPER: Normalize Amazon URL (✅ FIXED for Search URLs)
 # ============================================
 def _normalize_amazon_url(url: str) -> str:
     if not url or not isinstance(url, str):
@@ -81,12 +82,30 @@ def _normalize_amazon_url(url: str) -> str:
     if "amazon." in url and "www.amazon." not in url:
         url = url.replace("amazon.", "www.amazon.", 1)
 
+    # 1. Standard extract_asin_from_url try karein
     asin = extract_asin_from_url(url)
     if asin:
         normalized = f"https://www.amazon.com/dp/{asin}"
         if normalized != url:
             logger.info(f"🔗 URL normalized: {url[:60]}... → {normalized}")
         return normalized
+
+    # 2. ✅ FIXED: Search URL se ASIN nikalne ki koshish karein
+    match = re.search(r"[?&]k=([A-Z0-9]{10})", url)
+    if match:
+        asin = match.group(1)
+        normalized = f"https://www.amazon.com/dp/{asin}"
+        logger.info(f"🔗 URL normalized (search): {url[:60]}... → {normalized}")
+        return normalized
+        
+    # 3. Agar ASIN direct URL mein kahin aur ho
+    match = re.search(r"/([A-Z0-9]{10})(?:[/?]|$)", url)
+    if match:
+        asin = match.group(1)
+        if len(asin) == 10 and asin.isalnum():
+            normalized = f"https://www.amazon.com/dp/{asin}"
+            logger.info(f"🔗 URL normalized (raw ASIN): {url[:60]}... → {normalized}")
+            return normalized
 
     logger.warning(f"⚠️ Could not normalize URL: {url[:80]}...")
     return url
