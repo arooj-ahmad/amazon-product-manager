@@ -3,6 +3,7 @@
 # + ✅ FIXED: Amazon Price aur Best Sellers Rank exclude
 # + ✅ FIXED: Agar bullets nahi hain, toh Description paragraph show karega
 # + ✅ FIXED: Bullets ke andar <b> tags allow kiye taake bold show hon
+# + ✅ FIXED: Apify ke raw <ul>, <li> tags ko clean kiya taake tags show na hon
 
 import logging
 
@@ -19,6 +20,10 @@ def _build_bullets_html(feature_bullets) -> str:
         if not bullet:
             continue
         text = str(bullet).strip()
+        
+        # ✅ FIXED: Apify ke raw HTML tags ko remove karein taake double wrap na ho
+        text = text.replace("<ul>", "").replace("</ul>", "")
+        text = text.replace("<li>", "").replace("</li>", "").strip()
         
         # ✅ SAFETY CHECK: Agar default fallback text ho toh skip karein
         if "Check Amazon for full product details" in text or "No feature bullets available" in text:

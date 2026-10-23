@@ -3,7 +3,7 @@
 # Shopify OAuth + Product Push + Embedded App
 # + ✅ 100% APIFY for Product Add
 # + ✅ BackgroundTasks (no frontend timeout)
-# + ✅ FIXED: About this item (Bullets) added to Description
+# + ✅ FIXED: Removed manual HTML description (handled by description.py)
 # ============================================
 
 import asyncio
@@ -227,28 +227,9 @@ def _build_product_data_for_shopify(data: dict, product=None) -> dict:
                     product_price = amazon + markup_val
                 logger.warning(f"⚠️ product.price was 0 — calculated ${product_price}")
 
-        # ✅ FEATURE BULLETS TO HTML DESCRIPTION
-        description_html = product.description or ""
-        feature_bullets = getattr(product, "feature_bullets", []) or []
-        
-        # Agar database se string aayi hai toh list mein convert karein
-        if isinstance(feature_bullets, str):
-            try:
-                import json
-                feature_bullets = json.loads(feature_bullets)
-            except Exception:
-                feature_bullets = [feature_bullets] if feature_bullets else []
-
-        if isinstance(feature_bullets, list) and len(feature_bullets) > 0:
-            bullets_html = "<h3>About this item</h3><ul>"
-            for b in feature_bullets:
-                bullets_html += f"<li>{b}</li>"
-            bullets_html += "</ul>"
-            description_html = bullets_html + description_html
-
         base = {
             "title": product.title,
-            "description": description_html, # ✅ Updated
+            "description": product.description or "", # ✅ Direct description
             "brand": product.brand or "",
             "images": product.images or ([product.image_url] if product.image_url else []),
             "price": str(product_price) if product_price else "0.00",
@@ -270,22 +251,13 @@ def _build_product_data_for_shopify(data: dict, product=None) -> dict:
             "package_weight": getattr(product, "package_weight", None),
             "package_dimensions": getattr(product, "package_dimensions", None),
             "item_dimensions": getattr(product, "item_dimensions", None),
+            # ✅ Bullets added so description.py can use them
+            "feature_bullets": getattr(product, "feature_bullets", []) or [],
         }
     else:
-        # ✅ DATA TO HTML DESCRIPTION
-        description_html = data.get("description") or ""
-        feature_bullets = data.get("feature_bullets") or []
-
-        if isinstance(feature_bullets, list) and len(feature_bullets) > 0:
-            bullets_html = "<h3>About this item</h3><ul>"
-            for b in feature_bullets:
-                bullets_html += f"<li>{b}</li>"
-            bullets_html += "</ul>"
-            description_html = bullets_html + description_html
-
         base = {
             "title": data.get("title"),
-            "description": description_html, # ✅ Updated
+            "description": data.get("description") or "", # ✅ Direct description
             "brand": data.get("brand") or "",
             "images": data.get("images") or ([data["image_url"]] if data.get("image_url") else []),
             "price": str(data.get("price", 0) or 0),
@@ -300,6 +272,8 @@ def _build_product_data_for_shopify(data: dict, product=None) -> dict:
             "variant_attributes": data.get("variant_attributes", []),
             "categories": data.get("categories", []),
             "tags": data.get("tags", []),
+            # ✅ Bullets added so description.py can use them
+            "feature_bullets": data.get("feature_bullets", []),
         }
 
     standard_fields = [
