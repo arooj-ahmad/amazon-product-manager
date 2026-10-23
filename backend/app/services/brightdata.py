@@ -1,8 +1,7 @@
 # ============================================
 # app/services/brightdata.py
-# + ✅ Bright Data: Only for Cron Job (Price Update)
-# + ✅ Apify: 100% Product Fetch, Variations & Details
-# + ✅ FIXED: Inventory check — availability + price dono check
+# + ✅ Inventory: buybox_price mojood ho to 100, warna 0
+# + ✅ Category: breadCrumbs parse karke categories mein daala
 # ============================================
 
 import logging
@@ -21,12 +20,10 @@ logger = logging.getLogger(__name__)
 # EXCEPTIONS
 # ============================================
 class BrightDataError(Exception):
-    """Bright Data API se related errors"""
     pass
 
 
 class ApifyError(Exception):
-    """Apify API se related errors"""
     pass
 
 
@@ -107,26 +104,15 @@ def parse_standard_fields(raw: dict) -> dict:
     fields = {}
     fields["model_number"] = raw.get("model_number")
     fields["manufacturer"] = raw.get("manufacturer")
-
-    fields["item_dimensions"] = (
-        raw.get("item_dimensions")
-        or raw.get("product_dimensions")
-        or ""
-    )
-    fields["item_weight"] = (
-        raw.get("item_weight")
-        or raw.get("product_weight")
-        or ""
-    )
+    fields["item_dimensions"] = raw.get("item_dimensions") or raw.get("product_dimensions") or ""
+    fields["item_weight"] = raw.get("item_weight") or raw.get("product_weight") or ""
 
     package_dims_raw = raw.get("package_dimensions") or ""
     if package_dims_raw and isinstance(package_dims_raw, str):
         fields["package_dimensions"] = package_dims_raw.strip()
         parsed = parse_package_dimensions(package_dims_raw)
-
         if not fields["item_dimensions"] and parsed.get("item_dimensions"):
             fields["item_dimensions"] = parsed["item_dimensions"]
-
         if not fields["item_weight"] and parsed.get("item_weight"):
             fields["item_weight"] = parsed["item_weight"]
 
@@ -141,11 +127,7 @@ def parse_standard_fields(raw: dict) -> dict:
                 continue
             value_str = str(field_value).strip()
 
-            if field_type in (
-                "item dimensions",
-                "item dimensions l x w x h",
-                "product dimensions",
-            ):
+            if field_type in ("item dimensions", "item dimensions l x w x h", "product dimensions"):
                 if not fields["item_dimensions"]:
                     fields["item_dimensions"] = value_str
             elif field_type in ("item weight", "shipping weight"):
@@ -167,10 +149,6 @@ def parse_standard_fields(raw: dict) -> dict:
 # 1. APIFY FETCH (100% Product Details)
 # ============================================
 def fetch_product_from_apify(amazon_url: str) -> dict:
-    """
-    Apify se product ki SAARI details fetch karta hai.
-    USA (Zip Code: 30024) ka data fetch karega.
-    """
     client = ApifyClient(settings.APIFY_API_TOKEN)
     actor_id = "delicious_zebu/amazon-product-details-scraper"
 
@@ -183,7 +161,6 @@ def fetch_product_from_apify(amazon_url: str) -> dict:
 
     try:
         run = client.actor(actor_id).call(run_input=run_input)
-        
         dataset_id = run.get("defaultDatasetId") if isinstance(run, dict) else run.default_dataset_id
         items = client.dataset(dataset_id).iterate_items()
 
@@ -192,22 +169,18 @@ def fetch_product_from_apify(amazon_url: str) -> dict:
                 continue
 
             asin = item.get("asin") or extract_asin_from_url(amazon_url)
-            
-            # Parent ASIN & Variations
             raw_parent = item.get("parent_asin")
             parent_asin = validate_parent_asin(raw_parent, asin)
             is_variation = bool(parent_asin)
 
             variant_attributes = []
             variations = []
-            
             apify_variants = item.get("variants") or []
             for v in apify_variants:
                 if isinstance(v, dict):
                     attrs = v.get("attributes") or v.get("attributes_list") or []
                     if isinstance(attrs, str):
                         attrs = [attrs]
-                    
                     for attr in attrs:
                         if isinstance(attr, str) and ":" in attr:
                             name, value = attr.split(":", 1)
@@ -224,20 +197,22 @@ def fetch_product_from_apify(amazon_url: str) -> dict:
                         variant_attributes.append({"name": name.strip(), "value": value.strip()})
                         variations.append({"name": name.strip(), "value": value.strip()})
 
-            # ✅ FIXED: Inventory check — availability + price dono check karo
+            # ✅ Inventory: buybox_price mojood ho to In Stock
+            price_raw = item.get("buybox_price") or item.get("price")
             avail_text = str(item.get("availability") or "").strip()
             avail_lower = avail_text.lower()
-            price_raw = item.get("buybox_price") or item.get("price")
 
             out_of_stock_keywords = [
                 "out of stock", "unavailable", "currently unavailable",
                 "not available", "sold out", "no featured offers"
             ]
 
+            # Pehle out-of-stock keywords check karo
             if any(kw in avail_lower for kw in out_of_stock_keywords):
                 is_available = False
                 stock_qty = 0
                 avail_text = "Out of Stock"
+            # Phir buybox_price check karo — agar price hai to khareeda ja sakta hai
             elif price_raw is None or price_raw == "":
                 is_available = False
                 stock_qty = 0
@@ -257,7 +232,6 @@ def fetch_product_from_apify(amazon_url: str) -> dict:
             else:
                 images = []
 
-            # Price
             price = parse_price(price_raw) if price_raw else None
 
             # Bullets
@@ -276,24 +250,28 @@ def fetch_product_from_apify(amazon_url: str) -> dict:
                 for detail in product_details:
                     if isinstance(detail, dict) and detail.get("type") and detail.get("value"):
                         specs[detail["type"]] = str(detail["value"]).strip()
-
             if item.get("specifications") and isinstance(item["specifications"], dict):
                 specs.update(item["specifications"])
 
             title = item.get("title") or "Untitled Product"
             brand = item.get("brand") or item.get("manufacturer") or ""
 
-            # Categories & Tags
+            # ✅ Category: breadCrumbs se parse karo
             categories = []
-            raw_cat = item.get("categories") or item.get("category") or item.get("category_tree")
-            if isinstance(raw_cat, list):
-                for c in raw_cat:
-                    if isinstance(c, dict) and c.get("name"):
-                        categories.append(c.get("name"))
-                    elif isinstance(c, str):
-                        categories.append(c)
-            elif isinstance(raw_cat, str):
-                categories.append(raw_cat)
+            breadcrumbs = item.get("breadCrumbs") or item.get("breadcrumbs") or ""
+            if breadcrumbs and isinstance(breadcrumbs, str):
+                # "Toys & Games > Vehicles > Vehicle Playsets > Motor Vehicles"
+                categories = [c.strip() for c in breadcrumbs.split(">") if c.strip()]
+            else:
+                raw_cat = item.get("categories") or item.get("category") or item.get("category_tree")
+                if isinstance(raw_cat, list):
+                    for c in raw_cat:
+                        if isinstance(c, dict) and c.get("name"):
+                            categories.append(c.get("name"))
+                        elif isinstance(c, str):
+                            categories.append(c)
+                elif isinstance(raw_cat, str):
+                    categories.append(raw_cat)
 
             tags = []
             raw_tags = item.get("tags") or item.get("best_sellers_rank") or []
@@ -351,7 +329,6 @@ def fetch_product_from_apify(amazon_url: str) -> dict:
 # 2. BRIGHT DATA FETCH (Only for Cron / Price Update)
 # ============================================
 async def fetch_product_from_brightdata(amazon_url: str) -> dict:
-    """Yeh function sirf Cron Job (Price update) ke liye use hoga."""
     api_url = (
         f"{settings.BRIGHT_DATA_API_URL}"
         f"?dataset_id={settings.BRIGHT_DATA_DATASET_ID}"
@@ -426,7 +403,7 @@ async def fetch_product_from_brightdata(amazon_url: str) -> dict:
     feature_bullets = []
     if isinstance(raw.get("feature_bullets"), list) and len(raw["feature_bullets"]) > 0:
         feature_bullets = [str(b).strip() for b in raw["feature_bullets"] if b]
-        
+
     if not feature_bullets:
         desc_text = raw.get("description", "") or raw.get("product_description", "") or raw.get("about_this_item", "")
         if desc_text:

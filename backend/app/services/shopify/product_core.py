@@ -1,8 +1,8 @@
 # ============================================
 # app/services/shopify/product_core.py
-# + ✅ FIXED: Default category fallback removed
-# + ✅ FIXED: Category passed via productSet input
-# + ✅ FIXED: Tags overwritten via productSet input
+# + ✅ FIXED: Category search via breadcrumb terms (not full title)
+# + ✅ FIXED: Multiple terms tried for better taxonomy match
+# + ✅ FIXED: Explicit int conversion for stock quantity
 # ============================================
 
 import logging
@@ -167,6 +167,44 @@ def _build_inventory_item(product_data: dict, sku: str) -> dict:
 
 
 # ============================================
+# ✅ FIXED: Category search via breadcrumb terms
+# ============================================
+async def _find_category_from_breadcrumbs(
+    shop: str,
+    access_token: str,
+    categories: list,
+    product_title: str,
+) -> Optional[str]:
+    """Breadcrumb terms ko try karta hai, sabse specific se shuru karke."""
+    if not categories:
+        # Agar categories nahi hain to title use karo
+        return await find_best_category(
+            shop=shop,
+            access_token=access_token,
+            product_title=product_title,
+            categories=[],
+        )
+
+    # Sabse specific (aakhri) term se shuru karo, phir pichle terms
+    # Example: ["Toys & Games", "Vehicles", "Vehicle Playsets"] → "Vehicle Playsets" pehle
+    terms_to_try = list(reversed(categories))
+
+    for term in terms_to_try:
+        cat_id = await find_best_category(
+            shop=shop,
+            access_token=access_token,
+            product_title=term,
+            categories=categories,
+        )
+        if cat_id:
+            logger.info(f"   ✅ Category matched via term: '{term}'")
+            return cat_id
+
+    logger.warning(f"⚠️ No category found for breadcrumbs: {categories}")
+    return None
+
+
+# ============================================
 # ✅ PRODUCT CREATE (SIMPLE)
 # ============================================
 async def create_shopify_product(
@@ -174,7 +212,7 @@ async def create_shopify_product(
     access_token: str,
     product_data: dict,
 ) -> dict:
-    is_available = product_data.get("is_available", False)
+    is_available = bool(product_data.get("is_available", False))
     status = "ACTIVE" if is_available else "DRAFT"
     
     if not is_available:
@@ -202,7 +240,6 @@ async def create_shopify_product(
     shopify_tags = _build_shopify_tags(product_data)
     product_type = _get_product_type(product_data)
 
-    # ProductType: agar category na mile to Title ka pehla word
     if not product_type:
         title = product_data.get("title") or ""
         if title:
@@ -213,15 +250,13 @@ async def create_shopify_product(
     categories = product_data.get("categories") or []
     product_title = product_data.get("title", "")
 
-    # ✅ No default category fallback — agar match na mile to None
-    shopify_category_id = None
-    if product_title or categories:
-        shopify_category_id = await find_best_category(
-            shop=shop,
-            access_token=access_token,
-            product_title=product_title,
-            categories=categories,
-        )
+    # ✅ FIXED: Category search via breadcrumbs
+    shopify_category_id = await _find_category_from_breadcrumbs(
+        shop=shop,
+        access_token=access_token,
+        categories=categories,
+        product_title=product_title,
+    )
 
     description_html = _build_description_with_metafields(product_data)
 
@@ -244,11 +279,9 @@ async def create_shopify_product(
         "productType": product_type,
     }
 
-    # ✅ Category seedha productSet mein
     if shopify_category_id:
         input_data["category"] = shopify_category_id
 
-    # ✅ Tags seedha productSet mein (overwrite)
     if shopify_tags:
         input_data["tags"] = shopify_tags
 
@@ -341,7 +374,8 @@ async def create_shopify_product(
             )
 
         if inventory_item_id:
-            stock_qty = 0 if not is_available else product_data.get("stock_quantity", 0)
+            # ✅ FIXED: Explicit int conversion
+            stock_qty = 0 if not is_available else int(product_data.get("stock_quantity", 0) or 0)
             await set_inventory_quantity(
                 shop=shop, access_token=access_token, inventory_item_id=inventory_item_id, quantity=stock_qty,
             )
@@ -364,7 +398,7 @@ async def create_shopify_product_with_variants(
     product_data: dict,
     variants: list,
 ) -> dict:
-    is_available = product_data.get("is_available", False)
+    is_available = bool(product_data.get("is_available", False))
     status = "ACTIVE" if is_available else "DRAFT"
 
     shopify_tags = _build_shopify_tags(product_data)
@@ -380,12 +414,13 @@ async def create_shopify_product_with_variants(
     categories = product_data.get("categories") or []
     product_title = product_data.get("title", "")
 
-    # ✅ No default category fallback
-    shopify_category_id = None
-    if product_title or categories:
-        shopify_category_id = await find_best_category(
-            shop=shop, access_token=access_token, product_title=product_title, categories=categories,
-        )
+    # ✅ FIXED: Category search via breadcrumbs
+    shopify_category_id = await _find_category_from_breadcrumbs(
+        shop=shop,
+        access_token=access_token,
+        categories=categories,
+        product_title=product_title,
+    )
 
     asin_value = str(product_data.get("asin", "") or "").strip() or "NO-SKU"
 
@@ -403,11 +438,9 @@ async def create_shopify_product_with_variants(
         ],
     }
 
-    # ✅ Category seedha productSet mein
     if shopify_category_id:
         input_data["category"] = shopify_category_id
 
-    # ✅ Tags seedha productSet mein (overwrite)
     if shopify_tags:
         input_data["tags"] = shopify_tags
 
@@ -451,7 +484,8 @@ async def create_shopify_product_with_variants(
 
     variants_edges = shopify_product.get("variants", {}).get("edges", [])
     if variants_edges:
-        stock_qty = 0 if not is_available else product_data.get("stock_quantity", 0)
+        # ✅ FIXED: Explicit int conversion
+        stock_qty = 0 if not is_available else int(product_data.get("stock_quantity", 0) or 0)
 
         for edge in variants_edges:
             variant_node = edge.get("node", {})
