@@ -212,6 +212,9 @@ def parse_tags(raw: dict, categories: list[str]) -> list[str]:
 # ============================================
 # 1. APIFY FETCH (100% Product Details)
 # ============================================
+# ============================================
+# 1. APIFY FETCH (100% Product Details)
+# ============================================
 def fetch_product_from_apify(amazon_url: str) -> dict:
     """
     Apify se product ki SAARI details fetch karta hai:
@@ -220,12 +223,15 @@ def fetch_product_from_apify(amazon_url: str) -> dict:
     client = ApifyClient(settings.APIFY_API_TOKEN)
     actor_id = "delicious_zebu/amazon-product-details-scraper"
 
-    # ✅ FIXED: Apify ko "Params" chahiye hota hai "productUrls" nahi
+    # Apify actor input
     run_input = {"Params": [amazon_url]}
 
     try:
         run = client.actor(actor_id).call(run_input=run_input)
-        items = client.dataset(run.default_dataset_id).iterate_items()
+        
+        # ✅ FIXED: New apify-client returns dict instead of object
+        dataset_id = run.get("defaultDatasetId") if isinstance(run, dict) else run.default_dataset_id
+        items = client.dataset(dataset_id).iterate_items()
 
         for item in items:
             if not isinstance(item, dict):
