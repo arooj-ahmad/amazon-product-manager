@@ -9,6 +9,7 @@
 # + ✅ NAYA: extra_percent (Fixed + Percent markup type)
 # + ✅ FIXED: markup default 0.0 (user khud set karega)
 # + ✅ FIXED: tax_rate added to model
+# + ✅ NAYA: feature_bullets added for "About this item"
 # ============================================
 
 from sqlalchemy import (
@@ -50,6 +51,10 @@ class Product(Base):
     image_url = Column(String(1000), nullable=True)
     images = Column(JSON, default=list)
     specifications = Column(JSON, default=dict)
+    
+    # ✅ YEH NAYI LINE ADD KI HAI
+    feature_bullets = Column(JSONB, default=list, nullable=False)
+    
     rating = Column(Float, nullable=True)
     reviews_count = Column(BigInteger, nullable=True)
 
