@@ -1,6 +1,6 @@
 # ============================================
 # app/services/brightdata.py
-# + ✅ INVENTORY FIX: Prime Exclusive aur Join Prime ko pakka detect karega
+# + ✅ Inventory: Prime Exclusive / Join Prime detect karke 0 karega
 # + ✅ Category: breadCrumbs parse karke categories mein daala
 # ============================================
 
@@ -197,49 +197,38 @@ def fetch_product_from_apify(amazon_url: str) -> dict:
                         variant_attributes.append({"name": name.strip(), "value": value.strip()})
                         variations.append({"name": name.strip(), "value": value.strip()})
 
-            # =====================================================
-            # ✅ INVENTORY FIX: Prime Exclusive & Join Prime detect
-            # =====================================================
+            # ✅ INVENTORY FIX: Prime Exclusive & Join Prime detect karo
             price_raw = item.get("buybox_price") or item.get("price")
             avail_text = str(item.get("availability") or "").strip()
             avail_lower = avail_text.lower()
             
-            # String check for "Join Prime" or "Prime Exclusive"
+            # Poore item ko string mein convert kar ke check karo (Join Prime / Prime exclusive)
             item_str = str(item).lower()
-
-            # Specific fields jahan Amazon buybox ka status rakhta hai
-            buybox_status = str(item.get("buybox") or "").lower()
 
             out_of_stock_keywords = [
                 "out of stock", "unavailable", "currently unavailable",
-                "not available", "sold out", "no featured offers", "join prime"
+                "not available", "sold out", "no featured offers"
             ]
 
-            # 1. Agar text mein out of stock ya join prime likha hai
+            # 1. Agar text mein out of stock likha hai
             if any(kw in avail_lower for kw in out_of_stock_keywords):
                 is_available = False
                 stock_qty = 0
-                avail_text = "Out of Stock / Prime Exclusive"
+                avail_text = "Out of Stock"
             
-            # 2. Agar poore item ke data mein "join prime" ya "prime exclusive" hai
-            elif "join prime" in item_str or "prime exclusive" in item_str or "prime member price" in item_str:
+            # 2. Agar "Join Prime" ya "Prime exclusive" ka zikr hai (Add to cart nahi hai)
+            elif "join prime" in item_str or "prime exclusive" in item_str:
                 is_available = False
                 stock_qty = 0
-                avail_text = "Prime Exclusive"
+                avail_text = "Prime Exclusive - Out of Stock for non-Prime"
             
-            # 3. Agar buybox status mein prime likha hai
-            elif "prime" in buybox_status:
-                is_available = False
-                stock_qty = 0
-                avail_text = "Prime Exclusive"
-            
-            # 4. Agar price hi nahi hai
+            # 3. Agar price hi nahi hai
             elif price_raw is None or price_raw == "":
                 is_available = False
                 stock_qty = 0
                 avail_text = "Out of Stock"
             
-            # 5. Warna In Stock (Add to cart button mojood hai)
+            # 4. Warna In Stock (Add to cart button mojood hai)
             else:
                 is_available = True
                 stock_qty = 100
@@ -404,13 +393,7 @@ async def fetch_product_from_brightdata(amazon_url: str) -> dict:
     if not main_image and unique_images:
         main_image = unique_images[0]
 
-    # Bright Data mein bhi Prime Exclusive ka check
-    raw_str = str(raw).lower()
-    if "prime exclusive" in raw_str or "join prime" in raw_str:
-        in_stock = False
-    else:
-        in_stock = raw.get("in_stock")
-        
+    in_stock = raw.get("in_stock")
     if in_stock is True:
         is_available = True
         availability_text = "In Stock"
