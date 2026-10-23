@@ -1,6 +1,6 @@
 # ============================================
 # app/services/brightdata.py
-# + ✅ Inventory: buybox_price mojood ho to 100, warna 0
+# + ✅ Inventory: Prime Exclusive / Join Prime detect karke 0 karega
 # + ✅ Category: breadCrumbs parse karke categories mein daala
 # ============================================
 
@@ -197,26 +197,38 @@ def fetch_product_from_apify(amazon_url: str) -> dict:
                         variant_attributes.append({"name": name.strip(), "value": value.strip()})
                         variations.append({"name": name.strip(), "value": value.strip()})
 
-            # ✅ Inventory: buybox_price mojood ho to In Stock
+            # ✅ INVENTORY FIX: Prime Exclusive & Join Prime detect karo
             price_raw = item.get("buybox_price") or item.get("price")
             avail_text = str(item.get("availability") or "").strip()
             avail_lower = avail_text.lower()
+            
+            # Poore item ko string mein convert kar ke check karo (Join Prime / Prime exclusive)
+            item_str = str(item).lower()
 
             out_of_stock_keywords = [
                 "out of stock", "unavailable", "currently unavailable",
                 "not available", "sold out", "no featured offers"
             ]
 
-            # Pehle out-of-stock keywords check karo
+            # 1. Agar text mein out of stock likha hai
             if any(kw in avail_lower for kw in out_of_stock_keywords):
                 is_available = False
                 stock_qty = 0
                 avail_text = "Out of Stock"
-            # Phir buybox_price check karo — agar price hai to khareeda ja sakta hai
+            
+            # 2. Agar "Join Prime" ya "Prime exclusive" ka zikr hai (Add to cart nahi hai)
+            elif "join prime" in item_str or "prime exclusive" in item_str:
+                is_available = False
+                stock_qty = 0
+                avail_text = "Prime Exclusive - Out of Stock for non-Prime"
+            
+            # 3. Agar price hi nahi hai
             elif price_raw is None or price_raw == "":
                 is_available = False
                 stock_qty = 0
                 avail_text = "Out of Stock"
+            
+            # 4. Warna In Stock (Add to cart button mojood hai)
             else:
                 is_available = True
                 stock_qty = 100
