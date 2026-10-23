@@ -2,8 +2,8 @@
 # app/services/brightdata.py
 # + ✅ Bright Data: Only for Cron Job (Price Update)
 # + ✅ Apify: 100% Product Fetch, Variations & Details
-# + ✅ FIXED: Apify parses variants, availability, specs
-# + ✅ FIXED: Apify run_input uses "Params" key
+# + ✅ FIXED: Apify scrapes Product Details (Bullets)
+# + ✅ FIXED: run_input added scrapeProductDetails: True
 # ============================================
 
 import logging
@@ -212,9 +212,6 @@ def parse_tags(raw: dict, categories: list[str]) -> list[str]:
 # ============================================
 # 1. APIFY FETCH (100% Product Details)
 # ============================================
-# ============================================
-# 1. APIFY FETCH (100% Product Details)
-# ============================================
 def fetch_product_from_apify(amazon_url: str) -> dict:
     """
     Apify se product ki SAARI details fetch karta hai:
@@ -223,13 +220,15 @@ def fetch_product_from_apify(amazon_url: str) -> dict:
     client = ApifyClient(settings.APIFY_API_TOKEN)
     actor_id = "delicious_zebu/amazon-product-details-scraper"
 
-    # Apify actor input
-    run_input = {"Params": [amazon_url]}
+    # ✅ FIXED: Add scrapeProductDetails: True to force Apify to fetch bullets
+    run_input = {
+        "Params": [amazon_url],
+        "scrapeProductDetails": True
+    }
 
     try:
         run = client.actor(actor_id).call(run_input=run_input)
         
-        # ✅ FIXED: New apify-client returns dict instead of object
         dataset_id = run.get("defaultDatasetId") if isinstance(run, dict) else run.default_dataset_id
         items = client.dataset(dataset_id).iterate_items()
 
@@ -290,14 +289,18 @@ def fetch_product_from_apify(amazon_url: str) -> dict:
             price_raw = item.get("buybox_price") or item.get("price")
             price = parse_price(price_raw) if price_raw else None
 
-            # About this item (Bullets)
-            bullets = item.get("about_item") or []
+            # ✅ FIXED: Apify "About this item" (Bullets) parsing
+            bullets = item.get("about_item") or item.get("feature_bullets") or []
+            
+            # Agar bullets list nahi hai (string hai), toh newline se split karein
+            if isinstance(bullets, str):
+                bullets = [line.strip() for line in bullets.split("\n") if line.strip()]
+                
+            # Agar abhi bhi bullets nahi mile, toh description se dhoondein
             if not bullets and item.get("description"):
                 bullets = [line.strip() for line in item["description"].split("\n") if line.strip()]
-            if not isinstance(bullets, list):
-                bullets = []
                 
-            if not bullets:
+            if not isinstance(bullets, list) or len(bullets) == 0:
                 bullets = ["Check Amazon for full product details."]
 
             # Specs
