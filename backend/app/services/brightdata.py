@@ -2,8 +2,8 @@
 # app/services/brightdata.py
 # + ✅ Bright Data: Only for Cron Job (Price Update)
 # + ✅ Apify: 100% Product Fetch, Variations & Details
-# + ✅ FIXED: Stock 100/0 based STRICTLY on Apify Data
-# + ✅ FIXED: Categories & Tags extraction added
+# + ✅ FIXED: USA Zip Code (30024) for Apify
+# + ✅ FIXED: Strict Availability check (Add to Cart logic)
 # ============================================
 
 import logging
@@ -104,31 +104,6 @@ def validate_parent_asin(parent_asin, asin: str) -> Optional[str]:
     return parent_asin.upper()
 
 
-def check_availability(raw: dict) -> tuple[bool, str, str]:
-    add_to_cart = raw.get("add_to_cart_available")
-    buybox = raw.get("buybox_available")
-    in_stock = raw.get("in_stock")
-
-    if add_to_cart is True:
-        return True, "In Stock", "add_to_cart_available"
-    if buybox is True:
-        return True, "In Stock", "buybox_available"
-    if in_stock is True:
-        return True, "In Stock", "in_stock"
-
-    availability_text = raw.get("availability") or raw.get("stock_status") or ""
-    if not availability_text:
-        return False, "Unknown", "no_info"
-
-    avail_lower = availability_text.lower().strip()
-    if any(
-        kw in avail_lower
-        for kw in ["out of stock", "unavailable", "not available", "sold out"]
-    ):
-        return False, availability_text, "out"
-    return True, availability_text, "in"
-
-
 def parse_standard_fields(raw: dict) -> dict:
     fields = {}
     fields["model_number"] = raw.get("model_number")
@@ -194,15 +169,18 @@ def parse_standard_fields(raw: dict) -> dict:
 # ============================================
 def fetch_product_from_apify(amazon_url: str) -> dict:
     """
-    Apify se product ki SAARI details fetch karta hai:
-    Title, Brand, Price, Images, Variations, Availability, Specs, Bullets, Categories, Tags.
+    Apify se product ki SAARI details fetch karta hai.
+    USA (Zip Code: 30024) ka data fetch karega.
     """
     client = ApifyClient(settings.APIFY_API_TOKEN)
     actor_id = "delicious_zebu/amazon-product-details-scraper"
 
+    # ✅ FIXED: USA Zip Code aur Details add ki gayi hain
     run_input = {
         "Params": [amazon_url],
-        "scrapeProductDetails": True
+        "scrapeProductDetails": True,
+        "country": "US",
+        "zipCode": "30024"
     }
 
     try:
@@ -248,30 +226,23 @@ def fetch_product_from_apify(amazon_url: str) -> dict:
                         variant_attributes.append({"name": name.strip(), "value": value.strip()})
                         variations.append({"name": name.strip(), "value": value.strip()})
 
-            # ✅ FIXED: STRICT AVAILABILITY CHECK (Only based on Apify Data)
-            avail_text = str(item.get("availability") or "").strip()
+            # ✅ FIXED: Strict Availability Check (Add to cart button logic)
+            avail_text = str(item.get("availability") or "In Stock").strip()
             avail_lower = avail_text.lower()
             
-            has_cart = item.get("add_to_cart_available")
-            has_buybox = item.get("buybox_available")
             price_raw = item.get("buybox_price") or item.get("price")
             
-            # 1. Agar price hi nahi hai
-            if price_raw is None:
+            # Agar availability text mein out of stock likha hai
+            if any(kw in avail_lower for kw in ["out of stock", "unavailable", "currently unavailable", "not available", "sold out"]):
                 is_available = False
                 stock_qty = 0
                 avail_text = "Out of Stock"
-            # 2. Agar text mein out of stock likha hai
-            elif any(kw in avail_lower for kw in ["out of stock", "unavailable", "currently unavailable", "not available", "sold out"]):
+            # Agar price hi nahi hai (yani buybox nahi hai)
+            elif price_raw is None:
                 is_available = False
                 stock_qty = 0
                 avail_text = "Out of Stock"
-            # 3. Agar cart aur buybox dono False hain
-            elif has_cart is False and has_buybox is False:
-                is_available = False
-                stock_qty = 0
-                avail_text = "Out of Stock"
-            # 4. Warna In Stock
+            # Warna In Stock
             else:
                 is_available = True
                 stock_qty = 100
@@ -434,7 +405,15 @@ async def fetch_product_from_brightdata(amazon_url: str) -> dict:
     if not main_image and unique_images:
         main_image = unique_images[0]
 
-    is_available, availability_text, _ = check_availability(raw)
+    # Availability check for Bright Data
+    in_stock = raw.get("in_stock")
+    if in_stock is True:
+        is_available = True
+        availability_text = "In Stock"
+    else:
+        is_available = False
+        availability_text = "Out of Stock"
+
     stock_quantity = 100 if is_available else 0
 
     specs = {}
@@ -483,7 +462,7 @@ async def fetch_product_from_brightdata(amazon_url: str) -> dict:
         "specifications": specs,
         "description": "",
         "feature_bullets": feature_bullets,
-        "availability": str(availability_text) if availability_text else "In Stock",
+        "availability": availability_text,
         "is_available": is_available,
         "stock_quantity": stock_quantity,
         "variations": variations,
