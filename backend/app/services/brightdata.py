@@ -3,7 +3,7 @@
 # + ✅ Bright Data: Only for Cron Job (Price Update)
 # + ✅ Apify: 100% Product Fetch, Variations & Details
 # + ✅ FIXED: Apify scrapes Product Details (Bullets)
-# + ✅ FIXED: Strict Availability check (Checks add_to_cart/buybox)
+# + ✅ FIXED: Ultra-Strict Availability check (Checks buybox_price)
 # ============================================
 
 import logging
@@ -271,24 +271,27 @@ def fetch_product_from_apify(amazon_url: str) -> dict:
                         variant_attributes.append({"name": name.strip(), "value": value.strip()})
                         variations.append({"name": name.strip(), "value": value.strip()})
 
-            # ✅ FIXED: Strict Availability & Stock Check
+            # ✅ FIXED: Ultra-Strict Availability Check
             avail_text = str(item.get("availability") or "").strip()
             avail_lower = avail_text.lower()
             
-            # Apify kabhi "add_to_cart" ya "buybox" field bhi bhejta hai, unhe check karein
-            has_cart = item.get("add_to_cart_available") or item.get("buybox_available")
+            # Apify ke fields check karein
+            has_cart = item.get("add_to_cart_available")
+            has_buybox = item.get("buybox_available")
+            price_raw = item.get("buybox_price") or item.get("price")
             
-            # Agar text mein out of stock likha hai, ya cart available nahi hai
-            if "out of stock" in avail_lower or "unavailable" in avail_lower or "currently unavailable" in avail_lower or "not available" in avail_lower:
+            # Agar Amazon par Buy Box price hai hi nahi, toh matlab product out of stock hai
+            if price_raw is None:
                 is_available = False
                 stock_qty = 0
                 avail_text = "Out of Stock"
-            elif has_cart is False:
+            # Agar cart aur buybox dono False hain
+            elif has_cart is False and has_buybox is False:
                 is_available = False
                 stock_qty = 0
                 avail_text = "Out of Stock"
-            elif not avail_text and not has_cart: 
-                # Agar Apify ne availability blank chhod di hai aur cart bhi nahi hai
+            # Agar text mein out of stock likha hai
+            elif any(kw in avail_lower for kw in ["out of stock", "unavailable", "currently unavailable", "not available", "sold out"]):
                 is_available = False
                 stock_qty = 0
                 avail_text = "Out of Stock"
@@ -308,7 +311,6 @@ def fetch_product_from_apify(amazon_url: str) -> dict:
                 images = []
 
             # Price
-            price_raw = item.get("buybox_price") or item.get("price")
             price = parse_price(price_raw) if price_raw else None
 
             # ✅ FIXED: Apify "About this item" (Bullets) parsing
