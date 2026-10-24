@@ -4,7 +4,10 @@
 
 import logging
 import re
+from datetime import datetime, timedelta, timezone
+
 from app.services.amazon import extract_asin_from_url
+from app.services.shopify import refresh_shopify_token
 
 logger = logging.getLogger(__name__)
 
@@ -30,7 +33,6 @@ def _normalize_amazon_url(url: str) -> str:
     if "amazon." in url and "www.amazon." not in url:
         url = url.replace("amazon.", "www.amazon.", 1)
 
-    # 1. Standard extract_asin_from_url try karein
     asin = extract_asin_from_url(url)
     if asin:
         normalized = f"https://www.amazon.com/dp/{asin}"
@@ -38,7 +40,6 @@ def _normalize_amazon_url(url: str) -> str:
             logger.info(f"🔗 URL normalized: {url[:60]}... → {normalized}")
         return normalized
 
-    # 2. Search URL se ASIN nikalne ki koshish karein
     match = re.search(r"[?&]k=([A-Z0-9]{10})", url)
     if match:
         asin = match.group(1)
@@ -46,7 +47,6 @@ def _normalize_amazon_url(url: str) -> str:
         logger.info(f"🔗 URL normalized (search): {url[:60]}... → {normalized}")
         return normalized
         
-    # 3. Agar ASIN direct URL mein kahin aur ho
     match = re.search(r"/([A-Z0-9]{10})(?:[/?]|$)", url)
     if match:
         asin = match.group(1)
@@ -177,3 +177,32 @@ def _verify_parent_match(existing_parent, new_data: dict) -> bool:
             return False
 
     return True
+
+# ✅ YEH FUNCTION MISS THA, AB ADD KAR DIYA HAI
+async def _get_valid_access_token(store, db, force_refresh: bool = False) -> str:
+    now = datetime.now(timezone.utc)
+    buffer = timedelta(minutes=10)
+
+    needs_refresh = force_refresh
+    if not needs_refresh and store.expires_at and store.expires_at <= now + buffer:
+        needs_refresh = True
+
+    if needs_refresh and store.refresh_token:
+        logger.info(f"🔄 Refreshing token for {store.shop_domain}")
+        refreshed = await refresh_shopify_token(store.shop_domain, store.refresh_token)
+
+        if refreshed and refreshed.get("access_token"):
+            store.access_token = refreshed["access_token"]
+            if refreshed.get("refresh_token"):
+                store.refresh_token = refreshed["refresh_token"]
+            if refreshed.get("expires_in"):
+                store.expires_at = now + timedelta(seconds=int(refreshed["expires_in"]))
+            if refreshed.get("refresh_token_expires_in"):
+                store.refresh_token_expires_at = now + timedelta(seconds=int(refreshed["refresh_token_expires_in"]))
+            db.commit()
+            db.refresh(store)
+            logger.info(f"✅ Token refreshed for {store.shop_domain}")
+        else:
+            logger.error(f"❌ Token refresh failed for {store.shop_domain}")
+
+    return store.access_token
