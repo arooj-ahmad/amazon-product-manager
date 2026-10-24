@@ -1,6 +1,6 @@
 # ============================================
 # app/services/brightdata.py
-# + ✅ INVENTORY: Sirf "In Stock" check -> 100, warna 0
+# + ✅ INVENTORY: Strict Prime Check -> 0, warna "In Stock" -> 100
 # ============================================
 
 import logging
@@ -145,10 +145,7 @@ def parse_standard_fields(raw: dict) -> dict:
 
 
 # ============================================
-# ✅ FIXED: Sirf "In Stock" Check
-# ============================================
-# ============================================
-# ✅ FIXED: Availability Checker (Prime Priority)
+# ✅ FIXED: Availability Checker (Strict Prime Priority)
 # ============================================
 def check_availability(raw: dict) -> tuple[bool, str, str]:
     """
@@ -157,13 +154,12 @@ def check_availability(raw: dict) -> tuple[bool, str, str]:
     """
     
     # 1. Poore data ko string mein badal kar Prime check karo
-    # (Kyunke Prime wale products par "Prime Member Price" lazmi hota hai)
+    # (Kyunke Prime wale products par "Prime Member Price" ya "Join Prime" lazmi hota hai)
     item_str = str(raw).lower()
     
-    # Agar data mein Prime ka zikr hai lekin Add to Cart nahi hai -> Stock 0
+    # Agar data mein Prime ya Exclusive ka zikr hai -> Stock 0
     if "prime" in item_str or "exclusive" in item_str:
-        if "add to cart" not in item_str:
-            return False, "Prime Exclusive (No Add to Cart)", "prime_found_in_data"
+        return False, "Prime Exclusive (No Add to Cart)", "prime_found_in_data"
 
     # 2. Ab "In Stock" check karo
     availability_text = str(raw.get("availability") or raw.get("stock_status") or "").strip()
