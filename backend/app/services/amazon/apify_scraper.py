@@ -8,7 +8,7 @@ from apify_client import ApifyClient
 from app.config import settings
 from .exceptions import ApifyError
 from .helpers import extract_asin_from_url, validate_parent_asin, parse_price
-from .inventory import check_availability
+from .inventory import check_availability_apify  # ✅ Changed import
 
 logger = logging.getLogger(__name__)
 
@@ -62,12 +62,12 @@ def fetch_product_from_apify(amazon_url: str) -> dict:
                         variations.append({"name": name.strip(), "value": value.strip()})
 
             # =====================================================
-            # ✅ INVENTORY FIX: check_availability use kiya
+            # ✅ APIFY INVENTORY FIX: check_availability_apify use kiya
             # =====================================================
-            is_available, avail_text, reason = check_availability(item)
+            is_available, avail_text, reason = check_availability_apify(item)
             
             stock_qty = 100 if is_available else 0
-            logger.info(f"   Inventory Check: {avail_text} (Reason: {reason}) -> Stock: {stock_qty}")
+            logger.info(f"   Apify Inventory Check: {avail_text} (Reason: {reason}) -> Stock: {stock_qty}")
 
             # Images
             images_raw = item.get("images") or []
