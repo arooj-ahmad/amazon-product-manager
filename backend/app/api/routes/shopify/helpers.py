@@ -4,6 +4,7 @@
 
 import logging
 import re
+import json
 from datetime import datetime, timedelta, timezone
 
 from app.services.amazon import extract_asin_from_url
@@ -178,7 +179,6 @@ def _verify_parent_match(existing_parent, new_data: dict) -> bool:
 
     return True
 
-# ✅ YEH FUNCTION MISS THA, AB ADD KAR DIYA HAI
 async def _get_valid_access_token(store, db, force_refresh: bool = False) -> str:
     now = datetime.now(timezone.utc)
     buffer = timedelta(minutes=10)
@@ -206,3 +206,126 @@ async def _get_valid_access_token(store, db, force_refresh: bool = False) -> str
             logger.error(f"❌ Token refresh failed for {store.shop_domain}")
 
     return store.access_token
+
+def _build_product_data_for_shopify(data: dict, product=None) -> dict:
+    base = {}
+
+    if product:
+        product_price = product.price
+        if product_price is None or float(product_price or 0) <= 0:
+            amazon = float(product.amazon_price or 0)
+            if amazon <= 0:
+                product_price = 0.0
+                logger.warning("⚠️ product.price and amazon_price both 0 — setting $0.00")
+            else:
+                markup_val = float(product.markup or 0.0)
+                markup_type = product.markup_type or "fixed"
+                extra_pct = float(getattr(product, "extra_percent", 0.0) or 0.0)
+
+                if markup_type == "percent":
+                    product_price = amazon * (1 + markup_val / 100)
+                elif markup_type == "both":
+                    base_price = amazon + markup_val
+                    product_price = base_price * (1 + extra_pct / 100)
+                else:
+                    product_price = amazon + markup_val
+                logger.warning(f"⚠️ product.price was 0 — calculated ${product_price}")
+
+        base = {
+            "title": product.title,
+            "description": product.description or "",
+            "brand": product.brand or "",
+            "images": product.images or ([product.image_url] if product.image_url else []),
+            "price": str(product_price) if product_price else "0.00",
+            "stock_quantity": product.stock_quantity or 0,
+            "is_available": (product.is_available if product.is_available is not None else False),
+            "availability": product.availability or "In Stock",
+            "rating": product.rating,
+            "reviews_count": product.reviews_count,
+            "amazon_price": product.amazon_price,
+            "asin": product.asin,
+            "parent_asin": product.parent_asin,
+            "variant_attributes": product.variant_attributes or [],
+            "categories": product.categories or [],
+            "tags": product.tags or [],
+            "manufacturer": getattr(product, "manufacturer", None),
+            "department": getattr(product, "department", None),
+            "country_of_origin": getattr(product, "country_of_origin", None),
+            "item_weight": getattr(product, "item_weight", None),
+            "package_weight": getattr(product, "package_weight", None),
+            "package_dimensions": getattr(product, "package_dimensions", None),
+            "item_dimensions": getattr(product, "item_dimensions", None),
+            "feature_bullets": getattr(product, "feature_bullets", []) or [],
+        }
+    else:
+        base = {
+            "title": data.get("title"),
+            "description": data.get("description") or "",
+            "brand": data.get("brand") or "",
+            "images": data.get("images") or ([data["image_url"]] if data.get("image_url") else []),
+            "price": str(data.get("price", 0) or 0),
+            "stock_quantity": data.get("stock_quantity", 0) or 0,
+            "is_available": data.get("is_available", False),
+            "availability": data.get("availability", "In Stock"),
+            "rating": data.get("rating"),
+            "reviews_count": data.get("reviews_count"),
+            "amazon_price": data.get("amazon_price"),
+            "asin": data.get("asin"),
+            "parent_asin": data.get("parent_asin"),
+            "variant_attributes": data.get("variant_attributes", []),
+            "categories": data.get("categories", []),
+            "tags": data.get("tags", []),
+            "feature_bullets": data.get("feature_bullets", []),
+        }
+
+    standard_fields = [
+        "model_number", "item_model_number", "model_name",
+        "part_number", "upc", "ean", "isbn",
+        "manufacturer", "department", "country_of_origin",
+        "item_dimensions", "item_weight", "package_dimensions", "package_weight",
+        "size", "color", "material_type", "style_name", "theme",
+        "date_first_available", "best_sellers_rank",
+        "language", "reading_age", "unit_count", "number_of_pieces",
+        "care_instructions", "closure_type", "fabric_type",
+        "number_of_players", "educational_objective",
+        "power_source", "battery_types", "operation_mode",
+        "specific_uses", "special_features",
+        "connectivity", "processor", "ram_technology", "memory",
+        "screen_size", "resolution", "operating_system",
+        "hard_disk", "graphics_coprocessor", "warranty",
+    ]
+
+    if data:
+        for field in standard_fields:
+            val = data.get(field)
+            if val is not None and str(val).strip() and str(val).strip() != "None":
+                base[field] = str(val).strip()
+
+    if product:
+        specs = product.specifications or {}
+        if isinstance(specs, str):
+            try:
+                specs = json.loads(specs)
+            except Exception:
+                specs = {}
+        if isinstance(specs, dict):
+            for field in standard_fields:
+                if field in base:
+                    continue
+                val = specs.get(field)
+                if val is not None and str(val).strip() and str(val).strip() != "None":
+                    base[field] = str(val).strip()
+
+        for field in standard_fields:
+            if field in base:
+                continue
+            val = getattr(product, field, None)
+            if val is not None and str(val).strip() and str(val).strip() != "None":
+                base[field] = str(val).strip()
+
+    base["product_details"] = (data.get("product_details") if data else None) or []
+
+    filled = [f for f in standard_fields if f in base]
+    logger.info(f"   📦 product_data built: price=${base.get('price')}, {len(filled)} standard fields")
+
+    return base

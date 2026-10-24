@@ -13,14 +13,15 @@ from app.services.shopify import (
     shopify_graphql
 )
 
-# ✅ Saare helpers yahan se import kiye hain
+# ✅ Saare helpers (including _build_product_data_for_shopify) ab helpers.py se aa rahe hain
 from .helpers import (
     _resolve_markup, 
     apply_markup_cap, 
     _extract_weight, 
     extract_all_variations, 
     _verify_parent_match,
-    _get_valid_access_token  # ✅ Yeh fix kiya hai
+    _get_valid_access_token,
+    _build_product_data_for_shopify  # ✅ Yeh add kiya hai
 )
 
 logger = logging.getLogger(__name__)
@@ -124,7 +125,6 @@ async def _background_fetch_and_push(
                     db.commit()
             else:
                 # Create new product
-                from .product_routes import _build_product_data_for_shopify  # Import locally to avoid circular import
                 product_data = _build_product_data_for_shopify(data=data, product=new_product)
                 
                 result = await create_shopify_product(
