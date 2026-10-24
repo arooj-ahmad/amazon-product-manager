@@ -178,34 +178,53 @@ async def _find_category_from_breadcrumbs(
 ) -> Optional[str]:
     """Breadcrumb terms aur tags ko try karta hai taake exact category mile."""
     
-    terms_to_try = []
-    
-    # 1. Sabse specific (aakhri) breadcrumb term
+    # 1. Pehle Amazon ki breadcrumbs ko reversed order mein try karein (sabse specific pehle)
     if categories:
-        terms_to_try.extend(list(reversed(categories)))
-    
-    # 2. Tags add karein
+        for term in reversed(categories):
+            term = str(term).strip()
+            if not term:
+                continue
+            
+            cat_id = await find_best_category(
+                shop=shop,
+                access_token=access_token,
+                product_title=term,
+                categories=[term],
+            )
+            if cat_id:
+                logger.info(f"   ✅ Category matched via breadcrumb: '{term}'")
+                return cat_id
+
+    # 2. Agar breadcrumbs se na mile, to tags try karein
     if tags:
         for tag in tags:
-            if isinstance(tag, str) and tag not in terms_to_try:
-                terms_to_try.append(tag)
+            tag = str(tag).strip()
+            if not tag:
+                continue
+                
+            cat_id = await find_best_category(
+                shop=shop,
+                access_token=access_token,
+                product_title=tag,
+                categories=[tag],
+            )
+            if cat_id:
+                logger.info(f"   ✅ Category matched via tag: '{tag}'")
+                return cat_id
 
-    # 3. Agar kuch bhi na mile, to title use karein
-    if not terms_to_try and product_title:
-        terms_to_try.append(product_title)
-
-    for term in terms_to_try:
+    # 3. Agar kuch bhi na mile, to title se try karein
+    if product_title:
         cat_id = await find_best_category(
             shop=shop,
             access_token=access_token,
-            product_title=term,
-            categories=categories,
+            product_title=product_title,
+            categories=[],
         )
         if cat_id:
-            logger.info(f"   ✅ Category matched via term: '{term}'")
+            logger.info(f"   ✅ Category matched via title: '{product_title}'")
             return cat_id
 
-    logger.warning(f"⚠️ No category found for breadcrumbs/tags: {terms_to_try}")
+    logger.warning(f"⚠️ No category found for: {categories}")
     return None
 
 

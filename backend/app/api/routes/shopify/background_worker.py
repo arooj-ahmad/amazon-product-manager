@@ -22,8 +22,7 @@ from .helpers import (
     extract_all_variations, 
     _verify_parent_match,
     _get_valid_access_token,
-    _build_product_data_for_shopify,
-    _find_category_from_breadcrumbs
+    _build_product_data_for_shopify
 )
 
 logger = logging.getLogger(__name__)
@@ -128,18 +127,6 @@ async def _background_fetch_and_push(
             else:
                 # Create new product
                 product_data = _build_product_data_for_shopify(data=data, product=new_product)
-                
-                # ✅ SAHI CATEGORY FETCH KAREIN (Breadcrumbs + Tags se)
-                shopify_category_id = await _find_category_from_breadcrumbs(
-                    shop=shop_domain, 
-                    access_token=access_token, 
-                    categories=data.get("categories", []), 
-                    product_title=data.get("title", ""),
-                    tags=data.get("tags", [])  # ✅ Tags bhi pass kiya
-                )
-                if shopify_category_id:
-                    product_data["category"] = shopify_category_id
-                    logger.info(f"   ✅ Category ID injected: {shopify_category_id}")
 
                 result = await create_shopify_product(
                     shop=shop_domain, access_token=access_token, product_data=product_data,
