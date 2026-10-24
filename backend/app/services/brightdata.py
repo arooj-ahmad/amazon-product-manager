@@ -150,34 +150,36 @@ def parse_standard_fields(raw: dict) -> dict:
 # ============================================
 # ✅ FIXED: Availability Checker (Ultimate Fix)
 # ============================================
+# ============================================
+# ✅ FIXED: Availability Checker (Perfect Keywords)
+# ============================================
 def check_availability(raw: dict) -> tuple[bool, str, str]:
-    """
-    Sirf un products ko 100 karta hai jahan "In Stock" ka lafz ho.
-    Agar "In Stock" na ho, ya "Prime" ka zikr ho, to 0.
-    """
+    """Prime Exclusive ko strictly block karta hai."""
     
-    # 1. Sabse pehle poore data ko string mein badlo
+    # 1. Poore data ko string mein badlo
     item_str = str(raw).lower()
     
-    # 2. Agar data mein "prime" ya "exclusive" ka zikr hai -> 0
-    if "prime" in item_str or "exclusive" in item_str:
-        return False, "Prime Exclusive (No Add to Cart)", "prime_found"
+    # 2. Sirf woh alfaaz dhoondo jo ASAL MEIN Prime Exclusive products par hote hain
+    exclusive_keywords = [
+        "prime member price",
+        "exclusive prime price",
+        "exclusively for amazon prime"
+    ]
+    
+    # Agar yeh alfaaz milein -> Stock 0
+    if any(kw in item_str for kw in exclusive_keywords):
+        return False, "Prime Exclusive (No Add to Cart)", "prime_exclusive_found"
 
-    # 3. Availability text check karo
+    # 3. Ab normal stock check karo (Add to Cart wale products ke liye)
     availability_text = str(raw.get("availability") or raw.get("stock_status") or "").strip()
     avail_lower = availability_text.lower()
     
-    # 4. Agar isme "In Stock" likha hai
     if "in stock" in avail_lower:
-        # Check karo ke kahin "Add to cart" ka lafz bhi hai ya price hai
-        # Agar sirf "In Stock" hai lekin Prime price hai, to woh upar wale check se 0 ho chuka hoga.
         return True, availability_text, "in_stock_found"
         
-    # 5. Agar "out of stock" ya "unavailable" likha hai -> 0
     if any(kw in avail_lower for kw in ["out of stock", "unavailable", "not available", "sold out"]):
         return False, availability_text, "out_of_stock"
 
-    # 6. Agar kuch samajh na aaye -> 0 (Ehtiyat)
     return False, availability_text or "Unknown", "no_in_stock"
 
 
