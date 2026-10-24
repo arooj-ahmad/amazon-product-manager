@@ -1,24 +1,14 @@
 # ============================================
-# app/services/amazon/inventory.py
+# app/services/amazon/inventory_brightdata.py
 # ============================================
 
 import logging
 
 logger = logging.getLogger(__name__)
 
-def check_availability_apify(raw: dict) -> tuple[bool, str, str]:
-    """Apify Logic for Add Product"""
-    in_stock = raw.get("inStock")
-    if in_stock is True:
-        return True, "In Stock", "apify_in_stock_true"
-    if isinstance(in_stock, str) and in_stock.lower() == "true":
-        return True, "In Stock", "apify_in_stock_string_true"
-    return False, "Out of Stock", "apify_in_stock_false_or_missing"
-
-
 def check_availability_brightdata(raw: dict) -> tuple[bool, str, str]:
     """
-    Bright Data Strict Logic (Aapke logic + Bright Data ke asal fields)
+    Bright Data Strict Logic (Buybox aur Delivery check)
     """
     # 1. Direct fields check karo (Agar Bright Data future mein bheje)
     if raw.get("add_to_cart_available") is True:
@@ -46,8 +36,7 @@ def check_availability_brightdata(raw: dict) -> tuple[bool, str, str]:
     if "in stock" in avail_text:
         return True, "In Stock", "text_in_stock"
 
-    # 4. Agar buybox/delivery/price mein se koi ek bhi missing hai 
-    # (jaise aapke Drum Set ke case mein tha), toh Out of Stock maan lo
+    # 4. Agar buybox/delivery/price mein se koi ek bhi missing hai, toh Out of Stock
     if not buybox or not delivery or not final_price:
         return False, "Out of Stock", "missing_buybox_delivery_or_price"
 

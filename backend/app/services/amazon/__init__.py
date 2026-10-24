@@ -3,10 +3,17 @@
 # ============================================
 
 from .exceptions import BrightDataError, ApifyError
-from .helpers import extract_asin_from_url, parse_price, parse_package_dimensions, validate_parent_asin, parse_standard_fields
+from .helpers import (
+    extract_asin_from_url,
+    parse_price,
+    parse_package_dimensions,
+    validate_parent_asin,
+    parse_standard_fields,
+)
 
-# ✅ Dono naye functions import kiye hain
-from .inventory import check_availability_apify, check_availability_brightdata
+# ✅ Ab inventory ko do alag modules se import kiya hai
+from .inventory_apify import check_availability_apify
+from .inventory_brightdata import check_availability_brightdata
 
 from .apify_scraper import fetch_product_from_apify
 from .brightdata_scraper import fetch_product_from_brightdata
@@ -25,5 +32,5 @@ __all__ = [
     "check_availability_brightdata",
     "fetch_product_from_apify",
     "fetch_product_from_brightdata",
-    "calculate_final_price"
+    "calculate_final_price",
 ]

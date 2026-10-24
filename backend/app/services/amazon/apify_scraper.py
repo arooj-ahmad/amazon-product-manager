@@ -8,7 +8,7 @@ from apify_client import ApifyClient
 from app.config import settings
 from .exceptions import ApifyError
 from .helpers import extract_asin_from_url, validate_parent_asin, parse_price
-from .inventory import check_availability_apify  # ✅ Changed import
+from .inventory_apify import check_availability_apify  # ✅ Changed import
 
 logger = logging.getLogger(__name__)
 
