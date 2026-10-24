@@ -37,29 +37,24 @@ async def fetch_product_from_brightdata(amazon_url: str) -> dict:
     if "error" in raw:
         raise BrightDataError(f"Bright Data error: {raw['error']}")
     
-    # ✅ DEBUG KE LIYE YEH LINE ADD KI HAI (Terminal mein data dekhein)
+    # Debug ke liye (aap isko baad mein hata sakte hain)
     logger.info(f"🔍 BRIGHT DATA RAW: {raw}")
 
     asin = raw.get("asin") or extract_asin_from_url(amazon_url)
     if not asin:
         raise BrightDataError("ASIN nahi mila")
 
-    # =====================================================
-    # ✅ STOCK CHECK (Strict Logic)
-    # =====================================================
+    # Stock Check (Ab yeh hamesha True ya False dega)
     is_available, availability_text, reason = check_availability_brightdata(raw)
-    stock_quantity = 100 if is_available else 0
     
+    # Stock Quantity Calculate
+    stock_quantity = 100 if is_available else 0
+
     logger.info(f"   BrightData Inventory: {availability_text} (Reason: {reason}) -> Stock: {stock_quantity}")
 
-    # =====================================================
-    # ✅ PRICE CHECK
-    # =====================================================
-    amazon_price = parse_price(raw.get("final_price") or raw.get("price"))
+    # Price Check
+    amazon_price = parse_price(raw.get("final_price") or raw.get("initial_price") or raw.get("price"))
 
-    # =====================================================
-    # RETURN SIRF ZAROORI DATA (Scheduler ke liye)
-    # =====================================================
     return {
         "asin": asin,
         "amazon_price": amazon_price,
