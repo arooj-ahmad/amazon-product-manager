@@ -36,13 +36,16 @@ async def fetch_product_from_brightdata(amazon_url: str) -> dict:
     raw = data[0] if isinstance(data, list) and len(data) > 0 else data
     if "error" in raw:
         raise BrightDataError(f"Bright Data error: {raw['error']}")
+    
+    # ✅ DEBUG KE LIYE YEH LINE ADD KI HAI (Terminal mein data dekhein)
+    logger.info(f"🔍 BRIGHT DATA RAW: {raw}")
 
     asin = raw.get("asin") or extract_asin_from_url(amazon_url)
     if not asin:
         raise BrightDataError("ASIN nahi mila")
 
     # =====================================================
-    # ✅ SIRF STOCK CHECK KARO (Bright Data Logic)
+    # ✅ STOCK CHECK (Strict Logic)
     # =====================================================
     is_available, availability_text, reason = check_availability_brightdata(raw)
     stock_quantity = 100 if is_available else 0
@@ -50,7 +53,7 @@ async def fetch_product_from_brightdata(amazon_url: str) -> dict:
     logger.info(f"   BrightData Inventory: {availability_text} (Reason: {reason}) -> Stock: {stock_quantity}")
 
     # =====================================================
-    # ✅ SIRF PRICE CHECK KARO
+    # ✅ PRICE CHECK
     # =====================================================
     amazon_price = parse_price(raw.get("final_price") or raw.get("price"))
 

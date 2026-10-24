@@ -9,7 +9,6 @@ logger = logging.getLogger(__name__)
 def check_availability_apify(raw: dict) -> tuple[bool, str, str]:
     """
     Sirf Apify ke 'inStock' field ko check karta hai.
-    (Strict logic for Add Product)
     """
     in_stock = raw.get("inStock")
     
@@ -24,10 +23,9 @@ def check_availability_apify(raw: dict) -> tuple[bool, str, str]:
 
 def check_availability_brightdata(raw: dict) -> tuple[bool, str, str]:
     """
-    Bright Data ke apne fields (availability text, stock qty) ko check karta hai.
-    (For Scheduler)
+    Bright Data ke liye Strict Check.
     """
-    # 1. Text check (In Stock / Out of Stock)
+    # 1. Text check
     avail_text = str(raw.get("availability") or raw.get("availability_text") or "").strip().lower()
     
     if "in stock" in avail_text and "out of stock" not in avail_text:
@@ -39,7 +37,7 @@ def check_availability_brightdata(raw: dict) -> tuple[bool, str, str]:
     if "available" in avail_text and "unavailable" not in avail_text:
          return True, raw.get("availability") or "In Stock", "brightdata_text_available"
 
-    # 2. Quantity check (Agar number mila hai)
+    # 2. Quantity check
     stock_qty = raw.get("stock") or raw.get("stock_quantity") or raw.get("inventory_quantity")
     
     if stock_qty is not None:
@@ -52,10 +50,14 @@ def check_availability_brightdata(raw: dict) -> tuple[bool, str, str]:
         except (ValueError, TypeError):
             pass
 
-    # 3. Fallback: Agar price mojood hai aur out of stock nahi likha
-    if raw.get("final_price") or raw.get("price"):
-        return True, "In Stock", "brightdata_has_price"
+    # 3. Delivery / Buybox check
+    buybox = raw.get("buybox") or raw.get("buybox_price")
+    delivery = raw.get("delivery_info") or raw.get("delivery")
+    
+    if buybox or delivery:
+         return True, "In Stock", "brightdata_has_buybox_or_delivery"
 
-    # 4. Default Out of Stock
-    logger.warning(f"⚠️ BD Availability could not be determined. Keys: {list(raw.keys())}")
-    return False, "Out of Stock", "brightdata_unknown_default"
+    # ✅ 4. Default (No price check at all!)
+    logger.warning(f"⚠️ BD: Availability unknown. Returning None to trigger Smart Fallback. Keys: {list(raw.keys())}")
+    # Hum None return karenge taake Scheduler apna Smart Fallback laga sake
+    return None, "Unknown", "brightdata_unknown_trigger_fallback"

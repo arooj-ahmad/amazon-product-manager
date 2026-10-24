@@ -249,7 +249,6 @@ async def sync_shopify_product(product: Product, is_available: bool, stock_quant
             if not inventory_item_id:
                 continue
 
-            # ✅ v12: stock_quantity seedha use karo
             await set_inventory_quantity(
                 shop=shop,
                 access_token=access_token,
@@ -363,13 +362,26 @@ async def update_all_prices():
 
                 new_amazon_price = data.get("amazon_price")
 
-                # 1. Availability & Stock
+                # =====================================================
+                # ✅ SMART FALLBACK LOGIC: Stock ko 0 hone se bachaye
+                # =====================================================
                 old_availability = product.is_available
-                new_availability = data.get("is_available", True)
+                
+                # Agar Bright Data ne data diya hai lekin availability clear nahi hai
+                # toh purana stock aur purani availability hi rakho.
+                if data.get("is_available") is None:
+                    logger.warning(f"⚠️ Bright Data availability nahi de raha ASIN={product.asin}. Purana stock use kar rahe hain.")
+                    new_availability = old_availability
+                    new_stock = product.stock_quantity
+                    new_availability_text = product.availability
+                else:
+                    new_availability = data.get("is_available")
+                    new_stock = data.get("stock_quantity", 0)
+                    new_availability_text = data.get("availability", "In Stock")
 
-                product.availability = data.get("availability", "In Stock")
+                product.availability = new_availability_text
                 product.is_available = new_availability
-                product.stock_quantity = data.get("stock_quantity", 0)
+                product.stock_quantity = new_stock
                 product.last_synced_at = datetime.now(timezone.utc)
 
                 if old_availability != new_availability:
@@ -427,9 +439,6 @@ async def update_all_prices():
                     product.extra_percent = store_extra_pct
                 if hasattr(product, "tax_rate"):
                     product.tax_rate = store_tax_rate
-
-                # ❌ Metadata (Title, Images) overwrite KARNE KI ZAROORAT NAHI HAI
-                # Kyunki Bright Data ab wo return nahi kar raha.
 
                 db.commit()
                 db.refresh(product)
