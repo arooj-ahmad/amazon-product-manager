@@ -147,21 +147,36 @@ def parse_standard_fields(raw: dict) -> dict:
 # ============================================
 # ✅ FIXED: Sirf "In Stock" Check
 # ============================================
+# ============================================
+# ✅ FIXED: Availability Checker (Prime Priority)
+# ============================================
 def check_availability(raw: dict) -> tuple[bool, str, str]:
-    """Sirf 'In Stock' text check karta hai. Agar mila to True (100), warna False (0)."""
+    """
+    Prime Exclusive ko pehle check karta hai. Agar Prime mila to 0.
+    Warna 'In Stock' text check karta hai.
+    """
     
+    # 1. Poore data ko string mein badal kar Prime check karo
+    # (Kyunke Prime wale products par "Prime Member Price" lazmi hota hai)
+    item_str = str(raw).lower()
+    
+    # Agar data mein Prime ka zikr hai lekin Add to Cart nahi hai -> Stock 0
+    if "prime" in item_str or "exclusive" in item_str:
+        if "add to cart" not in item_str:
+            return False, "Prime Exclusive (No Add to Cart)", "prime_found_in_data"
+
+    # 2. Ab "In Stock" check karo
     availability_text = str(raw.get("availability") or raw.get("stock_status") or "").strip()
     avail_lower = availability_text.lower()
     
-    # Agar availability text mein "in stock" likha hai
     if "in stock" in avail_lower:
         return True, availability_text, "in_stock_found"
         
-    # Agar "out of stock" ya "unavailable" likha hai
+    # 3. Agar out of stock likha hai
     if any(kw in avail_lower for kw in ["out of stock", "unavailable", "not available", "sold out"]):
         return False, availability_text, "out_of_stock"
 
-    # Default: Agar upar kuch bhi na mile, to 0 kar do (safety)
+    # 4. Default: Agar kuch samajh na aaye to 0 (Stock 0)
     return False, availability_text or "Unknown", "no_in_stock_text"
 
 
