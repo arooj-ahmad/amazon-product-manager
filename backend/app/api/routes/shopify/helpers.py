@@ -9,7 +9,7 @@ from datetime import datetime, timedelta, timezone
 
 from app.services.amazon import extract_asin_from_url
 from app.services.shopify import refresh_shopify_token
-from app.services.shopify_taxonomy import find_best_category  # ✅ Naya import
+from app.services.shopify_taxonomy import find_best_category
 
 logger = logging.getLogger(__name__)
 
@@ -331,16 +331,25 @@ def _build_product_data_for_shopify(data: dict, product=None) -> dict:
 
     return base
 
-# ✅ YEH NAYA FUNCTION ADD KAREIN (Category fix karne ke liye)
-async def _find_category_from_breadcrumbs(shop: str, access_token: str, categories: list, product_title: str):
-    """Breadcrumb terms ko try karta hai taake exact category mile."""
-    if not categories:
-        return await find_best_category(
-            shop=shop, access_token=access_token,
-            product_title=product_title, categories=[]
-        )
+async def _find_category_from_breadcrumbs(
+    shop: str, access_token: str, categories: list, product_title: str, tags: list = None
+):
+    """Breadcrumb terms aur tags ko try karta hai taake exact category mile."""
+    terms_to_try = []
+    
+    # 1. Pehle Amazon ki breadcrumbs try karein
+    if categories:
+        terms_to_try.extend(list(reversed(categories)))
+        
+    # 2. Agar breadcrumbs se na mile, to Tags try karein
+    if tags:
+        for tag in tags:
+            if isinstance(tag, str) and tag not in terms_to_try:
+                terms_to_try.append(tag)
 
-    terms_to_try = list(reversed(categories))
+    # 3. Agar kuch bhi na mile, to title try karein
+    if not terms_to_try and product_title:
+        terms_to_try.append(product_title)
 
     for term in terms_to_try:
         cat_id = await find_best_category(
@@ -351,5 +360,5 @@ async def _find_category_from_breadcrumbs(shop: str, access_token: str, categori
             logger.info(f"   ✅ Category matched via term: '{term}'")
             return cat_id
 
-    logger.warning(f"⚠️ No category found for breadcrumbs: {categories}")
+    logger.warning(f"⚠️ No category found for: {terms_to_try}")
     return None

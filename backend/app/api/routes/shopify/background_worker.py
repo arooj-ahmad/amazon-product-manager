@@ -1,4 +1,6 @@
+# ============================================
 # app/api/routes/shopify/background_worker.py
+# ============================================
 
 import asyncio
 import logging
@@ -13,7 +15,6 @@ from app.services.shopify import (
     shopify_graphql
 )
 
-# ✅ Saare helpers import kiye hain (including category fix)
 from .helpers import (
     _resolve_markup, 
     apply_markup_cap, 
@@ -22,7 +23,7 @@ from .helpers import (
     _verify_parent_match,
     _get_valid_access_token,
     _build_product_data_for_shopify,
-    _find_category_from_breadcrumbs  # ✅ Category Fix
+    _find_category_from_breadcrumbs
 )
 
 logger = logging.getLogger(__name__)
@@ -128,12 +129,13 @@ async def _background_fetch_and_push(
                 # Create new product
                 product_data = _build_product_data_for_shopify(data=data, product=new_product)
                 
-                # ✅ SAHI CATEGORY FETCH KAREIN (Breadcrumbs se)
+                # ✅ SAHI CATEGORY FETCH KAREIN (Breadcrumbs + Tags se)
                 shopify_category_id = await _find_category_from_breadcrumbs(
                     shop=shop_domain, 
                     access_token=access_token, 
                     categories=data.get("categories", []), 
-                    product_title=data.get("title", "")
+                    product_title=data.get("title", ""),
+                    tags=data.get("tags", [])  # ✅ Tags bhi pass kiya
                 )
                 if shopify_category_id:
                     product_data["category"] = shopify_category_id
