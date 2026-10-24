@@ -1,8 +1,5 @@
 # ============================================
 # app/services/shopify/product_core.py
-# + ✅ FIXED: Category search via breadcrumb terms (not full title)
-# + ✅ FIXED: Multiple terms tried for better taxonomy match
-# + ✅ FIXED: Explicit int conversion for stock quantity
 # ============================================
 
 import logging
@@ -167,7 +164,7 @@ def _build_inventory_item(product_data: dict, sku: str) -> dict:
 
 
 # ============================================
-# ✅ FIXED: Category search via breadcrumb terms
+# ✅ SIMPLE: Uthao aakhri breadcrumb, dalo category mein
 # ============================================
 async def _find_category_from_breadcrumbs(
     shop: str,
@@ -176,52 +173,22 @@ async def _find_category_from_breadcrumbs(
     product_title: str,
     tags: list = None,
 ) -> Optional[str]:
-    """Breadcrumb terms aur tags ko try karta hai taake exact category mile."""
+    """Breadcrumb ka aakhri word uthao aur Shopify ki search mein dal do."""
     
-    # 1. Pehle Amazon ki breadcrumbs ko reversed order mein try karein (sabse specific pehle)
+    # Agar categories hain, to sabse aakhri (most specific) uthao
     if categories:
-        for term in reversed(categories):
-            term = str(term).strip()
-            if not term:
-                continue
-            
-            cat_id = await find_best_category(
-                shop=shop,
-                access_token=access_token,
-                product_title=term,
-                categories=[term],
-            )
-            if cat_id:
-                logger.info(f"   ✅ Category matched via breadcrumb: '{term}'")
-                return cat_id
-
-    # 2. Agar breadcrumbs se na mile, to tags try karein
-    if tags:
-        for tag in tags:
-            tag = str(tag).strip()
-            if not tag:
-                continue
-                
-            cat_id = await find_best_category(
-                shop=shop,
-                access_token=access_token,
-                product_title=tag,
-                categories=[tag],
-            )
-            if cat_id:
-                logger.info(f"   ✅ Category matched via tag: '{tag}'")
-                return cat_id
-
-    # 3. Agar kuch bhi na mile, to title se try karein
-    if product_title:
+        specific_category = str(categories[-1]).strip()
+        
+        # Shopify ki API se poocho
         cat_id = await find_best_category(
             shop=shop,
             access_token=access_token,
-            product_title=product_title,
-            categories=[],
+            product_title=specific_category,
+            categories=categories,
         )
+        
         if cat_id:
-            logger.info(f"   ✅ Category matched via title: '{product_title}'")
+            logger.info(f"   ✅ Category matched: '{specific_category}' -> {cat_id}")
             return cat_id
 
     logger.warning(f"⚠️ No category found for: {categories}")
@@ -275,7 +242,7 @@ async def create_shopify_product(
     product_title = product_data.get("title", "")
     tags = product_data.get("tags") or []
 
-    # ✅ FIXED: Category search via breadcrumbs AND tags
+    # ✅ Category
     shopify_category_id = await _find_category_from_breadcrumbs(
         shop=shop,
         access_token=access_token,
@@ -440,7 +407,6 @@ async def create_shopify_product_with_variants(
     product_title = product_data.get("title", "")
     tags = product_data.get("tags") or []
 
-    # ✅ FIXED: Category search via breadcrumbs AND tags
     shopify_category_id = await _find_category_from_breadcrumbs(
         shop=shop,
         access_token=access_token,
