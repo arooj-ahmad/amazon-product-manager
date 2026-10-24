@@ -1,7 +1,6 @@
 # ============================================
 # app/main.py
 # FastAPI application ka main entry point
-# + ✅ FIXED: pricing.router dono prefixes pe register
 # ============================================
 
 import logging
@@ -12,15 +11,16 @@ from fastapi.middleware.cors import CORSMiddleware
 from arq import create_pool
 from arq.connections import RedisSettings
 
+# ✅ Naye routes import kiye hain (shopify_routes ki jagah shopify_router)
 from app.api.routes import (
     auth,
     products,
-    shopify_routes,
     billing_routes,
     batch_routes,
     pricing,
     webhooks,
 )
+from app.api.routes.shopify import shopify_router  # ✅ Naya Shopify Router
 from app.config import settings
 from app.services.scheduler import start_scheduler, stop_scheduler
 
@@ -121,14 +121,15 @@ app.add_middleware(
 # ============================================
 app.include_router(auth.router)
 app.include_router(products.router)
-app.include_router(shopify_routes.router)
+
+# ✅ Naya Shopify Router include kiya hai
+app.include_router(shopify_router)
+
 app.include_router(billing_routes.router)
 app.include_router(batch_routes.router)
 app.include_router(webhooks.router)
 
 # ✅ Pricing/Markup — dono prefixes support karo (frontend compat)
-# Purana frontend: /api/pricing/...
-# Naya frontend:   /api/markup/...
 app.include_router(pricing.router, prefix="/api/pricing", tags=["Pricing"])
 app.include_router(pricing.router, prefix="/api/markup", tags=["Markup"])
 
