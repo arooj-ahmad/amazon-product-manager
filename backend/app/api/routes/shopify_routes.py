@@ -28,11 +28,11 @@ from app.api.routes.auth import get_current_admin
 from app.config import settings
 from app.database import get_db, SessionLocal
 from app.models import Admin, Product, ShopifyStore
-from app.services.brightdata import (
+from app.services.amazon import (
     ApifyError,
     calculate_final_price,
     extract_asin_from_url,
-    fetch_product_from_apify,  # ✅ Sirf Apify use hoga product add ke liye
+    fetch_product_from_apify,
 )
 from app.services.shopify import (
     build_auth_url,
