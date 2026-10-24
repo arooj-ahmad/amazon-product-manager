@@ -1,7 +1,6 @@
 # ============================================
 # app/services/brightdata.py
-# + ✅ INVENTORY: Strict "Buy Box / Add to Cart" check
-# + ✅ FIXED: Prime Exclusive check BEFORE Buybox check
+# + ✅ INVENTORY: Sirf "In Stock" check -> 100, warna 0
 # ============================================
 
 import logging
@@ -146,46 +145,24 @@ def parse_standard_fields(raw: dict) -> dict:
 
 
 # ============================================
-# ✅ FIXED: Availability Checker (Strict Actor Fields)
+# ✅ FIXED: Sirf "In Stock" Check
 # ============================================
 def check_availability(raw: dict) -> tuple[bool, str, str]:
-    """
-    Actor ke 'Buy box' aur 'availability' fields ke mutabiq check karta hai.
-    Agar Buy Box / Add to Cart nahi hai, to 0. Warna 100.
-    """
+    """Sirf 'In Stock' text check karta hai. Agar mila to True (100), warna False (0)."""
     
-    # 1. Availability Text Check (Sabse pehle Prime/Stock status dekho)
-    availability_text = str(raw.get("availability") or raw.get("stock_status") or "").lower().strip()
+    availability_text = str(raw.get("availability") or raw.get("stock_status") or "").strip()
+    avail_lower = availability_text.lower()
     
-    # Agar "prime" ya "prime exclusive" likha hai aur "add to cart" nahi hai -> Stock 0
-    if ("prime" in availability_text or "exclusive" in availability_text) and "add to cart" not in availability_text:
-        return False, "Prime Exclusive (No Add to Cart)", "prime_availability_text"
+    # Agar availability text mein "in stock" likha hai
+    if "in stock" in avail_lower:
+        return True, availability_text, "in_stock_found"
+        
+    # Agar "out of stock" ya "unavailable" likha hai
+    if any(kw in avail_lower for kw in ["out of stock", "unavailable", "not available", "sold out"]):
+        return False, availability_text, "out_of_stock"
 
-    # 2. Buybox Status Check (Agar actor ne direct field di hai)
-    buybox = raw.get("buybox_available")
-    if buybox is False:
-        return False, "Buy Box Not Available", "buybox_false"
-    if buybox is True:
-        return True, "In Stock", "buybox_true"
-
-    # 3. Add to Cart direct check
-    add_to_cart = raw.get("add_to_cart_available")
-    if add_to_cart is False:
-        return False, "Add to Cart Not Available", "add_to_cart_false"
-    if add_to_cart is True:
-        return True, "In Stock", "add_to_cart_true"
-
-    # 4. Availability Text Fallback
-    if "in stock" in availability_text:
-        return True, "In Stock", "availability_in_stock"
-    if any(kw in availability_text for kw in ["out of stock", "unavailable", "not available", "sold out"]):
-        return False, "Out of Stock", "availability_out_of_stock"
-
-    # 5. Last Resort: Agar price mojood hai aur upar kuch nahi mila
-    if raw.get("buybox_price") or raw.get("price"):
-        return True, "In Stock", "price_fallback"
-
-    return False, "Out of Stock", "no_info"
+    # Default: Agar upar kuch bhi na mile, to 0 kar do (safety)
+    return False, availability_text or "Unknown", "no_in_stock_text"
 
 
 # ============================================
