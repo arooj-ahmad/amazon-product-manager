@@ -174,20 +174,25 @@ async def _find_category_from_breadcrumbs(
     access_token: str,
     categories: list,
     product_title: str,
+    tags: list = None,
 ) -> Optional[str]:
-    """Breadcrumb terms ko try karta hai, sabse specific se shuru karke."""
-    if not categories:
-        # Agar categories nahi hain to title use karo
-        return await find_best_category(
-            shop=shop,
-            access_token=access_token,
-            product_title=product_title,
-            categories=[],
-        )
+    """Breadcrumb terms aur tags ko try karta hai taake exact category mile."""
+    
+    terms_to_try = []
+    
+    # 1. Sabse specific (aakhri) breadcrumb term
+    if categories:
+        terms_to_try.extend(list(reversed(categories)))
+    
+    # 2. Tags add karein
+    if tags:
+        for tag in tags:
+            if isinstance(tag, str) and tag not in terms_to_try:
+                terms_to_try.append(tag)
 
-    # Sabse specific (aakhri) term se shuru karo, phir pichle terms
-    # Example: ["Toys & Games", "Vehicles", "Vehicle Playsets"] → "Vehicle Playsets" pehle
-    terms_to_try = list(reversed(categories))
+    # 3. Agar kuch bhi na mile, to title use karein
+    if not terms_to_try and product_title:
+        terms_to_try.append(product_title)
 
     for term in terms_to_try:
         cat_id = await find_best_category(
@@ -200,7 +205,7 @@ async def _find_category_from_breadcrumbs(
             logger.info(f"   ✅ Category matched via term: '{term}'")
             return cat_id
 
-    logger.warning(f"⚠️ No category found for breadcrumbs: {categories}")
+    logger.warning(f"⚠️ No category found for breadcrumbs/tags: {terms_to_try}")
     return None
 
 
@@ -249,13 +254,15 @@ async def create_shopify_product(
 
     categories = product_data.get("categories") or []
     product_title = product_data.get("title", "")
+    tags = product_data.get("tags") or []
 
-    # ✅ FIXED: Category search via breadcrumbs
+    # ✅ FIXED: Category search via breadcrumbs AND tags
     shopify_category_id = await _find_category_from_breadcrumbs(
         shop=shop,
         access_token=access_token,
         categories=categories,
         product_title=product_title,
+        tags=tags
     )
 
     description_html = _build_description_with_metafields(product_data)
@@ -374,7 +381,6 @@ async def create_shopify_product(
             )
 
         if inventory_item_id:
-            # ✅ FIXED: Explicit int conversion
             stock_qty = 0 if not is_available else int(product_data.get("stock_quantity", 0) or 0)
             await set_inventory_quantity(
                 shop=shop, access_token=access_token, inventory_item_id=inventory_item_id, quantity=stock_qty,
@@ -413,13 +419,15 @@ async def create_shopify_product_with_variants(
 
     categories = product_data.get("categories") or []
     product_title = product_data.get("title", "")
+    tags = product_data.get("tags") or []
 
-    # ✅ FIXED: Category search via breadcrumbs
+    # ✅ FIXED: Category search via breadcrumbs AND tags
     shopify_category_id = await _find_category_from_breadcrumbs(
         shop=shop,
         access_token=access_token,
         categories=categories,
         product_title=product_title,
+        tags=tags
     )
 
     asin_value = str(product_data.get("asin", "") or "").strip() or "NO-SKU"
@@ -484,7 +492,6 @@ async def create_shopify_product_with_variants(
 
     variants_edges = shopify_product.get("variants", {}).get("edges", [])
     if variants_edges:
-        # ✅ FIXED: Explicit int conversion
         stock_qty = 0 if not is_available else int(product_data.get("stock_quantity", 0) or 0)
 
         for edge in variants_edges:
