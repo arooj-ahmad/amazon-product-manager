@@ -153,36 +153,42 @@ def parse_standard_fields(raw: dict) -> dict:
 # ============================================
 # ✅ FIXED: Availability Checker (Perfect Keywords)
 # ============================================
+# ============================================
+# ✅ FIXED: Availability Checker (Final Logic)
+# ============================================
 def check_availability(raw: dict) -> tuple[bool, str, str]:
-    """Prime Exclusive ko strictly block karta hai."""
+    """
+    Pehle Prime check karta hai (0). Phir In Stock check karta hai (100).
+    """
     
     # 1. Poore data ko string mein badlo
     item_str = str(raw).lower()
     
-    # 2. Sirf woh alfaaz dhoondo jo ASAL MEIN Prime Exclusive products par hote hain
-    exclusive_keywords = [
+    # 2. Prime Exclusive ke alfaaz dhoondo
+    prime_keywords = [
         "prime member price",
         "exclusive prime price",
         "exclusively for amazon prime"
     ]
     
     # Agar yeh alfaaz milein -> Stock 0
-    if any(kw in item_str for kw in exclusive_keywords):
+    if any(kw in item_str for kw in prime_keywords):
         return False, "Prime Exclusive (No Add to Cart)", "prime_exclusive_found"
 
-    # 3. Ab normal stock check karo (Add to Cart wale products ke liye)
+    # 3. Ab "In Stock" check karo (Add to Cart wale products ke liye)
     availability_text = str(raw.get("availability") or raw.get("stock_status") or "").strip()
     avail_lower = availability_text.lower()
     
+    # Agar "In Stock" mila -> Stock 100
     if "in stock" in avail_lower:
         return True, availability_text, "in_stock_found"
         
+    # Agar "Out of Stock" mila -> Stock 0
     if any(kw in avail_lower for kw in ["out of stock", "unavailable", "not available", "sold out"]):
         return False, availability_text, "out_of_stock"
 
+    # Default: Agar kuch samajh na aaye to 0 (Safety)
     return False, availability_text or "Unknown", "no_in_stock"
-
-
 # ============================================
 # 1. APIFY FETCH (100% Product Details)
 # ============================================
