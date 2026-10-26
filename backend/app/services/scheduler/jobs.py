@@ -19,7 +19,10 @@ from .helpers import (
     apply_markup_cap,
     calculate_compare_at_price,
 )
-from .shopify_sync import sync_shopify_product, sync_shopify_price
+
+# ✅ Alag-alag modules se imports
+from .inventory_sync import sync_shopify_inventory
+from .price_sync import sync_shopify_price
 
 logger = logging.getLogger(__name__)
 
@@ -28,7 +31,6 @@ async def update_all_prices():
     logger.info("PRICE UPDATE JOB STARTED")
     logger.info("=" * 60)
 
-    # Global status (frontend polling ke liye)
     from . import last_run_status
     last_run_status["running"] = True
     last_run_status["started_at"] = datetime.now(timezone.utc).isoformat()
@@ -93,8 +95,8 @@ async def update_all_prices():
                         logger.warning(f"❌ [OUT OF STOCK] ASIN={product.asin}")
                         out_of_stock_count += 1
 
-                # Shopify Inventory Sync
-                await sync_shopify_product(
+                # 2. Shopify Inventory Sync (Alag module se)
+                await sync_shopify_inventory(
                     product=product,
                     is_available=new_availability,
                     stock_quantity=product.stock_quantity,
@@ -102,7 +104,7 @@ async def update_all_prices():
                 )
                 shopify_synced_count += 1
 
-                # Price Check & Update
+                # 3. Price Check & Update
                 if new_amazon_price is None:
                     logger.warning(f"[WARN] ASIN={product.asin} — price nahi mila")
                     db.commit()
@@ -144,7 +146,7 @@ async def update_all_prices():
                 db.commit()
                 db.refresh(product)
 
-                # Push to Shopify if changed
+                # 4. Push to Shopify if changed (Alag module se)
                 price_changed = (new_amazon_price != old_amazon or new_final_price != old_price)
 
                 if price_changed:
