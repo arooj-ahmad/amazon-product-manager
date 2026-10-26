@@ -158,17 +158,10 @@ def extract_all_variations(data: dict) -> list:
 
     return variations
 
+# ✅ UPDATED: Ab sirf Brand check hoga (Category ignore)
 def _verify_parent_match(existing_parent, new_data: dict) -> bool:
     if not existing_parent:
         return False
-
-    existing_cats = set(existing_parent.categories or [])
-    new_cats = set(new_data.get("categories") or [])
-
-    if existing_cats and new_cats:
-        if not (existing_cats & new_cats):
-            logger.warning("⚠️ Parent ASIN matched but categories differ")
-            return False
 
     existing_brand = (existing_parent.brand or "").strip().lower()
     new_brand = (new_data.get("brand") or "").strip().lower()
