@@ -53,9 +53,8 @@ async def _background_fetch_and_push(
         asin = data["asin"]
         parent_asin = data.get("parent_asin")
         
-        if db.query(Product).filter(Product.asin == asin).first():
-            logger.warning(f"⚠️ ASIN {asin} already exists")
-            return
+        # ✅ FIXED: Yahan se duplicate ASIN wala check hata diya hai taake naye variants allow hon.
+        # (Duplicate check ab product_routes.py mein lagaya gaya hai)
 
         existing_parent = None
         if parent_asin:
