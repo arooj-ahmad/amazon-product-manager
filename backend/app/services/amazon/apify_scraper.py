@@ -205,6 +205,7 @@ def fetch_product_from_apify(amazon_url: str) -> dict:
                 "package_dimensions": item.get("package_dimensions"),
                 "model_number": item.get("model_number"),
                 "manufacturer": item.get("manufacturer"),
+                "variant_asins": item.get("variantAsins") or [], # ✅ YEH ADD KIYA HAI
             }
 
         logger.warning(f"⚠️ Apify: no item found for {amazon_url}")

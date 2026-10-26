@@ -82,12 +82,10 @@ async def add_product_from_shopify_app(
         if not store.access_token:
             raise HTTPException(status_code=401, detail="Token exchange failed and no existing token.")
 
+    # ✅ Duplicate ASIN wala check hata diya hai
+    # (Kyunki humein saare variants add karne hain, agar product pehle se hai to worker khud handle kar lega)
+
     asin_quick = extract_asin_from_url(amazon_url)
-    if asin_quick:
-        existing_product = db.query(Product).filter(Product.asin == asin_quick).first()
-        if existing_product:
-            if existing_product.shopify_store_id == store.id:
-                raise HTTPException(status_code=409, detail=f"Product already exists in this store (ASIN: {asin_quick})")
 
     _resolve_markup(store, markup, markup_type, extra_percent)
 
