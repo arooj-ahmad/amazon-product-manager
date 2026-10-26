@@ -19,7 +19,6 @@ from .helpers import (
     _resolve_markup, 
     apply_markup_cap, 
     _extract_weight, 
-    extract_all_variations, 
     _verify_parent_match,
     _get_valid_access_token,
     _build_product_data_for_shopify
@@ -35,9 +34,7 @@ async def _background_fetch_and_push(
     try:
         logger.info(f"🔄 Background job START (All Variants): {amazon_url}")
         store = db.query(ShopifyStore).filter(ShopifyStore.id == store_id).first()
-        if not store: 
-            logger.error("❌ Background: Store not found")
-            return
+        if not store: return
 
         loop = asyncio.get_running_loop()
         try:
@@ -46,28 +43,16 @@ async def _background_fetch_and_push(
             logger.error(f"❌ Apify fail: {e}")
             return
 
-        if not data or not data.get("asin"): 
-            logger.error("❌ Background: ASIN missing in response")
-            return
+        if not data or not data.get("asin"): return
 
-        # ✅ 1. Apify ke data se variant_details nikaalein (jisme saari details hain)
-        variant_details = data.get("variant_details") or []
-        if not variant_details:
-            variant_details = [{
-                "asin": data["asin"],
-                "attributes": data.get("variant_attributes", []),
-                "thumbnail": data.get("image_url"),
-                "images": data.get("images", [])
-            }]
+        # ✅ 1. Saare variantAsins nikaalein (Agar nahi hain to current ASIN)
+        variant_asins = data.get("variant_asins") or [data["asin"]]
+        
+        logger.info(f"🔍 DEBUG: Total {len(variant_asins)} variants to process.")
 
-        logger.info(f"🔍 DEBUG: Total {len(variant_details)} variants found to process.")
-
-        # ✅ 2. Base Product setup (Pehla variant parent banega)
+        # ✅ 2. Base Product setup
         base_asin = data["asin"]
         existing_shopify_product_id = None
-        existing_parent_db = None
-
-        # Check karein ke kya pehla variant pehle se add hai (parent)
         existing_parent_db = db.query(Product).filter(
             Product.asin == base_asin,
             Product.shopify_product_id.isnot(None)
@@ -75,64 +60,61 @@ async def _background_fetch_and_push(
 
         if existing_parent_db:
             existing_shopify_product_id = existing_parent_db.shopify_product_id
-            logger.info(f"✅ Base product already exists in Shopify: {existing_shopify_product_id}")
+            logger.info(f"✅ Parent already exists: {existing_shopify_product_id}")
 
         # Markup & Pricing
-        try:
-            user_markup, user_markup_type, user_extra, user_tax_rate = _resolve_markup(store, markup, markup_type, extra_percent)
-        except ValueError as e:
-            logger.error(f"❌ Markup resolve fail: {e}")
-            return
-
+        user_markup, user_markup_type, user_extra, user_tax_rate = _resolve_markup(store, markup, markup_type, extra_percent)
         user_markup = apply_markup_cap(user_markup, user_markup_type)
         access_token = await _get_valid_access_token(store, db)
 
-        # ✅ 3. Har ek variant par loop chalayein
-        for index, v_detail in enumerate(variant_details):
-            v_asin = v_detail.get("asin")
-            v_name = v_detail.get("name", "")
-            
-            if not v_asin:
-                continue
+        # ✅ 3. Loop har variant ASIN par
+        for index, v_asin in enumerate(variant_asins):
+            logger.info(f"🔄 Processing {index+1}/{len(variant_asins)}: ASIN={v_asin}")
 
-            logger.info(f"🔄 Processing variant {index+1}/{len(variant_details)}: {v_name} (ASIN={v_asin})")
-
-            # Agar product database mein pehle se hai, to skip karein
+            # Agar DB mein pehle se hai, skip
             if db.query(Product).filter(Product.asin == v_asin).first():
-                logger.info(f"⏭️ Skipping ASIN={v_asin}, already exists in DB.")
+                logger.info(f"⏭️ Skipping ASIN={v_asin}, already in DB.")
                 continue
 
-            # ✅ Attributes seedha Apify ke data se uthayein (No fallback)
-            variant_attrs = v_detail.get("attributes") or []
+            # Har ASIN ka alag data fetch karein
+            v_url = f"https://www.amazon.com/dp/{v_asin}"
+            try:
+                v_data = await loop.run_in_executor(None, fetch_product_from_apify, v_url)
+            except Exception as e:
+                logger.error(f"❌ Fetch fail for {v_asin}: {e}")
+                continue
+
+            if not v_data or not v_data.get("asin"):
+                continue
+
+            # Attributes uthayein (Main product ke liye variant_attributes)
+            variant_attrs = v_data.get("variant_attributes") or []
             
+            # Agar nahi mile, to skip (No fallback)
             if not variant_attrs:
-                logger.warning(f"⚠️ ASIN={v_asin} ke liye attributes nahi mile. Skip kar rahe hain.")
+                logger.warning(f"⚠️ ASIN={v_asin} attributes nahi mile. Skip.")
                 continue
 
-            # Price calculate karein
             final_price = calculate_final_price(
-                amazon_price=data.get("amazon_price"), 
+                amazon_price=v_data.get("amazon_price"), 
                 markup=user_markup, 
                 markup_type=user_markup_type, 
                 extra_percent=user_extra, 
                 tax_rate=user_tax_rate
             )
-            weight_str = _extract_weight(data)
+            weight_str = _extract_weight(v_data)
 
-            v_image = v_detail.get("thumbnail") or data.get("image_url")
-            v_images = v_detail.get("images") or data.get("images", [])
-
-            # Database mein save karein
+            # DB mein save
             new_product = Product(
                 asin=v_asin, parent_asin=base_asin, is_variation=(index > 0),
-                title=data.get("title"), brand=data.get("brand"), description=data.get("description") or "",
-                image_url=v_image, images=v_images, specifications=data.get("specifications", {}),
-                rating=data.get("rating"), reviews_count=data.get("reviews_count"),
-                availability=data.get("availability", "In Stock"), is_available=data.get("is_available", False),
-                stock_quantity=data.get("stock_quantity", 0), amazon_price=data.get("amazon_price"), price=final_price,
+                title=v_data.get("title"), brand=v_data.get("brand"), description=v_data.get("description") or "",
+                image_url=v_data.get("image_url"), images=v_data.get("images", []), specifications=v_data.get("specifications", {}),
+                rating=v_data.get("rating"), reviews_count=v_data.get("reviews_count"),
+                availability=v_data.get("availability", "In Stock"), is_available=v_data.get("is_available", False),
+                stock_quantity=v_data.get("stock_quantity", 0), amazon_price=v_data.get("amazon_price"), price=final_price,
                 markup=user_markup, markup_type=user_markup_type, extra_percent=user_extra, tax_rate=user_tax_rate,
                 is_manual_override=False, variant_attributes=variant_attrs,
-                categories=data.get("categories", []), tags=data.get("tags", []), feature_bullets=data.get("feature_bullets", []),
+                categories=v_data.get("categories", []), tags=v_data.get("tags", []), feature_bullets=v_data.get("feature_bullets", []),
                 shopify_store_id=store.id, shopify_status="active"
             )
             db.add(new_product)
@@ -142,7 +124,7 @@ async def _background_fetch_and_push(
             # Shopify Push
             try:
                 if existing_shopify_product_id:
-                    # Agar parent pehle se bana hua hai, to naya variant add karein
+                    # Parent already exists -> Add variant
                     result = await add_variant_to_existing_product(
                         shop=shop_domain, access_token=access_token,
                         product_id=existing_shopify_product_id,
@@ -158,13 +140,11 @@ async def _background_fetch_and_push(
                     
                     if "errors" not in result:
                         new_product.shopify_product_id = existing_shopify_product_id
-                        new_product.shopify_handle = existing_parent_db.shopify_handle if existing_parent_db else None
                         db.commit()
                 else:
-                    # Agar pehli dafa hai, to naya Shopify product create karein
-                    # Base data mein current variant ke attributes daal dein
-                    data["variant_attributes"] = variant_attrs
-                    product_data = _build_product_data_for_shopify(data=data, product=new_product)
+                    # Pehli dafa -> Create new product
+                    v_data["variant_attributes"] = variant_attrs
+                    product_data = _build_product_data_for_shopify(data=v_data, product=new_product)
                     
                     result = await create_shopify_product(
                         shop=shop_domain, access_token=access_token, product_data=product_data,
@@ -175,10 +155,9 @@ async def _background_fetch_and_push(
                         if new_id:
                             existing_shopify_product_id = new_id
                             new_product.shopify_product_id = new_id
-                            new_product.shopify_handle = result.get("data", {}).get("productSet", {}).get("product", {}).get("handle")
                             db.commit()
 
-                # Collections add karein
+                # Collections
                 if new_product.shopify_product_id and collection_ids:
                     await add_product_to_collections(
                         shop=shop_domain, access_token=access_token,
@@ -188,7 +167,7 @@ async def _background_fetch_and_push(
             except Exception as e:
                 logger.error(f"❌ Shopify push fail for {v_asin}: {e}")
 
-        logger.info(f"🏁 Background DONE: All variants processed successfully.")
+        logger.info(f"🏁 Background DONE: All variants processed.")
         
     except Exception as e:
         logger.exception(f"❌ Background crashed: {e}")
