@@ -33,9 +33,6 @@ from app.services.shopify.product_variants import (
 logger = logging.getLogger(__name__)
 
 
-# ============================================
-# Compare-at price calculate karo
-# ============================================
 def calculate_compare_at_price(
     final_price: float,
     compare_at_type: str,
@@ -76,9 +73,6 @@ def calculate_compare_at_price(
         return None
 
 
-# ============================================
-# Store ki compare-at settings fetch karo
-# ============================================
 def _get_compare_at_settings_from_store(shop: str) -> tuple:
     db: Session = SessionLocal()
     try:
@@ -110,9 +104,6 @@ def _get_compare_at_settings_from_store(shop: str) -> tuple:
         db.close()
 
 
-# ============================================
-# Parse weight string → (value, unit)
-# ============================================
 def _parse_weight(weight_str) -> tuple:
     if not weight_str:
         return None, None
@@ -142,9 +133,6 @@ def _parse_weight(weight_str) -> tuple:
     return round(value, 4), "POUNDS"
 
 
-# ============================================
-# Build inventoryItem with weight
-# ============================================
 def _build_inventory_item(product_data: dict, sku: str) -> dict:
     inventory_item = {
         "sku": sku,
@@ -163,9 +151,6 @@ def _build_inventory_item(product_data: dict, sku: str) -> dict:
     return inventory_item
 
 
-# ============================================
-# ✅ SIMPLE: Uthao aakhri breadcrumb, dalo category mein
-# ============================================
 async def _find_category_from_breadcrumbs(
     shop: str,
     access_token: str,
@@ -173,23 +158,18 @@ async def _find_category_from_breadcrumbs(
     product_title: str,
     tags: list = None,
 ) -> Optional[str]:
-    """Shopify API se best match category dhoondein based on breadcrumbs."""
-    
-    # 1. Pehle Amazon ki breadcrumbs se sabse specific category try karein
     if categories:
-        # Hum Shopify API ko bolenge ke wo breadcrumbs ki list mein se best match dhoonde
         cat_id = await find_best_category(
             shop=shop,
             access_token=access_token,
-            product_title=product_title, # Title as fallback
-            categories=categories,       # Poori list de rahe hain
+            product_title=product_title,
+            categories=categories,
         )
         
         if cat_id:
             logger.info(f"   ✅ Category matched via breadcrumbs list: {cat_id}")
             return cat_id
 
-    # 2. Agar breadcrumbs se na mile, to tags try karein
     if tags:
         for tag in tags:
             if not isinstance(tag, str) or not tag.strip():
@@ -208,9 +188,7 @@ async def _find_category_from_breadcrumbs(
     logger.warning(f"⚠️ No category found for: {categories}")
     return None
 
-# ============================================
-# ✅ PRODUCT CREATE (SIMPLE)
-# ============================================
+
 async def create_shopify_product(
     shop: str,
     access_token: str,
@@ -255,7 +233,6 @@ async def create_shopify_product(
     product_title = product_data.get("title", "")
     tags = product_data.get("tags") or []
 
-    # ✅ Category
     shopify_category_id = await _find_category_from_breadcrumbs(
         shop=shop,
         access_token=access_token,
@@ -291,6 +268,7 @@ async def create_shopify_product(
     if shopify_tags:
         input_data["tags"] = shopify_tags
 
+    # ✅ Product options set karein (Color, Size)
     variant_attrs = product_data.get("variant_attributes") or []
     product_options = []
     variant_values = []
@@ -300,8 +278,15 @@ async def create_shopify_product(
             continue
         name = (attr.get("name") or "").strip()
         value = (attr.get("value") or "").strip()
-        if name.lower() in ("color", "size") and value:
-            product_options.append({"name": name, "values": [{"name": value}]})
+        if name and value:
+            # Check karein ke option pehle se list mein na ho
+            existing_opt = next((opt for opt in product_options if opt["name"] == name), None)
+            if existing_opt:
+                if value not in [v["name"] for v in existing_opt["values"]]:
+                    existing_opt["values"].append({"name": value})
+            else:
+                product_options.append({"name": name, "values": [{"name": value}]})
+            
             variant_values.append({"optionName": name, "name": value})
 
     if product_options and variant_values:
@@ -394,9 +379,6 @@ async def create_shopify_product(
     return result
 
 
-# ============================================
-# CREATE PRODUCT WITH VARIANTS
-# ============================================
 async def create_shopify_product_with_variants(
     shop: str,
     access_token: str,
@@ -507,9 +489,6 @@ async def create_shopify_product_with_variants(
     return result
 
 
-# ============================================
-# DELETE SHOPIFY PRODUCT
-# ============================================
 async def delete_shopify_product(
     shop_domain: str,
     access_token: str,
@@ -559,9 +538,6 @@ async def delete_shopify_product(
         return False
 
 
-# ============================================
-# SHOPIFY PRODUCT BY SKU
-# ============================================
 async def get_shopify_product_by_sku(
     shop: str,
     access_token: str,
