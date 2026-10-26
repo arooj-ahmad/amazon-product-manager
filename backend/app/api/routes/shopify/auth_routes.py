@@ -4,11 +4,20 @@ from datetime import datetime, timedelta, timezone
 from fastapi import APIRouter, Depends, Query, Request, HTTPException
 from fastapi.responses import HTMLResponse, RedirectResponse
 from sqlalchemy.orm import Session
+import logging
+
 from app.database import get_db
 from app.models import ShopifyStore
 from app.config import settings
-from app.services.shopify import build_auth_url, exchange_code_for_token, verify_hmac, refresh_shopify_token
+from app.services.shopify import (
+    build_auth_url, 
+    exchange_code_for_token, 
+    verify_hmac, 
+    refresh_shopify_token,
+    shopify_graphql  # ✅ Collections ke liye zaroori hai
+)
 
+logger = logging.getLogger(__name__)
 router = APIRouter(tags=["Shopify Auth"])
 
 @router.get("/install")
@@ -55,5 +64,55 @@ def list_installed_stores(db: Session = Depends(get_db)):
 @router.get("/store-id")
 def get_store_id(shop: str = Query(...), db: Session = Depends(get_db)):
     store = db.query(ShopifyStore).filter(ShopifyStore.shop_domain == shop).first()
-    if not store: raise HTTPException(status_code=404, detail="Store not found")
+    if not store: 
+        raise HTTPException(status_code=404, detail="Store not found")
     return {"store_id": store.id, "shop_domain": store.shop_domain}
+
+
+# ============================================
+# ✅ NAYA: COLLECTIONS FETCH ROUTE
+# ============================================
+@router.get("/collections")
+async def get_shopify_collections(shop_domain: str = Query(...), db: Session = Depends(get_db)):
+    store = db.query(ShopifyStore).filter(ShopifyStore.shop_domain == shop_domain).first()
+    if not store:
+        raise HTTPException(status_code=404, detail="Store not connected")
+
+    # Token valid karein
+    from .helpers import _get_valid_access_token
+    access_token = await _get_valid_access_token(store, db)
+
+    # ✅ Naya Query: Naye collections ko fetch karne ke liye (source_id:*)
+    query = """
+    query getCollections($first: Int!) {
+      collections(first: $first, query: "source_id:*") {
+        edges { 
+          node { 
+            id 
+            title 
+            handle 
+            productsCount { count } 
+          } 
+        }
+      }
+    }
+    """
+    
+    result = await shopify_graphql(shop_domain, access_token, query, {"first": 250})
+
+    if "errors" in result:
+        logger.error(f"❌ Collections error: {result['errors']}")
+        raise HTTPException(status_code=400, detail="Failed to fetch collections")
+
+    edges = result.get("data", {}).get("collections", {}).get("edges", [])
+    collections = [
+        {
+            "id": n.get("node", {}).get("id"), 
+            "title": n.get("node", {}).get("title"), 
+            "handle": n.get("node", {}).get("handle"), 
+            "products_count": (n.get("node", {}).get("productsCount") or {}).get("count", 0)
+        } 
+        for n in edges
+    ]
+
+    return {"success": True, "total": len(collections), "collections": collections}
