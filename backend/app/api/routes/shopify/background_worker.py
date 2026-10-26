@@ -53,25 +53,46 @@ async def _background_fetch_and_push(
         asin = data["asin"]
         parent_asin = data.get("parent_asin")
         
-        # ✅ DEBUG LOGS
         logger.info(f"🔍 DEBUG: Naya Product ASIN={asin}, Parent ASIN={parent_asin}")
 
         existing_parent = None
+        
+        # ✅ 1. PEHLE PARENT ASIN SE DHAONDEIN
         if parent_asin:
             existing_parent = db.query(Product).filter(
-                Product.parent_asin == parent_asin, Product.asin != asin,
+                Product.parent_asin == parent_asin, 
+                Product.asin != asin,
                 Product.shopify_product_id.isnot(None)
             ).first()
             
             if existing_parent:
-                logger.info(f"✅ DEBUG: Parent Product DB mein mil gaya! ASIN={existing_parent.asin}, Shopify ID={existing_parent.shopify_product_id}")
-                if not _verify_parent_match(existing_parent, data):
-                    logger.warning("⚠️ DEBUG: Parent match fail ho gaya (Brand ya Category alag hai). Naya product banega.")
-                    existing_parent = None
-            else:
-                logger.warning(f"⚠️ DEBUG: Parent ASIN ({parent_asin}) ke sath koi product DB mein nahi mila. Naya product banega.")
-        else:
-            logger.warning("⚠️ DEBUG: Apify ne Parent ASIN nahi bheja. Naya product banega.")
+                logger.info(f"✅ DEBUG: Parent mila Parent ASIN se! ASIN={existing_parent.asin}, Shopify ID={existing_parent.shopify_product_id}")
+
+        # ✅ 2. AGAR PARENT ASIN NA MILE, TO TITLE & BRAND SE DHAONDEIN
+        if not existing_parent:
+            product_title = data.get("title", "")
+            product_brand = data.get("brand", "")
+            
+            if product_title and product_brand:
+                logger.info(f"🔍 DEBUG: Parent ASIN nahi mila. Title se dhoond rahe hain: '{product_title}'")
+                
+                existing_parent = db.query(Product).filter(
+                    Product.title == product_title,
+                    Product.brand == product_brand,
+                    Product.asin != asin,
+                    Product.shopify_product_id.isnot(None)
+                ).first()
+                
+                if existing_parent:
+                    logger.info(f"✅ DEBUG: Parent mila Title/Brand se! ASIN={existing_parent.asin}, Shopify ID={existing_parent.shopify_product_id}")
+
+        # 3. Match verify karein
+        if existing_parent and not _verify_parent_match(existing_parent, data):
+            logger.warning("⚠️ DEBUG: Parent match fail ho gaya (Brand alag hai). Naya product banega.")
+            existing_parent = None
+
+        if not existing_parent:
+            logger.warning("⚠️ DEBUG: Koi bhi parent nahi mila. Naya product banega.")
 
         all_variations = extract_all_variations(data)
         logger.info(f"🔍 DEBUG: Variations found = {all_variations}")
