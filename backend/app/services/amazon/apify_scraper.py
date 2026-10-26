@@ -13,6 +13,11 @@ from .inventory_apify import check_availability_apify
 logger = logging.getLogger(__name__)
 
 def fetch_product_from_apify(amazon_url: str) -> dict:
+    # ✅ Check: Agar Apify token nahi hai to gracefully fail ho
+    if not settings.APIFY_API_TOKEN:
+        logger.error("❌ APIFY_API_TOKEN is not configured. Cannot fetch from Apify.")
+        raise ApifyError("Apify token not configured in environment variables.")
+
     client = ApifyClient(settings.APIFY_API_TOKEN)
     actor_id = "delicious_zebu/amazon-product-details-scraper"
 

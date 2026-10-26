@@ -38,8 +38,9 @@ class Settings(BaseSettings):
     # ----------------------------------------
     # APIFY (Background Job — About this item)
     # ⚠️ NEVER hardcode token in code — use .env only
+    # ✅ FIXED: Ab yeh Optional hai (default empty string)
     # ----------------------------------------
-    APIFY_API_TOKEN: str
+    APIFY_API_TOKEN: str = ""
 
     # ----------------------------------------
     # JWT
@@ -47,13 +48,6 @@ class Settings(BaseSettings):
     SECRET_KEY: str
     ALGORITHM: str = "HS256"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 1440
-
-    # ----------------------------------------
-    # PRICING
-    # ✅ REMOVED: DEFAULT_MARKUP
-    # Ab har store ka apna markup hota hai — ShopifyStore.default_markup
-    # Fallback ke liye koi global default nahi — explicit set karna zaroori
-    # ----------------------------------------
 
     # ----------------------------------------
     # FRONTEND
@@ -110,7 +104,7 @@ class Settings(BaseSettings):
         env_file=".env",
         env_file_encoding="utf-8",
         case_sensitive=True,
-        extra="ignore",   # ✅ .env mein DEFAULT_MARKUP ho to bhi ignore hoga
+        extra="ignore",
     )
 
     # ----------------------------------------
@@ -182,13 +176,12 @@ class Settings(BaseSettings):
                     "Production mein SHOPIFY_REDIRECT_URI real URL hona chahiye"
                 )
 
-            # 2. Critical secrets check
+            # 2. Critical secrets check (APIFY_API_TOKEN hata diya hai)
             required = {
                 "SHOPIFY_API_KEY": self.SHOPIFY_API_KEY,
                 "SHOPIFY_API_SECRET": self.SHOPIFY_API_SECRET,
                 "SHOPIFY_WEBHOOK_SECRET": self.SHOPIFY_WEBHOOK_SECRET,
                 "BRIGHT_DATA_API_KEY": self.BRIGHT_DATA_API_KEY,
-                "APIFY_API_TOKEN": self.APIFY_API_TOKEN,
             }
             missing = [k for k, v in required.items() if not v]
             if missing:
