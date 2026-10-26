@@ -140,11 +140,18 @@ async def _background_fetch_and_push(
             
             if existing_parent and existing_parent.shopify_product_id:
                 logger.info(f"🔄 DEBUG: Existing Parent ke andar Variant add kar rahe hain. Shopify ID={existing_parent.shopify_product_id}")
-                # Add variant to existing product
+                
+                # ✅ Yahan variant_data mein image_url add kar diya hai
                 result = await add_variant_to_existing_product(
                     shop=shop_domain, access_token=access_token,
                     product_id=existing_parent.shopify_product_id,
-                    variant_data={"price": final_price, "sku": asin, "stock": new_product.stock_quantity or 0, "weight": weight_str},
+                    variant_data={
+                        "price": final_price, 
+                        "sku": asin, 
+                        "stock": new_product.stock_quantity or 0, 
+                        "weight": weight_str,
+                        "image_url": new_product.image_url  # ✅ Yeh add kiya hai
+                    },
                     all_options=all_variations,
                 )
                 

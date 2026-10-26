@@ -4,6 +4,7 @@
 # + ✅ NAYA: Measurement in variant input
 # + ✅ NAYA v2: Compare-at price in add_variant_to_existing_product
 # + ✅ NAYA v2: Compare-at price in variant mutation response
+# + ✅ NAYA v3: Variant Image Assignment
 
 import logging
 import re
@@ -13,15 +14,10 @@ from app.services.shopify_inventory import set_inventory_quantity
 
 logger = logging.getLogger(__name__)
 
-
 # ============================================
 # ✅ Parse weight string → (value, unit)
 # ============================================
 def _parse_weight(weight_str) -> tuple:
-    """
-    Parse weight string like "1.5 pounds", "680 g", "2.2 kg", "16 ounces".
-    Returns: (float_value_in_lbs, "POUNDS") or (None, None)
-    """
     if not weight_str:
         return None, None
 
@@ -52,15 +48,7 @@ def _parse_weight(weight_str) -> tuple:
 
     return round(value, 4), unit
 
-
-# ============================================
-# ✅ Build measurement input from variant_data
-# ============================================
 def _build_measurement(variant_data: dict) -> dict:
-    """
-    Build Shopify measurement input from variant_data.
-    Returns dict with 'weight' key, or empty dict if no weight.
-    """
     weight_str = (
         variant_data.get("weight")
         or variant_data.get("item_weight")
@@ -78,15 +66,7 @@ def _build_measurement(variant_data: dict) -> dict:
         }
     return {}
 
-
-# ============================================
-# ✅ NAYA: Normalize compare_at_price
-# ============================================
 def _normalize_compare_at_price(compare_at_price, price) -> str | None:
-    """
-    Validate + format compare_at_price.
-    Returns formatted string "XX.XX" or None.
-    """
     if compare_at_price is None:
         return None
 
@@ -94,11 +74,8 @@ def _normalize_compare_at_price(compare_at_price, price) -> str | None:
         cap = float(compare_at_price)
         price_f = float(price)
 
-        # ✅ Compare price > final price hona chahiye
         if cap <= price_f:
-            logger.warning(
-                f"⚠️ compare_at_price (${cap}) <= price (${price_f}) — skipping"
-            )
+            logger.warning(f"⚠️ compare_at_price (${cap}) <= price (${price_f}) — skipping")
             return None
 
         return f"{cap:.2f}"
@@ -106,7 +83,6 @@ def _normalize_compare_at_price(compare_at_price, price) -> str | None:
     except (ValueError, TypeError) as e:
         logger.warning(f"⚠️ Invalid compare_at_price: {compare_at_price} — {e}")
         return None
-
 
 # ============================================
 # UPDATE VARIANT (with COMPARE AT PRICE)
@@ -121,7 +97,6 @@ async def update_variant_with_tracked(
     compare_at_price: float = None,
     weight: str = None,
 ) -> bool:
-    """Variant update — price + SKU + compare_at_price + weight."""
     mutation = """
     mutation productVariantsBulkUpdate(
       $productId: ID!,
@@ -150,15 +125,11 @@ async def update_variant_with_tracked(
     if sku:
         inventory_item_input["sku"] = sku
 
-    # ✅ Add weight measurement if provided
     if weight:
         measurement = _build_measurement({"weight": weight})
         if measurement:
             inventory_item_input["measurement"] = measurement
-            logger.info(
-                f"   ⚖️ Weight mapped: {weight} → "
-                f"{measurement['weight']['value']} {measurement['weight']['unit']}"
-            )
+            logger.info(f"   ⚖️ Weight mapped: {weight} → {measurement['weight']['value']} {measurement['weight']['unit']}")
 
     variant_input = {
         "id": variant_id,
@@ -166,7 +137,6 @@ async def update_variant_with_tracked(
         "inventoryItem": inventory_item_input,
     }
 
-    # ✅ NAYA: Compare-at price add karo (normalized)
     cap_str = _normalize_compare_at_price(compare_at_price, price)
     if cap_str:
         variant_input["compareAtPrice"] = cap_str
@@ -183,32 +153,22 @@ async def update_variant_with_tracked(
         logger.error(f"❌ Variant update errors: {result['errors']}")
         return False
 
-    update_errors = (
-        result.get("data", {}).get("productVariantsBulkUpdate", {}).get("userErrors", [])
-    )
+    update_errors = result.get("data", {}).get("productVariantsBulkUpdate", {}).get("userErrors", [])
 
     if update_errors:
         logger.error(f"❌ Variant update user errors: {update_errors}")
         return False
 
-    updated = (
-        result.get("data", {}).get("productVariantsBulkUpdate", {}).get("productVariants", [])
-    )
+    updated = result.get("data", {}).get("productVariantsBulkUpdate", {}).get("productVariants", [])
 
     if updated:
         v = updated[0]
         measurement = v.get("inventoryItem", {}).get("measurement") or {}
         weight_data = measurement.get("weight") or {}
-        logger.info(
-            f"✅ Variant updated: price=${v.get('price')}, "
-            f"compare_at=${v.get('compareAtPrice')}, "
-            f"sku={v.get('inventoryItem', {}).get('sku', 'N/A')}, "
-            f"weight={weight_data.get('value', 'N/A')} {weight_data.get('unit', '')}"
-        )
+        logger.info(f"✅ Variant updated: price=${v.get('price')}, compare_at=${v.get('compareAtPrice')}, sku={v.get('inventoryItem', {}).get('sku', 'N/A')}, weight={weight_data.get('value', 'N/A')} {weight_data.get('unit', '')}")
         return True
 
     return False
-
 
 # ============================================
 # ENSURE PRODUCT HAS OPTION
@@ -220,7 +180,6 @@ async def ensure_product_has_option(
     option_name: str,
     option_values: list,
 ) -> bool:
-    """Ensure karo ki product mein yeh option exist karta hai."""
     query = """
     query getProductWithVariants($id: ID!) {
       product(id: $id) {
@@ -343,9 +302,7 @@ async def ensure_product_has_option(
         logger.error(f"❌ Option create errors: {update_result['errors']}")
         return False
 
-    user_errors = (
-        update_result.get("data", {}).get("productSet", {}).get("userErrors", [])
-    )
+    user_errors = update_result.get("data", {}).get("productSet", {}).get("userErrors", [])
 
     if user_errors:
         logger.error(f"❌ Option create user errors: {user_errors}")
@@ -356,8 +313,69 @@ async def ensure_product_has_option(
 
 
 # ============================================
+# ✅ NAYA FUNCTION: ASSIGN IMAGE TO VARIANT
+# ============================================
+async def _assign_image_to_variant(shop: str, access_token: str, product_id: str, variant_id: str, image_url: str):
+    """Naye variant ki image product media mein add karke variant se link karein."""
+    logger.info(f"   🖼️ Assigning image to variant: {image_url[:50]}...")
+    
+    # 1. Product media mein image add karein
+    mutation_media = """
+    mutation productCreateMedia($productId: ID!, $media: [CreateMediaInput!]!) {
+      productCreateMedia(productId: $productId, media: $media) {
+        media {
+          id
+          ... on MediaImage { image { url } }
+        }
+        mediaUserErrors { field message }
+      }
+    }
+    """
+    media_input = [{"originalSource": image_url, "mediaContentType": "IMAGE"}]
+    result_media = await shopify_graphql(shop, access_token, mutation_media, {"productId": product_id, "media": media_input})
+    
+    if "errors" in result_media:
+        logger.warning(f"⚠️ Failed to add image to media list: {result_media['errors']}")
+        return
+        
+    media_errors = result_media.get("data", {}).get("productCreateMedia", {}).get("mediaUserErrors", [])
+    if media_errors:
+        logger.warning(f"⚠️ Media user errors: {media_errors}")
+        return
+
+    created_media = result_media.get("data", {}).get("productCreateMedia", {}).get("media", [])
+    if not created_media:
+        logger.warning("⚠️ No media created.")
+        return
+        
+    media_id = created_media[0].get("id")
+    
+    # 2. Variant ko us image ke sath link karein
+    mutation_variant = """
+    mutation productVariantsBulkUpdate(
+      $productId: ID!,
+      $variants: [ProductVariantsBulkInput!]!
+    ) {
+      productVariantsBulkUpdate(productId: $productId, variants: $variants) {
+        productVariants {
+          id
+          image { id url }
+        }
+        userErrors { field message }
+      }
+    }
+    """
+    variant_input = {"id": variant_id, "mediaId": media_id}
+    result_var = await shopify_graphql(shop, access_token, mutation_variant, {"productId": product_id, "variants": [variant_input]})
+    
+    if "errors" in result_var:
+        logger.warning(f"⚠️ Failed to link image to variant: {result_var['errors']}")
+    else:
+        logger.info(f"✅ Image assigned to variant successfully")
+
+
+# ============================================
 # ADD VARIANT TO EXISTING PRODUCT
-# ✅ NAYA v2: compare_at_price support
 # ============================================
 async def add_variant_to_existing_product(
     shop: str,
@@ -366,16 +384,13 @@ async def add_variant_to_existing_product(
     variant_data: dict,
     all_options: list = None,
 ) -> dict:
-    """Existing product mein naya variant add karo (weight + compare-at)."""
+    """Existing product mein naya variant add karo (weight + compare-at + image)."""
     if not all_options:
         option_name = variant_data.get("option_name") or "Style"
         option_value = variant_data.get("title") or "Default"
         all_options = [{"name": option_name, "value": option_value}]
 
-    logger.info(
-        f"   Adding variant: "
-        + " / ".join(f"{o['name']}={o['value']}" for o in all_options)
-    )
+    logger.info(f"   Adding variant: " + " / ".join(f"{o['name']}={o['value']}" for o in all_options))
 
     for opt in all_options:
         option_exists = await ensure_product_has_option(
@@ -400,7 +415,6 @@ async def add_variant_to_existing_product(
     sku_value = variant_data.get("sku", "") or ""
     price_value = variant_data.get("price", 0)
 
-    # ✅ Build inventory item with weight
     inventory_item_input = {"tracked": True}
     if sku_value:
         inventory_item_input["sku"] = sku_value
@@ -408,10 +422,7 @@ async def add_variant_to_existing_product(
     measurement = _build_measurement(variant_data)
     if measurement:
         inventory_item_input["measurement"] = measurement
-        logger.info(
-            f"   ⚖️ Weight mapped: "
-            f"{measurement['weight']['value']} {measurement['weight']['unit']}"
-        )
+        logger.info(f"   ⚖️ Weight mapped: {measurement['weight']['value']} {measurement['weight']['unit']}")
 
     mutation = """
     mutation productVariantsBulkCreate(
@@ -444,7 +455,6 @@ async def add_variant_to_existing_product(
         "inventoryItem": inventory_item_input,
     }
 
-    # ✅ NAYA: Compare-at price add karo
     compare_at_price = variant_data.get("compare_at_price")
     cap_str = _normalize_compare_at_price(compare_at_price, price_value)
     if cap_str:
@@ -459,9 +469,7 @@ async def add_variant_to_existing_product(
         logger.error(f"❌ Variant create error: {result['errors']}")
         return result
 
-    var_errors = (
-        result.get("data", {}).get("productVariantsBulkCreate", {}).get("userErrors", [])
-    )
+    var_errors = result.get("data", {}).get("productVariantsBulkCreate", {}).get("userErrors", [])
 
     if var_errors:
         for err in var_errors:
@@ -473,21 +481,15 @@ async def add_variant_to_existing_product(
         logger.error(f"❌ Variant create user errors: {var_errors}")
         return result
 
-    created = (
-        result.get("data", {}).get("productVariantsBulkCreate", {}).get("productVariants", [])
-    )
+    created = result.get("data", {}).get("productVariantsBulkCreate", {}).get("productVariants", [])
 
     if created:
         v = created[0]
+        variant_id = v.get("id")
         measurement_resp = v.get("inventoryItem", {}).get("measurement") or {}
         weight_data = measurement_resp.get("weight") or {}
 
-        logger.info(
-            f"✅ Variant added: {v.get('title')} — ${v.get('price')} "
-            f"— compare_at: ${v.get('compareAtPrice', 'N/A')} "
-            f"— SKU: {v.get('inventoryItem', {}).get('sku', 'N/A')} "
-            f"— Weight: {weight_data.get('value', 'N/A')} {weight_data.get('unit', '')}"
-        )
+        logger.info(f"✅ Variant added: {v.get('title')} — ${v.get('price')} — compare_at: ${v.get('compareAtPrice', 'N/A')} — SKU: {v.get('inventoryItem', {}).get('sku', 'N/A')} — Weight: {weight_data.get('value', 'N/A')} {weight_data.get('unit', '')}")
 
         inv_item_id = v.get("inventoryItem", {}).get("id")
         stock = variant_data.get("stock", 0)
@@ -498,5 +500,10 @@ async def add_variant_to_existing_product(
                 inventory_item_id=inv_item_id,
                 quantity=stock,
             )
+
+        # ✅ NAYA: Image assign karein (Agar variant_data mein image_url mojood hai)
+        image_url = variant_data.get("image_url")
+        if variant_id and image_url:
+            await _assign_image_to_variant(shop, access_token, product_id, variant_id, image_url)
 
     return result
