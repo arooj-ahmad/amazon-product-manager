@@ -53,8 +53,8 @@ async def _background_fetch_and_push(
         asin = data["asin"]
         parent_asin = data.get("parent_asin")
         
-        # ✅ FIXED: Yahan se duplicate ASIN wala check hata diya hai taake naye variants allow hon.
-        # (Duplicate check ab product_routes.py mein lagaya gaya hai)
+        # ✅ DEBUG LOGS
+        logger.info(f"🔍 DEBUG: Naya Product ASIN={asin}, Parent ASIN={parent_asin}")
 
         existing_parent = None
         if parent_asin:
@@ -62,10 +62,19 @@ async def _background_fetch_and_push(
                 Product.parent_asin == parent_asin, Product.asin != asin,
                 Product.shopify_product_id.isnot(None)
             ).first()
-            if existing_parent and not _verify_parent_match(existing_parent, data):
-                existing_parent = None
+            
+            if existing_parent:
+                logger.info(f"✅ DEBUG: Parent Product DB mein mil gaya! ASIN={existing_parent.asin}, Shopify ID={existing_parent.shopify_product_id}")
+                if not _verify_parent_match(existing_parent, data):
+                    logger.warning("⚠️ DEBUG: Parent match fail ho gaya (Brand ya Category alag hai). Naya product banega.")
+                    existing_parent = None
+            else:
+                logger.warning(f"⚠️ DEBUG: Parent ASIN ({parent_asin}) ke sath koi product DB mein nahi mila. Naya product banega.")
+        else:
+            logger.warning("⚠️ DEBUG: Apify ne Parent ASIN nahi bheja. Naya product banega.")
 
         all_variations = extract_all_variations(data)
+        logger.info(f"🔍 DEBUG: Variations found = {all_variations}")
         
         # Token & Markup
         try:
@@ -109,6 +118,7 @@ async def _background_fetch_and_push(
             access_token = await _get_valid_access_token(store, db)
             
             if existing_parent and existing_parent.shopify_product_id:
+                logger.info(f"🔄 DEBUG: Existing Parent ke andar Variant add kar rahe hain. Shopify ID={existing_parent.shopify_product_id}")
                 # Add variant to existing product
                 result = await add_variant_to_existing_product(
                     shop=shop_domain, access_token=access_token,
@@ -123,7 +133,10 @@ async def _background_fetch_and_push(
                     new_product.shopify_product_id = shopify_product_id
                     new_product.shopify_handle = existing_parent.shopify_handle
                     db.commit()
+                else:
+                    logger.error(f"❌ DEBUG: Variant add error: {result['errors']}")
             else:
+                logger.info("🔄 DEBUG: Naya Product create kar rahe hain (Kyunki koi Parent nahi mila)")
                 # Create new product
                 product_data = _build_product_data_for_shopify(data=data, product=new_product)
 

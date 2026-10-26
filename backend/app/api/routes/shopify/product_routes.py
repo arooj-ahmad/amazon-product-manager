@@ -43,7 +43,6 @@ async def add_product_from_shopify_app(
 
     store = db.query(ShopifyStore).filter(ShopifyStore.shop_domain == shop_domain).first()
 
-    # ✅ TOKEN REFRESH LOGIC
     async def refresh_store_token() -> bool:
         nonlocal store
         token_data = await exchange_id_token_for_offline_token(shop_domain, token)
@@ -83,15 +82,12 @@ async def add_product_from_shopify_app(
         if not store.access_token:
             raise HTTPException(status_code=401, detail="Token exchange failed and no existing token.")
 
-    # ✅ SMART ASIN CHECK (Variant Support ke liye)
     asin_quick = extract_asin_from_url(amazon_url)
     if asin_quick:
         existing_product = db.query(Product).filter(Product.asin == asin_quick).first()
         if existing_product:
-            # Agar product pehle se isi store mein hai, to error dein
             if existing_product.shopify_store_id == store.id:
                 raise HTTPException(status_code=409, detail=f"Product already exists in this store (ASIN: {asin_quick})")
-            # Agar kisi aur store mein hai, to allow karein (kyunki har store ka apna product hota hai)
 
     _resolve_markup(store, markup, markup_type, extra_percent)
 
