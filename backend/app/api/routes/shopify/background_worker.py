@@ -1,6 +1,5 @@
 # ============================================
 # app/api/routes/shopify/background_worker.py
-# + ✅ NAYA: Ek URL se saare variants add karega (Fast & Optimized)
 # ============================================
 
 import asyncio
@@ -51,31 +50,32 @@ async def _background_fetch_and_push(
             logger.error("❌ Background: ASIN missing in response")
             return
 
-        # ✅ 1. Apify ke data se variantDetails nikaalein
+        # ✅ 1. Apify ke data se variant_details nikaalein (jisme saari details hain)
         variant_details = data.get("variant_details") or []
         if not variant_details:
             variant_details = [{
                 "asin": data["asin"],
-                "name": "Default",
+                "attributes": data.get("variant_attributes", []),
                 "thumbnail": data.get("image_url"),
                 "images": data.get("images", [])
             }]
 
         logger.info(f"🔍 DEBUG: Total {len(variant_details)} variants found to process.")
 
-        # ✅ 2. Base Product setup
+        # ✅ 2. Base Product setup (Pehla variant parent banega)
         base_asin = data["asin"]
         existing_shopify_product_id = None
+        existing_parent_db = None
 
-        # Check karein ke kya koi variant pehle se DB mein hai (parent)
-        existing_db_product = db.query(Product).filter(
-            Product.parent_asin == base_asin,
+        # Check karein ke kya pehla variant pehle se add hai (parent)
+        existing_parent_db = db.query(Product).filter(
+            Product.asin == base_asin,
             Product.shopify_product_id.isnot(None)
         ).first()
 
-        if existing_db_product:
-            existing_shopify_product_id = existing_db_product.shopify_product_id
-            logger.info(f"✅ Parent product already exists in Shopify: {existing_shopify_product_id}")
+        if existing_parent_db:
+            existing_shopify_product_id = existing_parent_db.shopify_product_id
+            logger.info(f"✅ Base product already exists in Shopify: {existing_shopify_product_id}")
 
         # Markup & Pricing
         try:
@@ -90,34 +90,26 @@ async def _background_fetch_and_push(
         # ✅ 3. Har ek variant par loop chalayein
         for index, v_detail in enumerate(variant_details):
             v_asin = v_detail.get("asin")
-            v_name = v_detail.get("name", "Default")
+            v_name = v_detail.get("name", "")
             
             if not v_asin:
                 continue
 
             logger.info(f"🔄 Processing variant {index+1}/{len(variant_details)}: {v_name} (ASIN={v_asin})")
 
-            # Agar yeh specific ASIN pehle se database mein hai, to skip karein
+            # Agar product database mein pehle se hai, to skip karein
             if db.query(Product).filter(Product.asin == v_asin).first():
                 logger.info(f"⏭️ Skipping ASIN={v_asin}, already exists in DB.")
                 continue
 
-            # ✅ Variant ka data taiyar karein
-            color_val = None
-            size_val = None
+            # ✅ Attributes seedha Apify ke data se uthayein (No fallback)
+            variant_attrs = v_detail.get("attributes") or []
             
-            # Name se color aur size alag karein (jaise "6 Black II")
-            name_parts = v_name.split()
-            if len(name_parts) >= 2:
-                size_val = name_parts[0]
-                color_val = " ".join(name_parts[1:])
-            else:
-                color_val = v_name
+            if not variant_attrs:
+                logger.warning(f"⚠️ ASIN={v_asin} ke liye attributes nahi mile. Skip kar rahe hain.")
+                continue
 
-            variant_attrs = []
-            if color_val: variant_attrs.append({"name": "Color", "value": color_val})
-            if size_val: variant_attrs.append({"name": "Size", "value": size_val})
-
+            # Price calculate karein
             final_price = calculate_final_price(
                 amazon_price=data.get("amazon_price"), 
                 markup=user_markup, 
@@ -125,7 +117,8 @@ async def _background_fetch_and_push(
                 extra_percent=user_extra, 
                 tax_rate=user_tax_rate
             )
-            
+            weight_str = _extract_weight(data)
+
             v_image = v_detail.get("thumbnail") or data.get("image_url")
             v_images = v_detail.get("images") or data.get("images", [])
 
@@ -157,7 +150,7 @@ async def _background_fetch_and_push(
                             "price": final_price, 
                             "sku": v_asin, 
                             "stock": new_product.stock_quantity or 0, 
-                            "weight": data.get("item_weight"),
+                            "weight": weight_str,
                             "image_url": new_product.image_url
                         },
                         all_options=variant_attrs,
@@ -165,10 +158,14 @@ async def _background_fetch_and_push(
                     
                     if "errors" not in result:
                         new_product.shopify_product_id = existing_shopify_product_id
+                        new_product.shopify_handle = existing_parent_db.shopify_handle if existing_parent_db else None
                         db.commit()
                 else:
-                    # Pehli dafa, naya product create karein
+                    # Agar pehli dafa hai, to naya Shopify product create karein
+                    # Base data mein current variant ke attributes daal dein
+                    data["variant_attributes"] = variant_attrs
                     product_data = _build_product_data_for_shopify(data=data, product=new_product)
+                    
                     result = await create_shopify_product(
                         shop=shop_domain, access_token=access_token, product_data=product_data,
                     )
@@ -181,7 +178,7 @@ async def _background_fetch_and_push(
                             new_product.shopify_handle = result.get("data", {}).get("productSet", {}).get("product", {}).get("handle")
                             db.commit()
 
-                # Collections
+                # Collections add karein
                 if new_product.shopify_product_id and collection_ids:
                     await add_product_to_collections(
                         shop=shop_domain, access_token=access_token,
