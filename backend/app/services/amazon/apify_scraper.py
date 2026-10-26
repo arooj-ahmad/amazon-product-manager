@@ -179,6 +179,18 @@ def fetch_product_from_apify(amazon_url: str) -> dict:
             categories = list(dict.fromkeys([str(c).strip() for c in categories if c and str(c).strip() and len(str(c)) < 100]))
             tags = list(dict.fromkeys([str(t).strip() for t in tags if t and str(t).strip()]))[:15]
 
+            # ✅ Apify se saari variants ki details nikaalein (colors/sizes ke sath)
+            raw_variant_details = item.get("variantDetails") or []
+            variant_details = []
+            for vd in raw_variant_details:
+                if isinstance(vd, dict):
+                    variant_details.append({
+                        "asin": vd.get("asin"),
+                        "name": vd.get("name"),
+                        "thumbnail": vd.get("thumbnail"),
+                        "images": vd.get("images", [])
+                    })
+
             return {
                 "asin": asin,
                 "parent_asin": parent_asin,
@@ -205,7 +217,8 @@ def fetch_product_from_apify(amazon_url: str) -> dict:
                 "package_dimensions": item.get("package_dimensions"),
                 "model_number": item.get("model_number"),
                 "manufacturer": item.get("manufacturer"),
-                "variant_asins": item.get("variantAsins") or [], # ✅ YEH ADD KIYA HAI
+                "variant_asins": item.get("variantAsins") or [],
+                "variant_details": variant_details, # ✅ YEH ADD KIYA HAI
             }
 
         logger.warning(f"⚠️ Apify: no item found for {amazon_url}")
