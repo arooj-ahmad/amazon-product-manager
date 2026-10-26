@@ -173,27 +173,40 @@ async def _find_category_from_breadcrumbs(
     product_title: str,
     tags: list = None,
 ) -> Optional[str]:
-    """Breadcrumb ka aakhri word uthao aur Shopify ki search mein dal do."""
+    """Shopify API se best match category dhoondein based on breadcrumbs."""
     
-    # Agar categories hain, to sabse aakhri (most specific) uthao
+    # 1. Pehle Amazon ki breadcrumbs se sabse specific category try karein
     if categories:
-        specific_category = str(categories[-1]).strip()
-        
-        # Shopify ki API se poocho
+        # Hum Shopify API ko bolenge ke wo breadcrumbs ki list mein se best match dhoonde
         cat_id = await find_best_category(
             shop=shop,
             access_token=access_token,
-            product_title=specific_category,
-            categories=categories,
+            product_title=product_title, # Title as fallback
+            categories=categories,       # Poori list de rahe hain
         )
         
         if cat_id:
-            logger.info(f"   ✅ Category matched: '{specific_category}' -> {cat_id}")
+            logger.info(f"   ✅ Category matched via breadcrumbs list: {cat_id}")
             return cat_id
+
+    # 2. Agar breadcrumbs se na mile, to tags try karein
+    if tags:
+        for tag in tags:
+            if not isinstance(tag, str) or not tag.strip():
+                continue
+                
+            cat_id = await find_best_category(
+                shop=shop,
+                access_token=access_token,
+                product_title=tag,
+                categories=[],
+            )
+            if cat_id:
+                logger.info(f"   ✅ Category matched via tag: '{tag}' -> {cat_id}")
+                return cat_id
 
     logger.warning(f"⚠️ No category found for: {categories}")
     return None
-
 
 # ============================================
 # ✅ PRODUCT CREATE (SIMPLE)
