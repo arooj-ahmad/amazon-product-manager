@@ -3,6 +3,7 @@
 # ============================================
 
 import logging
+import urllib.parse
 from apify_client import ApifyClient
 
 from app.config import settings
@@ -39,19 +40,39 @@ def fetch_product_from_apify(amazon_url: str) -> dict:
 
             asin = item.get("asin") or extract_asin_from_url(amazon_url)
             
-            # ✅ FIXED: Parent ASIN nikalne ka naya tareeqa (Variants ke andar se)
+            # =====================================================
+            # ✅ FIXED: Parent ASIN nikalne ka sab se pakka tareeqa
+            # =====================================================
             parent_asin = item.get("parent_asin")
             
+            # 1. Agar direct nahi mila, to URL se nikaalein
+            if not parent_asin:
+                raw_url = item.get("url", "")
+                if raw_url:
+                    parsed = urllib.parse.urlparse(raw_url)
+                    query_params = urllib.parse.parse_qs(parsed.query)
+                    if "parent_asin" in query_params:
+                        parent_asin = query_params["parent_asin"][0]
+
+            # 2. Agar URL se bhi na mile, to Product Details mein se "Parent ASIN" dhoondein
+            if not parent_asin:
+                product_details = item.get("product_details") or []
+                for detail in product_details:
+                    if isinstance(detail, dict):
+                        field_type = str(detail.get("type", "")).lower()
+                        if "parent asin" in field_type:
+                            parent_asin = detail.get("value")
+                            break
+
+            # 3. Agar phir bhi na mile, to variants se nikaalein
             if not parent_asin:
                 apify_variants = item.get("variants") or []
-                if isinstance(apify_variants, list) and len(apify_variants) > 0:
-                    # Variants ki list mein se parent_asin dhoondein
-                    for v in apify_variants:
-                        if isinstance(v, dict):
-                            p = v.get("parent_asin") or v.get("parentAsin")
-                            if p:
-                                parent_asin = p
-                                break
+                for v in apify_variants:
+                    if isinstance(v, dict):
+                        p = v.get("parent_asin") or v.get("parentAsin")
+                        if p:
+                            parent_asin = p
+                            break
                             
             parent_asin = validate_parent_asin(parent_asin, asin)
             is_variation = bool(parent_asin)
