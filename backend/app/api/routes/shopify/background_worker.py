@@ -45,9 +45,20 @@ async def _background_fetch_and_push(
 
         if not data or not data.get("asin"): return
 
-        # ✅ 1. Saare variantAsins nikaalein (Agar nahi hain to current ASIN)
+        # ✅ 1. Saare variantAsins nikaalein
         variant_asins = data.get("variant_asins") or [data["asin"]]
         
+        # ✅ Main product ke variant_attributes
+        main_variant_attrs = data.get("variant_attributes") or []
+
+        # ✅ VariantDetails se har ASIN ke attributes ka map banayein
+        variant_details_map = {}
+        for vd in (data.get("variant_details") or []):
+            vd_asin = vd.get("asin")
+            vd_attrs = vd.get("attributes") or []
+            if vd_asin:
+                variant_details_map[vd_asin] = vd_attrs
+
         logger.info(f"🔍 DEBUG: Total {len(variant_asins)} variants to process.")
 
         # ✅ 2. Base Product setup
@@ -76,7 +87,12 @@ async def _background_fetch_and_push(
                 logger.info(f"⏭️ Skipping ASIN={v_asin}, already in DB.")
                 continue
 
-            # Har ASIN ka alag data fetch karein
+            # Attributes uthayein:
+            # 1. Agar variant_details_map mein hai, to wahan se
+            # 2. Nahi to main product ke variant_attributes se
+            variant_attrs = variant_details_map.get(v_asin) or main_variant_attrs
+
+            # Us specific variant ka data fetch karein
             v_url = f"https://www.amazon.com/dp/{v_asin}"
             try:
                 v_data = await loop.run_in_executor(None, fetch_product_from_apify, v_url)
@@ -87,9 +103,6 @@ async def _background_fetch_and_push(
             if not v_data or not v_data.get("asin"):
                 continue
 
-            # ✅ Attributes uthayein (Agar nahi mile to khali chhod dein)
-            variant_attrs = v_data.get("variant_attributes") or []
-
             final_price = calculate_final_price(
                 amazon_price=v_data.get("amazon_price"), 
                 markup=user_markup, 
@@ -99,7 +112,7 @@ async def _background_fetch_and_push(
             )
             weight_str = _extract_weight(v_data)
 
-            # DB mein save
+            # DB mein save (agar attributes khali hain to bhi save hoga)
             new_product = Product(
                 asin=v_asin, parent_asin=base_asin, is_variation=(index > 0),
                 title=v_data.get("title"), brand=v_data.get("brand"), description=v_data.get("description") or "",
