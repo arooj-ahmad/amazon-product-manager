@@ -24,6 +24,9 @@ def parse_price(value) -> Optional[float]:
     if value is None:
         return None
     try:
+        if isinstance(value, dict):
+            val = value.get("value") if "value" in value else (value.get("amount") or value.get("price"))
+            return parse_price(val)
         if isinstance(value, str):
             cleaned = value.replace("$", "").replace(",", "").strip()
             if not cleaned:

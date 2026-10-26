@@ -28,6 +28,8 @@ from app.services.shopify.product_extras import (
 )
 from app.services.shopify.product_variants import (
     update_variant_with_tracked,
+    _assign_image_to_variant,
+    _normalize_compare_at_price,
 )
 
 logger = logging.getLogger(__name__)
@@ -410,7 +412,121 @@ async def create_shopify_product_with_variants(
         tags=tags
     )
 
-    asin_value = str(product_data.get("asin", "") or "").strip() or "NO-SKU"
+    compare_enabled, compare_rule, compare_value = _get_compare_at_settings_from_store(shop)
+
+    # 1. Option names collect karein (Shopify limit: max 3 options)
+    raw_option_names = []
+    for v in variants:
+        for opt in (v.get("options") or v.get("variant_attributes") or []):
+            if isinstance(opt, dict):
+                n = (opt.get("name") or opt.get("key") or "").strip()
+                if n and n not in raw_option_names:
+                    raw_option_names.append(n)
+
+    if not raw_option_names and product_data.get("variant_attributes"):
+        for opt in product_data["variant_attributes"]:
+            if isinstance(opt, dict):
+                n = (opt.get("name") or opt.get("key") or "").strip()
+                if n and n not in raw_option_names:
+                    raw_option_names.append(n)
+
+    option_names = raw_option_names[:3] if raw_option_names else ["Style"]
+
+    # 2. Collect unique values for each option
+    options_dict = {name: [] for name in option_names}
+    for v in variants:
+        v_opts = {
+            (opt.get("name") or opt.get("key") or "").strip(): str(opt.get("value") or "").strip()
+            for opt in (v.get("options") or v.get("variant_attributes") or [])
+            if isinstance(opt, dict)
+        }
+        for name in option_names:
+            val = v_opts.get(name) or v.get("title") or "Default"
+            if val not in options_dict[name]:
+                options_dict[name].append(val)
+
+    for name in option_names:
+        if not options_dict[name]:
+            options_dict[name].append("Default")
+
+    product_options_input = [
+        {"name": name, "values": [{"name": val} for val in options_dict[name]]}
+        for name in option_names
+    ]
+
+    # 3. Build variants array
+    variant_inputs = []
+    seen_combinations = set()
+
+    for idx, v in enumerate(variants):
+        v_asin = str(v.get("asin") or v.get("sku") or f"VAR-{idx+1}").strip()
+        try:
+            v_price = float(v.get("price") or product_data.get("price") or 0.0)
+        except (ValueError, TypeError):
+            v_price = 0.0
+
+        v_ap = v.get("amazon_price") or product_data.get("amazon_price")
+        v_cap = v.get("compare_at_price")
+        if v_cap is None and compare_enabled:
+            v_cap = calculate_compare_at_price(
+                final_price=v_price,
+                compare_at_type=compare_rule,
+                compare_at_value=compare_value,
+                amazon_price=float(v_ap) if v_ap is not None else None,
+            )
+
+        v_opts = {
+            (opt.get("name") or opt.get("key") or "").strip(): str(opt.get("value") or "").strip()
+            for opt in (v.get("options") or v.get("variant_attributes") or [])
+            if isinstance(opt, dict)
+        }
+
+        option_values_list = []
+        combo_parts = []
+        for name in option_names:
+            val = v_opts.get(name) or v.get("title") or "Default"
+            option_values_list.append({"optionName": name, "name": val})
+            combo_parts.append(f"{name}:{val}")
+
+        combo_str = " | ".join(combo_parts)
+        if combo_str in seen_combinations:
+            disambiguated = f"{option_values_list[-1]['name']} ({v_asin})"
+            option_values_list[-1]["name"] = disambiguated
+            if disambiguated not in [od["name"] for od in product_options_input[-1]["values"]]:
+                product_options_input[-1]["values"].append({"name": disambiguated})
+            combo_str = f"{combo_str} ({v_asin})"
+
+        seen_combinations.add(combo_str)
+
+        inventory_item_data = _build_inventory_item(
+            {"item_weight": v.get("weight") or product_data.get("item_weight")},
+            v_asin
+        )
+
+        var_input = {
+            "optionValues": option_values_list,
+            "price": f"{v_price:.2f}",
+            "inventoryItem": inventory_item_data,
+            "metafields": [
+                {
+                    "namespace": "custom",
+                    "key": "asin",
+                    "value": v_asin,
+                    "type": "single_line_text_field",
+                }
+            ],
+        }
+
+        cap_str = _normalize_compare_at_price(v_cap, v_price)
+        if cap_str:
+            var_input["compareAtPrice"] = cap_str
+
+        variant_inputs.append(var_input)
+
+    # Shopify variant limit (cap at 100)
+    if len(variant_inputs) > 100:
+        logger.warning(f"⚠️ Total {len(variant_inputs)} variants exceeds Shopify limit 100. Capping at 100.")
+        variant_inputs = variant_inputs[:100]
 
     input_data = {
         "title": product_data.get("title") or "Untitled Product",
@@ -418,12 +534,8 @@ async def create_shopify_product_with_variants(
         "vendor": product_data.get("brand", ""),
         "status": status,
         "productType": product_type,
-        "productOptions": [
-            {
-                "name": "Style",
-                "values": [{"name": v["title"]} for v in variants if v.get("title")] or [{"name": "Default"}],
-            }
-        ],
+        "productOptions": product_options_input,
+        "variants": variant_inputs,
     }
 
     if shopify_category_id:
@@ -439,7 +551,7 @@ async def create_shopify_product_with_variants(
           id title handle tags productType
           category { id name fullName }
           options { id name values }
-          variants(first: 50) {
+          variants(first: 100) {
             edges { node { id title price compareAtPrice inventoryItem { id sku tracked } } }
           }
         }
@@ -451,39 +563,62 @@ async def create_shopify_product_with_variants(
     result = await shopify_graphql(shop, access_token, mutation_create, {"input": input_data})
 
     if "errors" in result:
+        logger.error(f"❌ Product with variants create error: {result['errors']}")
         return result
 
     product_create = result.get("data", {}).get("productSet", {})
     user_errors = product_create.get("userErrors", [])
 
     if user_errors:
+        logger.error(f"❌ Product with variants user errors: {user_errors}")
         return result
 
     shopify_product = product_create.get("product", {})
     product_id = shopify_product.get("id")
 
-    if product_id and is_available:
+    if not product_id:
+        return result
+
+    logger.info(f"✅ Product created with {len(variant_inputs)} variants: {shopify_product.get('title')}")
+
+    if is_available:
         await publish_product_to_channels(shop=shop, access_token=access_token, shopify_product_id=product_id)
 
-    if product_id:
-        all_mfs = _build_all_metafields(product_data)
-        if all_mfs:
-            await set_product_metafields(shop=shop, access_token=access_token, product_id=product_id, metafields=all_mfs)
+    all_mfs = _build_all_metafields(product_data)
+    if all_mfs:
+        await set_product_metafields(shop=shop, access_token=access_token, product_id=product_id, metafields=all_mfs)
 
     variants_edges = shopify_product.get("variants", {}).get("edges", [])
-    if variants_edges:
-        stock_qty = 0 if not is_available else int(product_data.get("stock_quantity", 0) or 0)
+    created_variants_by_sku = {}
+    for edge in variants_edges:
+        node = edge.get("node", {})
+        sku = node.get("inventoryItem", {}).get("sku")
+        if sku:
+            created_variants_by_sku[sku] = node
 
-        for edge in variants_edges:
-            variant_node = edge.get("node", {})
-            inventory_item_id = variant_node.get("inventoryItem", {}).get("id")
-            if inventory_item_id:
-                await set_inventory_quantity(
-                    shop=shop, access_token=access_token, inventory_item_id=inventory_item_id, quantity=stock_qty,
-                )
+    for idx, v in enumerate(variants):
+        v_asin = str(v.get("asin") or v.get("sku") or "").strip()
+        v_node = created_variants_by_sku.get(v_asin)
+        if not v_node and idx < len(variants_edges):
+            v_node = variants_edges[idx].get("node", {})
+
+        if not v_node:
+            continue
+
+        inv_item_id = v_node.get("inventoryItem", {}).get("id")
+        stock_qty = int(v.get("stock") or product_data.get("stock_quantity", 0) or 0) if is_available else 0
+        if inv_item_id and stock_qty:
+            await set_inventory_quantity(
+                shop=shop, access_token=access_token, inventory_item_id=inv_item_id, quantity=stock_qty,
+            )
+
+        v_img = v.get("image_url")
+        v_id = v_node.get("id")
+        if v_id and v_img:
+            await _assign_image_to_variant(shop, access_token, product_id, v_id, v_img)
 
     images = product_data.get("images", [])
-    if product_id and images:
+    if images:
         await add_product_images(shop=shop, access_token=access_token, product_id=product_id, image_urls=images[:10])
 
     return result

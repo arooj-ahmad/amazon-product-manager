@@ -531,4 +531,24 @@ async def add_variant_to_existing_product(
         if variant_id and image_url:
             await _assign_image_to_variant(shop, access_token, product_id, variant_id, image_url)
 
+        # ✅ Preserve child ASIN as Shopify variant metafield
+        asin_val = variant_data.get("sku") or variant_data.get("asin")
+        if variant_id and asin_val:
+            mf_mutation = """
+            mutation metafieldsSet($metafields: [MetafieldsSetInput!]!) {
+              metafieldsSet(metafields: $metafields) {
+                userErrors { field message }
+              }
+            }
+            """
+            await shopify_graphql(shop, access_token, mf_mutation, {
+                "metafields": [{
+                    "ownerId": variant_id,
+                    "namespace": "custom",
+                    "key": "asin",
+                    "value": str(asin_val),
+                    "type": "single_line_text_field",
+                }]
+            })
+
     return result
