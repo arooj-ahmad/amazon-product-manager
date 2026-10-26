@@ -39,7 +39,7 @@ def fetch_product_from_apify(amazon_url: str) -> dict:
 
             asin = item.get("asin") or extract_asin_from_url(amazon_url)
             
-            # Parent ASIN extraction
+            # ✅ Parent ASIN extraction
             parent_asin = item.get("parent_asin")
             if not parent_asin:
                 raw_url = item.get("url", "")
@@ -59,36 +59,32 @@ def fetch_product_from_apify(amazon_url: str) -> dict:
                             
             parent_asin = validate_parent_asin(parent_asin, asin)
             is_variation = bool(parent_asin)
-            
+
             # ✅ Main product attributes (Color, Size)
             variant_attributes = []
-            raw_item_attrs = item.get("variantAttributes") or []
-            for attr in raw_item_attrs:
+            for attr in (item.get("variantAttributes") or []):
                 if isinstance(attr, dict) and attr.get("key") and attr.get("value"):
                     variant_attributes.append({"name": attr["key"], "value": attr["value"]})
-            
-            # ✅ Variant Details (Saare variants ki list)
+
+            # ✅ Saare variants ki details
             raw_variant_details = item.get("variantDetails") or []
             variant_details = []
             
             for vd in raw_variant_details:
                 if isinstance(vd, dict):
                     v_asin = vd.get("asin")
-                    v_name = vd.get("name")
+                    v_name = vd.get("name", "")
                     
                     v_attrs = []
-                    # Agar yeh main product hai, to uske attributes use karein
                     if v_asin == asin and variant_attributes:
                         v_attrs = variant_attributes
-                    else:
-                        # Baqi variants ke liye name se split karein (Jaise "6 Cognac")
-                        if v_name:
-                            parts = v_name.split()
-                            if len(parts) >= 2:
-                                v_attrs.append({"name": "Size", "value": parts[0]})
-                                v_attrs.append({"name": "Color", "value": " ".join(parts[1:])})
-                            else:
-                                v_attrs.append({"name": "Style", "value": v_name})
+                    elif v_name:
+                        parts = v_name.split()
+                        if len(parts) >= 2:
+                            v_attrs.append({"name": "Size", "value": parts[0]})
+                            v_attrs.append({"name": "Color", "value": " ".join(parts[1:])})
+                        else:
+                            v_attrs.append({"name": "Style", "value": v_name})
 
                     variant_details.append({
                         "asin": v_asin,
@@ -97,6 +93,27 @@ def fetch_product_from_apify(amazon_url: str) -> dict:
                         "images": vd.get("images", []),
                         "attributes": v_attrs
                     })
+
+            # ✅ Saare unique child ASINs nikaalein
+            raw_asins = list(item.get("variantAsins") or [])
+            
+            # variantDetails se ASINs add karein
+            for vd in variant_details:
+                vd_asin = vd.get("asin")
+                if vd_asin and vd_asin not in raw_asins:
+                    raw_asins.append(vd_asin)
+            
+            # Main ASIN include karein
+            if asin and asin not in raw_asins:
+                raw_asins.insert(0, asin)
+            
+            # Deduplicate karein
+            seen = set()
+            variant_asins = []
+            for a in raw_asins:
+                if a and a not in seen:
+                    seen.add(a)
+                    variant_asins.append(a)
 
             # Other data
             is_available = True
@@ -147,7 +164,7 @@ def fetch_product_from_apify(amazon_url: str) -> dict:
                 "package_dimensions": item.get("package_dimensions"),
                 "model_number": item.get("model_number"),
                 "manufacturer": item.get("manufacturer"),
-                "variant_asins": item.get("variantAsins") or [],
+                "variant_asins": variant_asins,  # ✅ Ab saare unique ASINs yahan hain
                 "variant_details": variant_details,
             }
 

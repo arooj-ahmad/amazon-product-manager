@@ -45,11 +45,28 @@ async def _background_fetch_and_push(
 
         if not data or not data.get("asin"): return
 
-        # ✅ 1. Saare variantAsins nikaalein
-        variant_asins = data.get("variant_asins") or [data["asin"]]
+        # ✅ 1. Saare unique child ASINs nikaalein (variantAsins + variantDetails)
+        raw_asins = list(data.get("variant_asins") or [])
         
-        # ✅ Main product ke variant_attributes
-        main_variant_attrs = data.get("variant_attributes") or []
+        # VariantDetails se ASINs nikaal kar add karein
+        for vd in (data.get("variant_details") or []):
+            if isinstance(vd, dict):
+                vd_asin = vd.get("asin")
+                if vd_asin and vd_asin not in raw_asins:
+                    raw_asins.append(vd_asin)
+        
+        # Main ASIN include karein
+        base_asin = data["asin"]
+        if base_asin and base_asin not in raw_asins:
+            raw_asins.insert(0, base_asin)
+
+        # Deduplicate karein (order maintain)
+        seen = set()
+        variant_asins = []
+        for a in raw_asins:
+            if a and a not in seen:
+                seen.add(a)
+                variant_asins.append(a)
 
         # ✅ VariantDetails se har ASIN ke attributes ka map banayein
         variant_details_map = {}
@@ -59,10 +76,9 @@ async def _background_fetch_and_push(
             if vd_asin:
                 variant_details_map[vd_asin] = vd_attrs
 
-        logger.info(f"🔍 DEBUG: Total {len(variant_asins)} variants to process.")
+        logger.info(f"🔍 DEBUG: Total {len(variant_asins)} variants to process (unique).")
 
         # ✅ 2. Base Product setup
-        base_asin = data["asin"]
         existing_shopify_product_id = None
         existing_parent_db = db.query(Product).filter(
             Product.asin == base_asin,
@@ -87,10 +103,8 @@ async def _background_fetch_and_push(
                 logger.info(f"⏭️ Skipping ASIN={v_asin}, already in DB.")
                 continue
 
-            # Attributes uthayein:
-            # 1. Agar variant_details_map mein hai, to wahan se
-            # 2. Nahi to main product ke variant_attributes se
-            variant_attrs = variant_details_map.get(v_asin) or main_variant_attrs
+            # ✅ Attributes uthayein (Map se)
+            variant_attrs = variant_details_map.get(v_asin) or []
 
             # Us specific variant ka data fetch karein
             v_url = f"https://www.amazon.com/dp/{v_asin}"
@@ -103,6 +117,12 @@ async def _background_fetch_and_push(
             if not v_data or not v_data.get("asin"):
                 continue
 
+            # Agar attributes khali hain, to title se try karein (No Default fallback)
+            if not variant_attrs:
+                title = v_data.get("title", "")
+                if "size" in title.lower() or "color" in title.lower():
+                    pass # Skip, attributes ke baghair nahi push karenge
+
             final_price = calculate_final_price(
                 amazon_price=v_data.get("amazon_price"), 
                 markup=user_markup, 
@@ -112,7 +132,7 @@ async def _background_fetch_and_push(
             )
             weight_str = _extract_weight(v_data)
 
-            # DB mein save (agar attributes khali hain to bhi save hoga)
+            # DB mein save
             new_product = Product(
                 asin=v_asin, parent_asin=base_asin, is_variation=(index > 0),
                 title=v_data.get("title"), brand=v_data.get("brand"), description=v_data.get("description") or "",
@@ -151,8 +171,9 @@ async def _background_fetch_and_push(
                         db.commit()
                 else:
                     # Pehli dafa -> Create new product
-                    v_data["variant_attributes"] = variant_attrs
-                    product_data = _build_product_data_for_shopify(data=v_data, product=new_product)
+                    v_data_for_create = dict(v_data)
+                    v_data_for_create["variant_attributes"] = variant_attrs
+                    product_data = _build_product_data_for_shopify(data=v_data_for_create, product=new_product)
                     
                     result = await create_shopify_product(
                         shop=shop_domain, access_token=access_token, product_data=product_data,
