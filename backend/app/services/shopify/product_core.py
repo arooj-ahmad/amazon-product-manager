@@ -270,7 +270,7 @@ async def create_shopify_product(
     if shopify_tags:
         input_data["tags"] = shopify_tags
 
-    # ✅ Product options set karein (Color, Size)
+    # ✅ Product options set karein (Color, Size) — "Title" ko skip karein
     variant_attrs = product_data.get("variant_attributes") or []
     product_options = []
     variant_values = []
@@ -280,16 +280,19 @@ async def create_shopify_product(
             continue
         name = (attr.get("name") or "").strip()
         value = (attr.get("value") or "").strip()
-        if name and value:
-            # Check karein ke option pehle se list mein na ho
-            existing_opt = next((opt for opt in product_options if opt["name"] == name), None)
-            if existing_opt:
-                if value not in [v["name"] for v in existing_opt["values"]]:
-                    existing_opt["values"].append({"name": value})
-            else:
-                product_options.append({"name": name, "values": [{"name": value}]})
+        
+        # ❌ "Title" ya "Default Title" ko skip karein
+        if not name or not value or name.lower() in ("title", "default title"):
+            continue
             
-            variant_values.append({"optionName": name, "name": value})
+        existing_opt = next((opt for opt in product_options if opt["name"] == name), None)
+        if existing_opt:
+            if value not in [v["name"] for v in existing_opt["values"]]:
+                existing_opt["values"].append({"name": value})
+        else:
+            product_options.append({"name": name, "values": [{"name": value}]})
+        
+        variant_values.append({"optionName": name, "name": value})
 
     if product_options and variant_values:
         input_data["productOptions"] = product_options
@@ -414,12 +417,14 @@ async def create_shopify_product_with_variants(
 
     compare_enabled, compare_rule, compare_value = _get_compare_at_settings_from_store(shop)
 
-    # 1. Option names collect karein (Shopify limit: max 3 options)
+    # 1. Option names collect karein (Title skip karein)
     raw_option_names = []
     for v in variants:
         for opt in (v.get("options") or v.get("variant_attributes") or []):
             if isinstance(opt, dict):
                 n = (opt.get("name") or opt.get("key") or "").strip()
+                if n.lower() in ("title", "default title"):
+                    continue
                 if n and n not in raw_option_names:
                     raw_option_names.append(n)
 
@@ -427,6 +432,8 @@ async def create_shopify_product_with_variants(
         for opt in product_data["variant_attributes"]:
             if isinstance(opt, dict):
                 n = (opt.get("name") or opt.get("key") or "").strip()
+                if n.lower() in ("title", "default title"):
+                    continue
                 if n and n not in raw_option_names:
                     raw_option_names.append(n)
 
@@ -441,7 +448,7 @@ async def create_shopify_product_with_variants(
             if isinstance(opt, dict)
         }
         for name in option_names:
-            val = v_opts.get(name) or v.get("title") or "Default"
+            val = v_opts.get(name) or "Default"
             if val not in options_dict[name]:
                 options_dict[name].append(val)
 
@@ -484,7 +491,7 @@ async def create_shopify_product_with_variants(
         option_values_list = []
         combo_parts = []
         for name in option_names:
-            val = v_opts.get(name) or v.get("title") or "Default"
+            val = v_opts.get(name) or "Default"
             option_values_list.append({"optionName": name, "name": val})
             combo_parts.append(f"{name}:{val}")
 
