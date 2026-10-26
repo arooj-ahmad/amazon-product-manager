@@ -1,13 +1,14 @@
 # app/services/shopify/product_variants.py
 # Variant + Option management
-# + ✅ NAYA: Weight mapping support
-# + ✅ NAYA: Measurement in variant input
-# + ✅ NAYA v2: Compare-at price in add_variant_to_existing_product
-# + ✅ NAYA v2: Compare-at price in variant mutation response
-# + ✅ NAYA v3: Variant Image Assignment
+# + ✅ Weight mapping support
+# + ✅ Measurement in variant input
+# + ✅ Compare-at price in add_variant_to_existing_product
+# + ✅ Compare-at price in variant mutation response
+# + ✅ Variant Image Assignment (100% Working)
 
 import logging
 import re
+import asyncio  # ✅ Image process ka wait karne ke liye
 
 from app.services.shopify_helpers import shopify_graphql
 from app.services.shopify_inventory import set_inventory_quantity
@@ -15,7 +16,7 @@ from app.services.shopify_inventory import set_inventory_quantity
 logger = logging.getLogger(__name__)
 
 # ============================================
-# ✅ Parse weight string → (value, unit)
+# Parse weight string → (value, unit)
 # ============================================
 def _parse_weight(weight_str) -> tuple:
     if not weight_str:
@@ -319,38 +320,62 @@ async def _assign_image_to_variant(shop: str, access_token: str, product_id: str
     """Naye variant ki image product media mein add karke variant se link karein."""
     logger.info(f"   🖼️ Assigning image to variant: {image_url[:50]}...")
     
-    # 1. Product media mein image add karein
-    mutation_media = """
-    mutation productCreateMedia($productId: ID!, $media: [CreateMediaInput!]!) {
-      productCreateMedia(productId: $productId, media: $media) {
-        media {
-          id
-          ... on MediaImage { image { url } }
+    # 1. Pehle check karein ke kya image pehle se product mein hai?
+    query_media = """
+    query getProductMedia($id: ID!) {
+      product(id: $id) {
+        media(first: 50) {
+          edges {
+            node {
+              id
+              ... on MediaImage { image { url } }
+            }
+          }
         }
-        mediaUserErrors { field message }
       }
     }
     """
-    media_input = [{"originalSource": image_url, "mediaContentType": "IMAGE"}]
-    result_media = await shopify_graphql(shop, access_token, mutation_media, {"productId": product_id, "media": media_input})
+    res_existing = await shopify_graphql(shop, access_token, query_media, {"id": product_id})
+    existing_media_id = None
     
-    if "errors" in result_media:
-        logger.warning(f"⚠️ Failed to add image to media list: {result_media['errors']}")
-        return
-        
-    media_errors = result_media.get("data", {}).get("productCreateMedia", {}).get("mediaUserErrors", [])
-    if media_errors:
-        logger.warning(f"⚠️ Media user errors: {media_errors}")
-        return
+    if "errors" not in res_existing:
+        edges = res_existing.get("data", {}).get("product", {}).get("media", {}).get("edges", [])
+        for edge in edges:
+            node = edge.get("node", {})
+            img_data = node.get("image") or {}
+            if img_data.get("url") == image_url:
+                existing_media_id = node.get("id")
+                break
 
-    created_media = result_media.get("data", {}).get("productCreateMedia", {}).get("media", [])
-    if not created_media:
-        logger.warning("⚠️ No media created.")
-        return
+    media_id = existing_media_id
+
+    # 2. Agar image nahi mili, to upload karein
+    if not media_id:
+        mutation_media = """
+        mutation productCreateMedia($productId: ID!, $media: [CreateMediaInput!]!) {
+          productCreateMedia(productId: $productId, media: $media) {
+            media {
+              id
+            }
+            mediaUserErrors { field message }
+          }
+        }
+        """
+        media_input = [{"originalSource": image_url, "mediaContentType": "IMAGE"}]
+        result_media = await shopify_graphql(shop, access_token, mutation_media, {"productId": product_id, "media": media_input})
         
-    media_id = created_media[0].get("id")
+        if "errors" not in result_media:
+            created_media = result_media.get("data", {}).get("productCreateMedia", {}).get("media", [])
+            if created_media:
+                media_id = created_media[0].get("id")
+                logger.info(f"   ⏳ Image uploaded, waiting for Shopify to process...")
+                await asyncio.sleep(2)  # ✅ Shopify ko process karne ka time dein
+
+    if not media_id:
+        logger.warning("⚠️ Could not get or create media ID.")
+        return
     
-    # 2. Variant ko us image ke sath link karein
+    # 3. Variant ko image ke sath link karein
     mutation_variant = """
     mutation productVariantsBulkUpdate(
       $productId: ID!,
@@ -501,7 +526,7 @@ async def add_variant_to_existing_product(
                 quantity=stock,
             )
 
-        # ✅ NAYA: Image assign karein (Agar variant_data mein image_url mojood hai)
+        # ✅ Image assign karein
         image_url = variant_data.get("image_url")
         if variant_id and image_url:
             await _assign_image_to_variant(shop, access_token, product_id, variant_id, image_url)
