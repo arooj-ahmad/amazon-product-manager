@@ -60,25 +60,28 @@ def fetch_product_from_apify(amazon_url: str) -> dict:
             parent_asin = validate_parent_asin(parent_asin, asin)
             is_variation = bool(parent_asin)
             
-            # Main product attributes
+            # ✅ Main product attributes (Color, Size)
             variant_attributes = []
-            raw_item_attrs = item.get("attributes") or []
+            raw_item_attrs = item.get("variantAttributes") or []
             for attr in raw_item_attrs:
                 if isinstance(attr, dict) and attr.get("key") and attr.get("value"):
                     variant_attributes.append({"name": attr["key"], "value": attr["value"]})
             
-            # Variant Details
+            # ✅ Variant Details (Saare variants ki list)
             raw_variant_details = item.get("variantDetails") or []
             variant_details = []
+            
             for vd in raw_variant_details:
                 if isinstance(vd, dict):
                     v_asin = vd.get("asin")
                     v_name = vd.get("name")
                     
                     v_attrs = []
+                    # Agar yeh main product hai, to uske attributes use karein
                     if v_asin == asin and variant_attributes:
                         v_attrs = variant_attributes
                     else:
+                        # Baqi variants ke liye name se split karein (Jaise "6 Cognac")
                         if v_name:
                             parts = v_name.split()
                             if len(parts) >= 2:
