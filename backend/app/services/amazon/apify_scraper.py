@@ -38,9 +38,25 @@ def fetch_product_from_apify(amazon_url: str) -> dict:
                 continue
 
             asin = item.get("asin") or extract_asin_from_url(amazon_url)
-            raw_parent = item.get("parent_asin")
-            parent_asin = validate_parent_asin(raw_parent, asin)
+            
+            # ✅ FIXED: Parent ASIN nikalne ka naya tareeqa (Variants ke andar se)
+            parent_asin = item.get("parent_asin")
+            
+            if not parent_asin:
+                apify_variants = item.get("variants") or []
+                if isinstance(apify_variants, list) and len(apify_variants) > 0:
+                    # Variants ki list mein se parent_asin dhoondein
+                    for v in apify_variants:
+                        if isinstance(v, dict):
+                            p = v.get("parent_asin") or v.get("parentAsin")
+                            if p:
+                                parent_asin = p
+                                break
+                            
+            parent_asin = validate_parent_asin(parent_asin, asin)
             is_variation = bool(parent_asin)
+            
+            logger.info(f"🔍 DEBUG: Fetched ASIN={asin}, Parent ASIN={parent_asin}")
 
             variant_attributes = []
             variations = []
