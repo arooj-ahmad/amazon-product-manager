@@ -38,10 +38,52 @@ async def add_product_from_shopify_app(
         raise HTTPException(status_code=401, detail=f"Invalid ID token: {str(e)}")
 
     shop_domain = payload.get("dest", "").replace("https://", "").split("/")[0]
+    if not shop_domain:
+        raise HTTPException(status_code=401, detail="Shop domain missing")
+
     store = db.query(ShopifyStore).filter(ShopifyStore.shop_domain == shop_domain).first()
 
-    # Token Refresh logic yahan aayega (jo aapke paas pehle se tha)
-    
+    # ✅ TOKEN REFRESH LOGIC (Wapas add kar diya hai)
+    async def refresh_store_token() -> bool:
+        nonlocal store
+        token_data = await exchange_id_token_for_offline_token(shop_domain, token)
+        if not token_data or not token_data.get("access_token"):
+            return False
+
+        now = datetime.now(timezone.utc)
+        expires_in = token_data.get("expires_in")
+        refresh_expires_in = token_data.get("refresh_token_expires_in")
+
+        expires_at = now + timedelta(seconds=int(expires_in)) if expires_in else None
+        refresh_token_expires_at = now + timedelta(seconds=int(refresh_expires_in)) if refresh_expires_in else None
+
+        if store:
+            store.access_token = token_data["access_token"]
+            store.refresh_token = token_data.get("refresh_token")
+            store.expires_at = expires_at
+            store.refresh_token_expires_at = refresh_token_expires_at
+            store.scopes = token_data.get("scope") or settings.SHOPIFY_SCOPES
+        else:
+            store = ShopifyStore(
+                shop_domain=shop_domain, access_token=token_data["access_token"],
+                refresh_token=token_data.get("refresh_token"), expires_at=expires_at,
+                refresh_token_expires_at=refresh_token_expires_at, scopes=token_data.get("scope") or settings.SHOPIFY_SCOPES,
+            )
+            db.add(store)
+
+        db.commit()
+        db.refresh(store)
+        return True
+
+    refreshed_ok = await refresh_store_token()
+
+    if not refreshed_ok:
+        if not store:
+            raise HTTPException(status_code=404, detail="Store not connected")
+        if not store.access_token:
+            raise HTTPException(status_code=401, detail="Token exchange failed and no existing token.")
+
+    # ✅ Product check aur Background Task
     asin_quick = extract_asin_from_url(amazon_url)
     if asin_quick and db.query(Product).filter(Product.asin == asin_quick).first():
         raise HTTPException(status_code=409, detail=f"Product already exists (ASIN: {asin_quick})")
@@ -54,4 +96,9 @@ async def add_product_from_shopify_app(
         markup=markup, markup_type=markup_type, extra_percent=extra_percent,
         collection_ids=collection_ids or [],
     )
-    return {"success": True, "message": "Product fetch started (Apify)."}
+    return {
+        "success": True, 
+        "message": "Product fetch started (Apify).",
+        "asin": asin_quick,
+        "shop_domain": shop_domain
+    }
