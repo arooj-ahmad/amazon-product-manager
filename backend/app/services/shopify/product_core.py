@@ -173,24 +173,20 @@ async def _find_category_from_breadcrumbs(
     product_title: str,
     tags: list = None,
 ) -> Optional[str]:
-    """Breadcrumbs se exact category match karein (Strict)."""
+    """Shopify API se best match category dhoondein based on breadcrumbs."""
     
-    # 1. Pehle Amazon ki breadcrumbs se match karein
+    # 1. Pehle Amazon ki breadcrumbs se sabse specific category try karein
     if categories:
-        # Sab se specific (aakhri) breadcrumb term uthayen
-        specific_category = str(categories[-1]).strip()
-        
-        logger.info(f"   🔍 Searching Shopify for exact category: '{specific_category}'")
-        
+        # Hum Shopify API ko bolenge ke wo breadcrumbs ki list mein se best match dhoonde
         cat_id = await find_best_category(
             shop=shop,
             access_token=access_token,
-            product_title=specific_category,
-            categories=[specific_category], # Sirf yeh ek term bhejein taake sahi match mile
+            product_title=product_title, # Title as fallback
+            categories=categories,       # Poori list de rahe hain
         )
         
         if cat_id:
-            logger.info(f"   ✅ Category matched via breadcrumb: '{specific_category}' -> {cat_id}")
+            logger.info(f"   ✅ Category matched via breadcrumbs list: {cat_id}")
             return cat_id
 
     # 2. Agar breadcrumbs se na mile, to tags try karein
@@ -203,23 +199,11 @@ async def _find_category_from_breadcrumbs(
                 shop=shop,
                 access_token=access_token,
                 product_title=tag,
-                categories=[tag],
+                categories=[],
             )
             if cat_id:
                 logger.info(f"   ✅ Category matched via tag: '{tag}' -> {cat_id}")
                 return cat_id
-
-    # 3. Agar kuch bhi na mile, to title try karein
-    if product_title:
-        cat_id = await find_best_category(
-            shop=shop,
-            access_token=access_token,
-            product_title=product_title,
-            categories=[],
-        )
-        if cat_id:
-            logger.info(f"   ✅ Category matched via title: '{product_title}' -> {cat_id}")
-            return cat_id
 
     logger.warning(f"⚠️ No category found for: {categories}")
     return None
