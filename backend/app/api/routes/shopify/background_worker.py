@@ -87,13 +87,8 @@ async def _background_fetch_and_push(
             if not v_data or not v_data.get("asin"):
                 continue
 
-            # Attributes uthayein (Main product ke liye variant_attributes)
+            # ✅ Attributes uthayein (Agar nahi mile to khali chhod dein)
             variant_attrs = v_data.get("variant_attributes") or []
-            
-            # Agar nahi mile, to skip (No fallback)
-            if not variant_attrs:
-                logger.warning(f"⚠️ ASIN={v_asin} attributes nahi mile. Skip.")
-                continue
 
             final_price = calculate_final_price(
                 amazon_price=v_data.get("amazon_price"), 
