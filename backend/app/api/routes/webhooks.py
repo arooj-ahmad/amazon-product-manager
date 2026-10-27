@@ -4,6 +4,7 @@
 # + ✅ NAYA: products/delete webhook handler
 # + ✅ FIXED: ASIN/SKU match (primary) + GID + numeric + LIKE (fallback)
 # + ✅ FIXED: Multiple secrets tried for HMAC (webhook + api secret)
+# + ✅ FIXED: ClientDisconnect gracefully handled
 # ============================================
 
 import base64
@@ -13,6 +14,7 @@ import json
 import logging
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Request
+from starlette.requests import ClientDisconnect  # ✅ ADDED
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
@@ -31,12 +33,9 @@ router = APIRouter(prefix="/api/webhooks", tags=["Webhooks"])
 def verify_webhook_hmac(body: bytes, hmac_header: str) -> bool:
     """
     Shopify webhook signature verify karein.
-
     Multiple secrets try karta hai:
-    1. SHOPIFY_WEBHOOK_SECRET (Shopify Admin → Settings → Webhooks)
-    2. SHOPIFY_API_SECRET (OAuth app secret)
-
-    Jo bhi match ho jaye → pass.
+    1. SHOPIFY_WEBHOOK_SECRET
+    2. SHOPIFY_API_SECRET
     """
     if not hmac_header:
         return False
@@ -83,7 +82,16 @@ async def shopify_webhook(
     db: Session = Depends(get_db),
 ):
     """Shopify webhook receiver — subscriptions + app events + product events"""
-    body = await request.body()
+    
+    # ✅ FIX: ClientDisconnect handle karein
+    try:
+        body = await request.body()
+    except ClientDisconnect:
+        logger.warning(
+            f"⚠️ Shopify webhook client disconnected before body received "
+            f"(topic={x_shopify_topic}, shop={x_shopify_shop_domain})"
+        )
+        return {"ok": True, "ignored": True, "reason": "client_disconnect"}
 
     if not verify_webhook_hmac(body, x_shopify_hmac_sha256):
         logger.warning(f"❌ Invalid webhook HMAC from {x_shopify_shop_domain}")
@@ -216,12 +224,7 @@ async def _handle_app_uninstalled(shop_domain, db):
 async def _handle_product_delete(shop_domain, payload, db):
     """
     Shopify se product delete hone par DB se bhi delete karo.
-
-    Priority order:
-    1. ✅ ASIN/SKU match — sabse reliable
-    2. GID format match — gid://shopify/Product/{id}
-    3. Numeric format match
-    4. LIKE query fallback
+    Priority: ASIN/SKU → GID → numeric → LIKE
     """
     shopify_id = payload.get("id")
     product_title = payload.get("title", "Unknown")
@@ -230,7 +233,6 @@ async def _handle_product_delete(shop_domain, payload, db):
         logger.warning("⚠️ Product delete webhook: no id")
         return
 
-    # ✅ Webhook payload se SKU (ASIN) nikaalo
     variants = payload.get("variants") or []
     sku_from_webhook = None
     if isinstance(variants, list):
@@ -249,7 +251,7 @@ async def _handle_product_delete(shop_domain, payload, db):
 
     product = None
 
-    # ── Strategy 1: ASIN/SKU match ──
+    # Strategy 1: ASIN/SKU match
     if sku_from_webhook:
         product = (
             db.query(Product)
@@ -259,7 +261,7 @@ async def _handle_product_delete(shop_domain, payload, db):
         if product:
             logger.info(f"   ✅ Matched via ASIN/SKU: {sku_from_webhook}")
 
-    # ── Strategy 2: GID format ──
+    # Strategy 2: GID format
     if not product:
         product_gid = f"gid://shopify/Product/{shopify_id}"
         product = (
@@ -270,7 +272,7 @@ async def _handle_product_delete(shop_domain, payload, db):
         if product:
             logger.info(f"   ✅ Matched via GID: {product_gid}")
 
-    # ── Strategy 3: Numeric format ──
+    # Strategy 3: Numeric format
     if not product:
         product = (
             db.query(Product)
@@ -280,7 +282,7 @@ async def _handle_product_delete(shop_domain, payload, db):
         if product:
             logger.info(f"   ✅ Matched via numeric: {shopify_id}")
 
-    # ── Strategy 4: LIKE query ──
+    # Strategy 4: LIKE query
     if not product:
         product = (
             db.query(Product)
@@ -293,7 +295,7 @@ async def _handle_product_delete(shop_domain, payload, db):
                 f"→ {product.shopify_product_id}"
             )
 
-    # ── Delete if found ──
+    # Delete if found
     if product:
         asin = product.asin
         db.delete(product)
