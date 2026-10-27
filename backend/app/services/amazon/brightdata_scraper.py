@@ -4,7 +4,8 @@ import httpx
 from app.core.config import settings
 from .exceptions import BrightDataError
 from .helpers import extract_asin_from_url, validate_parent_asin, parse_price, parse_standard_fields
-from .availability import check_availability
+# ✅ FIX 1: Sahi function import kiya hai
+from .inventory_brightdata import check_availability_brightdata 
 
 logger = logging.getLogger(__name__)
 
@@ -22,13 +23,28 @@ async def fetch_product_from_brightdata(amazon_url: str) -> dict:
         raise BrightDataError(f"Bright Data API Error: {str(e)}")
 
     raw = data[0] if isinstance(data, list) and len(data) > 0 else data
+    if not isinstance(raw, dict):
+         raise BrightDataError("Invalid data format received")
+         
     if "error" in raw: raise BrightDataError(f"Bright Data error: {raw['error']}")
 
     asin = raw.get("asin") or extract_asin_from_url(amazon_url)
     if not asin: raise BrightDataError("ASIN nahi mila")
 
     parent_asin = validate_parent_asin(raw.get("parent_asin"), asin)
-    is_available, availability_text, _ = check_availability(raw)
+    
+    # ✅ FIX 2: Safety Fallback (Agar data missing ho toh 0 na kare, 100 rakhe)
+    has_price = bool(raw.get("final_price") or raw.get("price"))
+    has_availability = bool(raw.get("availability") or raw.get("availability_message") or raw.get("availability_text"))
+    
+    if not has_price and not has_availability:
+        logger.warning(f"⚠️ Bright Data data incomplete for {asin}. Fallback to In Stock (100).")
+        is_available = True
+        availability_text = "In Stock (Fallback)"
+    else:
+        # Normal Check
+        is_available, availability_text, _ = check_availability_brightdata(raw)
+        
     stock_quantity = 100 if is_available else 0
 
     variations = [{"name": str(v["variation_name"]).strip(), "value": str(v["variation_value"]).strip()} for v in (raw.get("variations") or []) if isinstance(v, dict) and v.get("variation_name") and v.get("variation_value")]
