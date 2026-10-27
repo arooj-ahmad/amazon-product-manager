@@ -15,6 +15,7 @@ from .helpers import get_store_for_product
 
 logger = logging.getLogger(__name__)
 
+
 async def find_shopify_product_by_title(shop: str, access_token: str, title: str) -> str | None:
     if not title or len(title.strip()) < 3:
         return None
@@ -48,6 +49,7 @@ async def find_shopify_product_by_title(shop: str, access_token: str, title: str
     except Exception as e:
         logger.error(f"❌ Title search error: {e}")
         return None
+
 
 async def sync_shopify_inventory(product: Product, is_available: bool, stock_quantity: int, db: Session):
     store = get_store_for_product(db, product)
@@ -110,11 +112,29 @@ async def sync_shopify_inventory(product: Product, is_available: bool, stock_qua
         """
 
         result = await shopify_graphql(shop, access_token, query, {"id": shopify_id})
-        if not result or "errors" in result:
+        
+        # ✅ SAFE CHECKS (Crash se bachne ke liye)
+        if not result:
+            logger.warning(f"⚠️ Shopify API ne khali response diya (None) ASIN={product.asin}")
             return
 
-        edges = result.get("data", {}).get("product", {}).get("variants", {}).get("edges", [])
-        
+        if "errors" in result:
+            logger.error(f"❌ Inventory query error for ASIN={product.asin}: {result['errors']}")
+            return
+
+        data = result.get("data")
+        if not data:
+            logger.warning(f"⚠️ Shopify response mein 'data' nahi mila ASIN={product.asin}")
+            return
+
+        product_data = data.get("product")
+        if not product_data:
+            logger.warning(f"⚠️ Shopify response mein 'product' nahi mila ASIN={product.asin}")
+            return
+
+        variants_data = product_data.get("variants") or {}
+        edges = variants_data.get("edges") or []
+
         for edge in edges:
             inventory_item_id = edge.get("node", {}).get("inventoryItem", {}).get("id")
             if not inventory_item_id:
