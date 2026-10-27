@@ -101,7 +101,7 @@ export default function PriceUpdater() {
           <button
             type="button"
             onClick={onPriceClick}
-            disabled={priceLoading || inventoryLoading}
+            disabled={priceLoading}  // ✅ Sirf priceLoading par disable hoga
             style={{
               flex: 1,
               minWidth: '200px',
@@ -110,14 +110,14 @@ export default function PriceUpdater() {
               color: '#ffffff',
               border: 'none',
               borderRadius: '8px',
-              cursor: priceLoading || inventoryLoading ? 'not-allowed' : 'pointer',
+              cursor: priceLoading ? 'not-allowed' : 'pointer',
               fontWeight: 'bold',
               fontSize: '15px',
               display: 'flex',
               alignItems: 'center',
               justifyContent: 'center',
               gap: '8px',
-              opacity: priceLoading || inventoryLoading ? 0.7 : 1,
+              opacity: priceLoading ? 0.7 : 1,
             }}
           >
             {priceLoading ? '⏳ Processing Price...' : '💰 Run Price Update'}
@@ -127,7 +127,7 @@ export default function PriceUpdater() {
           <button
             type="button"
             onClick={onInventoryClick}
-            disabled={priceLoading || inventoryLoading}
+            disabled={inventoryLoading} // ✅ Sirf inventoryLoading par disable hoga
             style={{
               flex: 1,
               minWidth: '200px',
@@ -136,14 +136,14 @@ export default function PriceUpdater() {
               color: '#ffffff',
               border: 'none',
               borderRadius: '8px',
-              cursor: priceLoading || inventoryLoading ? 'not-allowed' : 'pointer',
+              cursor: inventoryLoading ? 'not-allowed' : 'pointer',
               fontWeight: 'bold',
               fontSize: '15px',
               display: 'flex',
               alignItems: 'center',
               justifyContent: 'center',
               gap: '8px',
-              opacity: priceLoading || inventoryLoading ? 0.7 : 1,
+              opacity: inventoryLoading ? 0.7 : 1,
             }}
           >
             {inventoryLoading ? '⏳ Processing Inventory...' : '📦 Run Inventory Update'}
