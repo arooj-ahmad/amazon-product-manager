@@ -6,7 +6,7 @@ import logging
 from datetime import datetime, timezone
 from sqlalchemy.orm import Session
 
-from app.database import SessionLocal
+from app.core.database import SessionLocal
 from app.models import Product
 from app.services.amazon import (
     BrightDataError,

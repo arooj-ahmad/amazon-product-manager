@@ -6,7 +6,7 @@
 import httpx
 import logging
 
-from app.config import settings
+from app.core.config import settings
 from .exceptions import BrightDataError
 from .helpers import extract_asin_from_url, parse_price
 from .inventory_brightdata import check_availability_brightdata  # ✅ Changed import

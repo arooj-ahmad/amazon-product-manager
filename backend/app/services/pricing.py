@@ -7,7 +7,7 @@ Pricing Service - Business Logic (SQLAlchemy version)
 from decimal import Decimal, ROUND_HALF_UP
 from typing import Dict, Optional, List
 from sqlalchemy import text
-from app.database import SessionLocal
+from app.core.database import SessionLocal
 import logging
 
 logger = logging.getLogger(__name__)

@@ -10,7 +10,7 @@ from fastapi import APIRouter, Body, Depends, Header, HTTPException, Query, Requ
 from fastapi.responses import HTMLResponse
 from sqlalchemy.orm import Session
 
-from app.database import get_db
+from app.core.database import get_db
 from app.models import ShopifyStore
 from app.models.shopify_subscription import ShopifySubscription
 from app.services.billing import (
@@ -22,7 +22,7 @@ from app.services.shopify import (
     exchange_id_token_for_offline_token,
     verify_id_token,
 )
-from app.config import settings
+from app.core.config import settings
 
 logger = logging.getLogger(__name__)
 

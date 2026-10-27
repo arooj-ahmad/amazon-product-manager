@@ -6,9 +6,9 @@ from fastapi.responses import HTMLResponse, RedirectResponse
 from sqlalchemy.orm import Session
 import logging
 
-from app.database import get_db
+from app.core.database import get_db
 from app.models import ShopifyStore
-from app.config import settings
+from app.core.config import settings
 from app.services.shopify import (
     build_auth_url, 
     exchange_code_for_token, 

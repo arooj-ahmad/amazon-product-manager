@@ -4,9 +4,9 @@ import logging
 from datetime import datetime, timedelta, timezone
 from fastapi import APIRouter, BackgroundTasks, Body, Depends, Header, HTTPException
 from sqlalchemy.orm import Session
-from app.database import get_db
+from app.core.database import get_db
 from app.models import Product, ShopifyStore
-from app.config import settings
+from app.core.config import settings
 from app.services.amazon import extract_asin_from_url
 from app.services.shopify import exchange_id_token_for_offline_token, verify_id_token
 from .helpers import _normalize_amazon_url, _resolve_markup

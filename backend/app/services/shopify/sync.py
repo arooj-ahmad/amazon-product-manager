@@ -10,7 +10,7 @@ from typing import Optional
 
 import httpx
 
-from app.config import settings
+from app.core.config import settings
 from app.services.shopify.helpers import _safe_api_version
 from app.services.shopify.product_extras import update_shopify_product_tags_and_type
 

@@ -9,7 +9,7 @@ from typing import Optional
 
 import httpx
 
-from app.config import settings
+from app.core.config import settings
 from app.services.shopify.auth import refresh_shopify_token
 
 logger = logging.getLogger(__name__)

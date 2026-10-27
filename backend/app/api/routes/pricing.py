@@ -14,7 +14,7 @@ import logging
 from fastapi import APIRouter, Body, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
-from app.database import get_db
+from app.core.database import get_db
 from app.models import Product, ShopifyStore
 from app.schemas.pricing import SinglePricingUpdate, BulkPricingUpdate
 from app.services.pricing import pricing_service

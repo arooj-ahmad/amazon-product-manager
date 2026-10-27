@@ -5,7 +5,7 @@
 import asyncio
 import logging
 from datetime import datetime, timezone
-from app.database import SessionLocal
+from app.core.database import SessionLocal
 from app.models import Product, ShopifyStore
 from app.services.amazon import ApifyError, calculate_final_price, fetch_product_from_apify, parse_price
 from app.services.shopify import (

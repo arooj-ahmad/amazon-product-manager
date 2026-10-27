@@ -17,8 +17,8 @@ from typing import Any, Dict
 import logging
 from datetime import datetime, timezone
 
-from app.services.brightdata import fetch_product_from_brightdata
-from app.database import SessionLocal
+from app.services.amazon.brightdata_scraper import fetch_product_from_brightdata
+from app.core.database import SessionLocal
 
 logger = logging.getLogger(__name__)
 
@@ -116,7 +116,7 @@ async def process_price_update(ctx: Dict[str, Any], asin: str):
     ✅ NAYA: Tags + Categories bhi push hote hain
     """
     from app.models import Product, ShopifyStore
-    from app.services.brightdata import (
+    from app.services.amazon.brightdata_scraper import (
         calculate_final_price,
         BrightDataError,
     )

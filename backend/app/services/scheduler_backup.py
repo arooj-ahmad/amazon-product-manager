@@ -15,7 +15,7 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.interval import IntervalTrigger
 from sqlalchemy.orm import Session
 
-from app.database import SessionLocal
+from app.core.database import SessionLocal
 from app.models import Product, ShopifyStore
 from app.services.brightdata import (
     BrightDataError,

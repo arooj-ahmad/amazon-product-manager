@@ -1,6 +1,6 @@
 # app/workers/settings.py
 from arq.connections import RedisSettings
-from app.config import settings
+from app.core.config import settings
 from app.workers.tasks import process_batch_urls, process_price_update
 
 

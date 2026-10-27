@@ -11,7 +11,7 @@ from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
 from app.api.routes.auth import get_current_admin
-from app.database import get_db
+from app.core.database import get_db
 from app.models import Admin, Product, ShopifyStore
 from app.schemas import (
     MarkupUpdate,

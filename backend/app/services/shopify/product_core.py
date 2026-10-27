@@ -8,7 +8,7 @@ from typing import Optional
 
 from sqlalchemy.orm import Session
 
-from app.database import SessionLocal
+from app.core.database import SessionLocal
 from app.models import ShopifyStore
 from app.services.shopify.helpers import (
     shopify_graphql,

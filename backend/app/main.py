@@ -21,7 +21,7 @@ from app.api.routes import (
     webhooks,
 )
 from app.api.routes.shopify import shopify_router  # ✅ Naya Shopify Router
-from app.config import settings
+from app.core.config import settings
 from app.services.scheduler import start_scheduler, stop_scheduler
 
 # ============================================

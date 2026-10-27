@@ -27,7 +27,7 @@ from sqlalchemy import (
 )
 from sqlalchemy.dialects.postgresql import JSONB
 
-from app.database import Base
+from app.core.database import Base
 
 
 class Product(Base):
