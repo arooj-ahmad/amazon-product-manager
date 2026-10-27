@@ -1,8 +1,9 @@
 # ============================================
-# app/services/shopify_sync.py
+# app/services/shopify/sync.py (ya shopify_sync.py)
 # Price sync (Admin API) + Storefront availability check
 # + ✅ FIXED: Circular import — direct module se import
 # + ✅ NAYA v2: compare_at_price support
+# + ✅ NAYA v3: SKU (ASIN) ke zariye specific variant update
 # ============================================
 
 import logging
@@ -141,56 +142,52 @@ async def check_product_availability(
 
 # ============================================
 # SYNC SHOPIFY PRICE UPDATE
-# ✅ NAYA v2: compare_at_price support
+# ✅ NAYA v3: sku (ASIN) support
 # ============================================
 async def sync_update_shopify_price(
     shop_domain: str,
     access_token: str,
     shopify_product_id: str,
     new_price: float,
+    sku: Optional[str] = None,  # ✅ NAYA: SKU (ASIN) parameter
     refresh_token: Optional[str] = None,
     tags: Optional[list] = None,
     product_type: Optional[str] = None,
-    compare_at_price: Optional[float] = None,   # ✅ NAYA
+    compare_at_price: Optional[float] = None,
 ) -> bool:
     """
     Update Shopify product price + compare_at_price.
-
-    Args:
-        compare_at_price: Agar diya toh variant pe set karega.
-                          Agar None ya <= new_price hai toh skip.
+    Agar sku (ASIN) diya gaya hai, to sirf usi specific variant ka price update hoga.
+    Agar sku nahi diya, to saare variants ka price update hoga (backward compatibility).
     """
     if not all([shop_domain, access_token, shopify_product_id]):
         logger.warning("Shopify sync skipped: missing config")
         return False
 
     if not str(shopify_product_id).startswith("gid://"):
-        product_gid = f"gid://Shopify/Product/{shopify_product_id}"
+        product_gid = f"gid://shopify/Product/{shopify_product_id}"
     else:
         product_gid = shopify_product_id
 
     api_version = _safe_api_version()
-
-    api_url = (
-        f"https://{shop_domain}/admin/api/"
-        f"{api_version}/graphql.json"
-    )
-
+    api_url = f"https://{shop_domain}/admin/api/{api_version}/graphql.json"
     headers = {
         "X-Shopify-Access-Token": access_token,
         "Content-Type": "application/json",
     }
 
+    # ✅ Variants fetch karte waqt SKU bhi fetch karo
     get_variants_query = """
     query getProductVariants($id: ID!) {
       product(id: $id) {
         id
         title
-        variants(first: 50) {
+        variants(first: 100) {
           edges {
             node {
               id
               title
+              sku
               price
               compareAtPrice
             }
@@ -217,23 +214,21 @@ async def sync_update_shopify_price(
                         f"{shop_domain} and retrying..."
                     )
                     from app.services.shopify.auth import refresh_shopify_token
-                    new_data = await refresh_shopify_token(
-                        shop_domain, refresh_token
-                    )
+                    new_data = await refresh_shopify_token(shop_domain, refresh_token)
                     if new_data and new_data.get("access_token"):
                         return await sync_update_shopify_price(
                             shop_domain=shop_domain,
                             access_token=new_data["access_token"],
                             shopify_product_id=shopify_product_id,
                             new_price=new_price,
+                            sku=sku,
                             refresh_token=new_data.get("refresh_token"),
                             tags=tags,
                             product_type=product_type,
-                            compare_at_price=compare_at_price,   # ✅ NAYA
+                            compare_at_price=compare_at_price,
                         )
                 logger.error(
-                    f"❌ {res.status_code} Unauthorized for {shop_domain} "
-                    f"(no valid refresh_token). "
+                    f"❌ {res.status_code} Unauthorized for {shop_domain}. "
                     f"Response: {res.text[:300]}"
                 )
                 return False
@@ -261,33 +256,42 @@ async def sync_update_shopify_price(
             try:
                 cap = float(compare_at_price)
                 price_f = float(new_price)
-
                 if cap > price_f:
                     compare_at_str = f"{cap:.2f}"
-                    logger.info(
-                        f"   💰 Compare-at: ${compare_at_str} "
-                        f"(price: ${price_f})"
-                    )
+                    logger.info(f"   💰 Compare-at: ${compare_at_str} (price: ${price_f})")
                 else:
-                    logger.warning(
-                        f"⚠️ compare_at (${cap}) <= price (${price_f}) "
-                        f"— skipping compare_at"
-                    )
+                    logger.warning(f"⚠️ compare_at (${cap}) <= price (${price_f}) — skipping compare_at")
             except (ValueError, TypeError) as e:
                 logger.warning(f"⚠️ Invalid compare_at_price: {e}")
 
-        # ✅ Har variant ke liye input banao
+        # ✅ Filter variants based on SKU
+        target_variants = []
+        if sku:
+            # Sirf us variant ko update karo jiska SKU match kare
+            for edge in variant_edges:
+                node = edge["node"]
+                if str(node.get("sku")) == str(sku):
+                    target_variants.append(node)
+                    break
+            
+            if not target_variants:
+                logger.warning(f"⚠️ No variant found for SKU '{sku}' in product {product_gid}. No update performed.")
+                return False
+            logger.info(f"   🎯 Targeting variant with SKU: {sku}")
+        else:
+            # Agar sku nahi diya, to saare variants update karo (backward compatibility)
+            target_variants = [edge["node"] for edge in variant_edges]
+            logger.info(f"   🎯 Targeting all {len(target_variants)} variants (no SKU provided)")
+
+        # ✅ Sirf target variants ke liye input banao
         variants_to_update = []
-        for edge in variant_edges:
+        for node in target_variants:
             variant_input = {
-                "id": edge["node"]["id"],
+                "id": node["id"],
                 "price": str(new_price),
             }
-
-            # ✅ Agar compare_at set karna hai toh add karo
             if compare_at_str:
                 variant_input["compareAtPrice"] = compare_at_str
-
             variants_to_update.append(variant_input)
 
         mutation = """
@@ -303,6 +307,7 @@ async def sync_update_shopify_price(
               id
               price
               compareAtPrice
+              sku
             }
             userErrors {
               field
@@ -347,13 +352,13 @@ async def sync_update_shopify_price(
             .get("productVariants", [])
         )
 
-        # ✅ Log price + compare_at
         if updated:
             first = updated[0]
             logger.info(
                 f"✅ Shopify price updated: {len(updated)} variant(s) → "
                 f"${first.get('price')}, "
-                f"compare_at=${first.get('compareAtPrice', 'N/A')}"
+                f"compare_at=${first.get('compareAtPrice', 'N/A')}, "
+                f"SKU: {first.get('sku', 'N/A')}"
             )
 
         if tags is not None:
