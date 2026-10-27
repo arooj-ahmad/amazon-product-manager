@@ -15,7 +15,13 @@ from .inventory_sync import find_shopify_product_by_title
 
 logger = logging.getLogger(__name__)
 
-async def sync_shopify_price(product: Product, new_price: float, db: Session, compare_at_price: float = None):
+async def sync_shopify_price(
+    product: Product, 
+    new_price: float, 
+    db: Session, 
+    compare_at_price: float = None,
+    sku: str = None  # ✅ NAYA: SKU (ASIN) pass karne ke liye
+):
     store = get_store_for_product(db, product)
     if not store or not store.access_token:
         return False
@@ -39,6 +45,9 @@ async def sync_shopify_price(product: Product, new_price: float, db: Session, co
     if not shopify_id:
         return False
 
+    # ✅ Agar sku pass nahi hua, to fallback product.asin
+    target_sku = sku or product.asin
+
     try:
         success = await sync_update_shopify_price(
             shop_domain=shop,
@@ -47,6 +56,7 @@ async def sync_shopify_price(product: Product, new_price: float, db: Session, co
             new_price=new_price,
             refresh_token=refresh_token,
             compare_at_price=compare_at_price,
+            sku=target_sku,  # ✅ NAYA: SKU yahan pass kiya
         )
 
         # Metafields update

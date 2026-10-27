@@ -109,11 +109,13 @@ async def update_prices_only():
                 price_changed = (new_amazon_price != old_amazon or new_final_price != old_price)
 
                 if price_changed:
+                    # ✅ FIXED: sku=product.asin pass kiya taake sirf specific variant update ho
                     await sync_shopify_price(
                         product=product,
                         new_price=new_final_price,
                         db=db,
                         compare_at_price=compare_at_price,
+                        sku=product.asin, 
                     )
                     logger.info(f"[PRICE CHANGED] ASIN={product.asin} amazon: ${old_amazon} → ${new_amazon_price}")
                     updated_count += 1
