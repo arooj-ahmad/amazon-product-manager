@@ -10,7 +10,7 @@ from app.core.config import settings
 from app.services.amazon import extract_asin_from_url
 from app.services.shopify import exchange_id_token_for_offline_token, verify_id_token
 from .helpers import _normalize_amazon_url, _resolve_markup
-from .background_worker import _background_fetch_and_push
+from .worker import _background_fetch_and_push
 
 logger = logging.getLogger(__name__)
 router = APIRouter(tags=["Shopify Products"])

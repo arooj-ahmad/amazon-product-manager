@@ -21,7 +21,7 @@ from datetime import datetime, timezone
 from app.core.database import SessionLocal
 from app.models import Product, ShopifyStore
 from app.services.shopify import shopify_graphql
-from app.services.brightdata import calculate_final_price
+from app.services.amazon.pricing import calculate_final_price
 
 logging.basicConfig(
     level=logging.INFO,

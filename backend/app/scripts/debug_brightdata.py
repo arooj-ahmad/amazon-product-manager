@@ -8,7 +8,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import asyncio
 import logging
-from app.services.brightdata import fetch_product_from_brightdata
+from app.services.amazon.brightdata_scraper import fetch_product_from_brightdata
 
 # ✅ Logging ON karo
 logging.basicConfig(

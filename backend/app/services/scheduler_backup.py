@@ -17,7 +17,7 @@ from sqlalchemy.orm import Session
 
 from app.core.database import SessionLocal
 from app.models import Product, ShopifyStore
-from app.services.brightdata import (
+from app.services.amazon import (
     BrightDataError,
     calculate_final_price,
     fetch_product_from_brightdata,

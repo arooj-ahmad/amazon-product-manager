@@ -23,7 +23,7 @@ from app.schemas import (
     VariantGroup,
     VariantGroupListResponse,
 )
-from app.services.brightdata import (
+from app.services.amazon import (
     BrightDataError,
     calculate_final_price,
     fetch_product_from_brightdata,
