@@ -7,7 +7,7 @@ import asyncio
 import logging
 import sys
 
-from app.database import SessionLocal
+from app.core.database import SessionLocal
 from app.models import Product
 from app.workers.tasks import process_price_update
 

@@ -18,7 +18,7 @@ import asyncio
 import logging
 from datetime import datetime, timezone
 
-from app.database import SessionLocal
+from app.core.database import SessionLocal
 from app.models import Product, ShopifyStore
 from app.services.shopify import shopify_graphql
 from app.services.brightdata import calculate_final_price

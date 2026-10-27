@@ -5,10 +5,10 @@ import os
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from app.database import SessionLocal
+from app.core.database import SessionLocal
 from app.models import Product, ShopifyStore
-from app.services.shopify_product import update_variant_with_tracked
-from app.services.shopify_helpers import shopify_graphql
+from app.services.shopify import update_variant_with_tracked
+from app.services.shopify.helpers import shopify_graphql
 
 
 async def backfill_skus():

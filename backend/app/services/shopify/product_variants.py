@@ -10,8 +10,8 @@ import logging
 import re
 import asyncio  # ✅ Image process ka wait karne ke liye
 
-from app.services.shopify_helpers import shopify_graphql
-from app.services.shopify_inventory import set_inventory_quantity
+from app.services.shopify.helpers import shopify_graphql
+from app.services.shopify.inventory import set_inventory_quantity
 
 logger = logging.getLogger(__name__)
 

@@ -10,13 +10,13 @@ from sqlalchemy.orm import Session
 
 from app.database import SessionLocal
 from app.models import ShopifyStore
-from app.services.shopify_helpers import (
+from app.services.shopify.helpers import (
     shopify_graphql,
     _build_shopify_tags,
     _get_product_type,
 )
-from app.services.shopify_taxonomy import find_best_category
-from app.services.shopify_inventory import set_inventory_quantity
+from app.services.shopify.taxonomy import find_best_category
+from app.services.shopify.inventory import set_inventory_quantity
 from app.services.shopify.metafields import (
     _build_all_metafields,
     set_product_metafields,
@@ -645,7 +645,7 @@ async def delete_shopify_product(
     else:
         product_gid = shopify_product_id
 
-    from app.services.shopify_helpers import _safe_api_version
+    from app.services.shopify.helpers import _safe_api_version
     import httpx
 
     api_version = _safe_api_version()
@@ -663,7 +663,7 @@ async def delete_shopify_product(
             res = await client.post(api_url, headers=headers, json={"query": mutation, "variables": {"input": {"id": product_gid}}})
 
             if res.status_code in (401, 403) and refresh_token:
-                from app.services.shopify_auth import refresh_shopify_token
+                from app.services.shopify.auth import refresh_shopify_token
                 new_data = await refresh_shopify_token(shop_domain, refresh_token)
                 if new_data and new_data.get("access_token"):
                     return await delete_shopify_product(shop_domain, new_data["access_token"], shopify_product_id, new_data.get("refresh_token"))

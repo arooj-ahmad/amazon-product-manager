@@ -11,7 +11,7 @@ import os
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from sqlalchemy import text, inspect
-from app.database import engine
+from app.core.database import engine
 
 
 def migrate():

@@ -3,7 +3,7 @@
 
 import logging
 
-from app.services.shopify_helpers import shopify_graphql
+from app.services.shopify.helpers import shopify_graphql
 from app.services.shopify._helpers import _slugify_key
 
 logger = logging.getLogger(__name__)

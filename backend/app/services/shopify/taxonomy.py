@@ -9,7 +9,7 @@
 import logging
 from typing import Optional
 
-from app.services.shopify_helpers import shopify_graphql
+from app.services.shopify.helpers import shopify_graphql
 
 logger = logging.getLogger(__name__)
 

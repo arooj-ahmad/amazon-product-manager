@@ -9,7 +9,7 @@ from datetime import datetime, timedelta, timezone
 
 from app.services.amazon import extract_asin_from_url
 from app.services.shopify import refresh_shopify_token
-from app.services.shopify_taxonomy import find_best_category
+from app.services.shopify.taxonomy import find_best_category
 
 logger = logging.getLogger(__name__)
 

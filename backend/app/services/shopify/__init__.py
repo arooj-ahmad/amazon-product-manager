@@ -4,7 +4,7 @@
 # ============================================
 
 # ✅ Helpers (direct module se)
-from app.services.shopify_helpers import (
+from app.services.shopify.helpers import (
     shopify_graphql,
     _safe_api_version,
     _build_shopify_tags,
@@ -12,7 +12,7 @@ from app.services.shopify_helpers import (
 )
 
 # ✅ Auth (direct module se)
-from app.services.shopify_auth import (
+from app.services.shopify.auth import (
     build_auth_url,
     verify_hmac,
     verify_id_token,
@@ -22,13 +22,13 @@ from app.services.shopify_auth import (
 )
 
 # ✅ Taxonomy (direct module se)
-from app.services.shopify_taxonomy import (
+from app.services.shopify.taxonomy import (
     search_shopify_taxonomy,
     find_best_category,
 )
 
 # ✅ Inventory (direct module se)
-from app.services.shopify_inventory import (
+from app.services.shopify.inventory import (
     get_primary_location,
     set_inventory_quantity,
 )
@@ -71,7 +71,7 @@ from app.services.shopify.product_core import (
 )
 
 # ✅ Sync (direct module se)
-from app.services.shopify_sync import (
+from app.services.shopify.sync import (
     check_product_availability,
     sync_update_shopify_price,
 )

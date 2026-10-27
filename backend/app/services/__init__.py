@@ -2,7 +2,7 @@
 # app/services/shopify/__init__.py
 # ============================================
 
-from app.services.shopify_auth import (
+from app.services.shopify.auth import (
     build_auth_url,
     exchange_code_for_token,
     exchange_id_token_for_offline_token,
@@ -11,13 +11,13 @@ from app.services.shopify_auth import (
     verify_id_token,
 )
 
-from app.services.shopify_helpers import (
+from app.services.shopify.helpers import (
     shopify_graphql,
     _build_shopify_tags,
     _get_product_type,
 )
 
-from app.services.shopify_product import (
+from app.services.shopify import (
     create_shopify_product,
     create_shopify_product_with_variants,
     add_variant_to_existing_product,
@@ -33,9 +33,9 @@ from app.services.shopify_product import (
     ensure_metafield_definitions,
 )
 
-from app.services.shopify_taxonomy import find_best_category
+from app.services.shopify.taxonomy import find_best_category
 
-from app.services.shopify_inventory import (
+from app.services.shopify.inventory import (
     get_primary_location,
     set_inventory_quantity,
 )

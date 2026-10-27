@@ -16,3 +16,7 @@ PyJWT==2.8.0
 arq==0.26.3
 redis==5.2.0
 apify-client
+pytest
+pytest-bdd
+pytest-asyncio
+httpx

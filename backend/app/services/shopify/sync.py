@@ -11,7 +11,7 @@ from typing import Optional
 import httpx
 
 from app.config import settings
-from app.services.shopify_helpers import _safe_api_version
+from app.services.shopify.helpers import _safe_api_version
 from app.services.shopify.product_extras import update_shopify_product_tags_and_type
 
 logger = logging.getLogger(__name__)
@@ -216,7 +216,7 @@ async def sync_update_shopify_price(
                         f"🔄 {res.status_code} — refreshing token for "
                         f"{shop_domain} and retrying..."
                     )
-                    from app.services.shopify_auth import refresh_shopify_token
+                    from app.services.shopify.auth import refresh_shopify_token
                     new_data = await refresh_shopify_token(
                         shop_domain, refresh_token
                     )

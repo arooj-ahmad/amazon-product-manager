@@ -1,10 +1,5 @@
-# run_price_update.py
+# run_worker.py
 import sys
-import os
-
-# ✅ NAYA: PYTHONPATH fix — script ke folder ko add karo
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-
 import asyncio
 import logging
 
@@ -16,7 +11,8 @@ logging.basicConfig(
 if sys.platform == "win32":
     asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
 
-from app.services.scheduler import run_price_update_now
+from arq.worker import run_worker
+from app.workers.settings import WorkerSettings
 
 if __name__ == "__main__":
-    asyncio.run(run_price_update_now())
+    run_worker(WorkerSettings)

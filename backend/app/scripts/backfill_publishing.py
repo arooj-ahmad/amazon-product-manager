@@ -5,9 +5,9 @@ import os
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from app.database import SessionLocal
+from app.core.database import SessionLocal
 from app.models import Product, ShopifyStore
-from app.services.shopify_product import publish_product_to_channels
+from app.services.shopify import publish_product_to_channels
 
 
 async def backfill_publishing():

@@ -8,7 +8,7 @@ import sys
 
 from sqlalchemy import desc
 
-from app.database import SessionLocal
+from app.core.database import SessionLocal
 from app.models import ShopifyStore
 from app.services.shopify import shopify_graphql
 
