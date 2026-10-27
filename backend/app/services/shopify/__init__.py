@@ -63,7 +63,7 @@ from app.services.shopify.product_variants import (
 )
 
 # ✅ Product core (package ke andar ka module)
-from app.services.shopify.product_core import (
+from app.services.shopify.product import (
     create_shopify_product,
     create_shopify_product_with_variants,
     delete_shopify_product,

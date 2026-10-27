@@ -50,7 +50,7 @@ from app.services.shopify_sync import (  # noqa: F401
 #
 # Ya direct module se:
 #
-#   from app.services.shopify.product_core import create_shopify_product
+#   from app.services.shopify.product import create_shopify_product
 #   from app.services.shopify.product_extras import add_product_images
 #   from app.services.shopify.product_variants import update_variant_with_tracked
 #   from app.services.shopify.metafields import set_product_metafields
