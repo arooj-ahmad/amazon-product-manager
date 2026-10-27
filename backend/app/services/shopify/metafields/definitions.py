@@ -1,4 +1,4 @@
-﻿# app/services/shopify/metafields/definitions.py
+# app/services/shopify/metafields/definitions.py
 import logging
 from app.services.shopify.helpers import shopify_graphql
 

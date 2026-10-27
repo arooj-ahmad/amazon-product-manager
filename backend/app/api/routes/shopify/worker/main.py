@@ -1,4 +1,4 @@
-﻿# app/api/routes/shopify/worker/main.py
+# app/api/routes/shopify/worker/main.py
 import asyncio
 import logging
 from app.core.database import SessionLocal

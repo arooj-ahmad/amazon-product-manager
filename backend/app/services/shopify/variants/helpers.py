@@ -1,4 +1,4 @@
-﻿# app/services/shopify/variants/helpers.py
+# app/services/shopify/variants/helpers.py
 import logging
 import re
 

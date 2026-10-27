@@ -1,4 +1,4 @@
-﻿# app/services/amazon/helpers.py
+# app/services/amazon/helpers.py
 import logging
 import re
 from typing import Optional

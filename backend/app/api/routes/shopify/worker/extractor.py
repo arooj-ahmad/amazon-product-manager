@@ -1,4 +1,4 @@
-﻿# app/api/routes/shopify/worker/extractor.py
+# app/api/routes/shopify/worker/extractor.py
 import logging
 from app.services.amazon import ApifyError, fetch_product_from_apify, parse_price
 from ..helpers import _extract_weight, extract_all_variations

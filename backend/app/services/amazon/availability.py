@@ -1,4 +1,4 @@
-﻿# app/services/amazon/availability.py
+# app/services/amazon/availability.py
 import logging
 
 logger = logging.getLogger(__name__)

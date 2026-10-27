@@ -1,4 +1,4 @@
-﻿# app/services/amazon/brightdata_scraper.py
+# app/services/amazon/brightdata_scraper.py
 import logging
 import httpx
 from app.core.config import settings

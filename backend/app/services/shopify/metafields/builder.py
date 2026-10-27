@@ -1,4 +1,4 @@
-﻿# app/services/shopify/metafields/builder.py
+# app/services/shopify/metafields/builder.py
 import logging
 from app.services.shopify._helpers import _slugify_key
 

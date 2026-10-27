@@ -1,4 +1,4 @@
-﻿# app/api/routes/shopify/worker/db_sync.py
+# app/api/routes/shopify/worker/db_sync.py
 import logging
 from app.models import Product
 from app.services.amazon import calculate_final_price

@@ -1,4 +1,4 @@
-﻿# app/services/shopify/variants/image.py
+# app/services/shopify/variants/image.py
 import logging
 import asyncio
 from app.services.shopify.helpers import shopify_graphql

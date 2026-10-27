@@ -1,4 +1,4 @@
-﻿# app/api/routes/shopify/worker/shopify_sync.py
+# app/api/routes/shopify/worker/shopify_sync.py
 import logging
 from app.services.shopify import create_shopify_product_with_variants, add_variant_to_existing_product, add_product_to_collections
 from ..helpers import _build_product_data_for_shopify

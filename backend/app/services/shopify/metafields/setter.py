@@ -1,4 +1,4 @@
-﻿# app/services/shopify/metafields/setter.py
+# app/services/shopify/metafields/setter.py
 import logging
 from app.services.shopify.helpers import shopify_graphql
 from .definitions import ensure_metafield_definitions

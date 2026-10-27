@@ -1,4 +1,4 @@
-﻿# app/workers/tasks/batch.py
+# app/workers/tasks/batch.py
 import logging
 from typing import Any, Dict
 

@@ -1,4 +1,4 @@
-﻿# app/services/shopify/variants/update.py
+# app/services/shopify/variants/update.py
 import logging
 from app.services.shopify.helpers import shopify_graphql
 from .helpers import _build_measurement, _normalize_compare_at_price

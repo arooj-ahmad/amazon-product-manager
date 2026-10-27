@@ -1,4 +1,4 @@
-﻿# app/services/amazon/apify_scraper.py
+# app/services/amazon/apify_scraper.py
 import logging
 from apify_client import ApifyClient
 from app.core.config import settings

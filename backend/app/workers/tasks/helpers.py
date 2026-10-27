@@ -1,4 +1,4 @@
-﻿# app/workers/tasks/helpers.py
+# app/workers/tasks/helpers.py
 import logging
 
 logger = logging.getLogger(__name__)

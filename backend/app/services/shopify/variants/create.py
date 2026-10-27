@@ -1,4 +1,4 @@
-﻿# app/services/shopify/variants/create.py
+# app/services/shopify/variants/create.py
 import logging
 from app.services.shopify.helpers import shopify_graphql
 from app.services.shopify.inventory import set_inventory_quantity
