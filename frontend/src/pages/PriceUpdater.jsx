@@ -1,6 +1,7 @@
 // src/pages/PriceUpdater.jsx
 // Manual Price & Inventory Update page
 
+import { useState } from 'react'
 import { useShopifyApp } from '../hooks/useShopifyApp'
 import { styles } from '../styles/theme'
 import Loader from '../components/Loader'
@@ -16,12 +17,35 @@ export default function PriceUpdater() {
     checkingSub,
     handleRunCron,            // ✅ Price update function (hook se)
     handleRunInventoryUpdate, // ✅ Inventory update function (hook se)
-    cronRunning,              // ✅ Loading state (hook se)
     cronMessage,              // ✅ Status message (hook se)
   } = useShopifyApp()
 
+  // ✅ 2 Alag loading states
+  const [priceLoading, setPriceLoading] = useState(false)
+  const [inventoryLoading, setInventoryLoading] = useState(false)
+
   const handleBackToDashboard = () => {
     navigateTo('/shopify-app')
+  }
+
+  // ✅ 1. Price Button Handler
+  const onPriceClick = async () => {
+    setPriceLoading(true)
+    try {
+      await handleRunCron()
+    } finally {
+      setPriceLoading(false)
+    }
+  }
+
+  // ✅ 2. Inventory Button Handler
+  const onInventoryClick = async () => {
+    setInventoryLoading(true)
+    try {
+      await handleRunInventoryUpdate()
+    } finally {
+      setInventoryLoading(false)
+    }
   }
 
   if (checkingSub) {
@@ -76,53 +100,53 @@ export default function PriceUpdater() {
           {/* Price Update Button */}
           <button
             type="button"
-            onClick={handleRunCron}
-            disabled={cronRunning}
+            onClick={onPriceClick}
+            disabled={priceLoading || inventoryLoading}
             style={{
               flex: 1,
               minWidth: '200px',
               padding: '14px 20px',
-              backgroundColor: cronRunning ? '#9ca3af' : '#2563eb',
+              backgroundColor: priceLoading ? '#9ca3af' : '#2563eb',
               color: '#ffffff',
               border: 'none',
               borderRadius: '8px',
-              cursor: cronRunning ? 'not-allowed' : 'pointer',
+              cursor: priceLoading || inventoryLoading ? 'not-allowed' : 'pointer',
               fontWeight: 'bold',
               fontSize: '15px',
               display: 'flex',
               alignItems: 'center',
               justifyContent: 'center',
               gap: '8px',
-              opacity: cronRunning ? 0.7 : 1,
+              opacity: priceLoading || inventoryLoading ? 0.7 : 1,
             }}
           >
-            {cronRunning ? '⏳ Processing...' : '💰 Run Price Update'}
+            {priceLoading ? '⏳ Processing Price...' : '💰 Run Price Update'}
           </button>
 
           {/* Inventory Update Button */}
           <button
             type="button"
-            onClick={handleRunInventoryUpdate}
-            disabled={cronRunning}
+            onClick={onInventoryClick}
+            disabled={priceLoading || inventoryLoading}
             style={{
               flex: 1,
               minWidth: '200px',
               padding: '14px 20px',
-              backgroundColor: cronRunning ? '#9ca3af' : '#16a34a',
+              backgroundColor: inventoryLoading ? '#9ca3af' : '#16a34a',
               color: '#ffffff',
               border: 'none',
               borderRadius: '8px',
-              cursor: cronRunning ? 'not-allowed' : 'pointer',
+              cursor: priceLoading || inventoryLoading ? 'not-allowed' : 'pointer',
               fontWeight: 'bold',
               fontSize: '15px',
               display: 'flex',
               alignItems: 'center',
               justifyContent: 'center',
               gap: '8px',
-              opacity: cronRunning ? 0.7 : 1,
+              opacity: priceLoading || inventoryLoading ? 0.7 : 1,
             }}
           >
-            {cronRunning ? '⏳ Processing...' : '📦 Run Inventory Update'}
+            {inventoryLoading ? '⏳ Processing Inventory...' : '📦 Run Inventory Update'}
           </button>
         </div>
 
