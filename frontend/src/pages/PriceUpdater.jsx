@@ -52,6 +52,33 @@ export default function PriceUpdater() {
     return <Loader text="Loading price updater..." />
   }
 
+  // ✅ Status message format helper
+  const renderMessage = () => {
+    if (!cronMessage) return null;
+    
+    // Agar message ke andar "Skipped" ya "Errors" ka zikr ho, to usko highlight karein
+    const isSuccess = cronMessage.type === 'success';
+    
+    return (
+      <div
+        style={{
+          padding: '14px 16px',
+          backgroundColor: isSuccess ? '#ecfdf5' : '#fef2f2',
+          borderRadius: '8px',
+          fontSize: '14px',
+          color: isSuccess ? '#065f46' : '#991b1b',
+          borderLeft: `4px solid ${isSuccess ? '#10b981' : '#ef4444'}`,
+          display: 'flex',
+          alignItems: 'center',
+          gap: '10px'
+        }}
+      >
+        {/* Agar message string hai to seedha dikhao */}
+        <span style={{ fontWeight: '500' }}>{cronMessage.text}</span>
+      </div>
+    )
+  }
+
   return (
     <div style={styles.page}>
       <div style={styles.container}>
@@ -101,7 +128,7 @@ export default function PriceUpdater() {
           <button
             type="button"
             onClick={onPriceClick}
-            disabled={priceLoading}  // ✅ Sirf priceLoading par disable hoga
+            disabled={priceLoading || inventoryLoading} // ✅ Dono loading par disable taake user double click na kare
             style={{
               flex: 1,
               minWidth: '200px',
@@ -118,6 +145,7 @@ export default function PriceUpdater() {
               justifyContent: 'center',
               gap: '8px',
               opacity: priceLoading ? 0.7 : 1,
+              transition: 'all 0.2s ease',
             }}
           >
             {priceLoading ? '⏳ Processing Price...' : '💰 Run Price Update'}
@@ -127,7 +155,7 @@ export default function PriceUpdater() {
           <button
             type="button"
             onClick={onInventoryClick}
-            disabled={inventoryLoading} // ✅ Sirf inventoryLoading par disable hoga
+            disabled={inventoryLoading || priceLoading} // ✅ Dono loading par disable
             style={{
               flex: 1,
               minWidth: '200px',
@@ -144,27 +172,16 @@ export default function PriceUpdater() {
               justifyContent: 'center',
               gap: '8px',
               opacity: inventoryLoading ? 0.7 : 1,
+              transition: 'all 0.2s ease',
             }}
           >
             {inventoryLoading ? '⏳ Processing Inventory...' : '📦 Run Inventory Update'}
           </button>
         </div>
 
-        {/* Status Message */}
-        {cronMessage && (
-          <div
-            style={{
-              padding: '12px 16px',
-              backgroundColor: cronMessage.type === 'success' ? '#ecfdf5' : '#fef2f2',
-              borderRadius: '8px',
-              fontSize: '14px',
-              color: cronMessage.type === 'success' ? '#065f46' : '#991b1b',
-              borderLeft: `4px solid ${cronMessage.type === 'success' ? '#10b981' : '#ef4444'}`,
-            }}
-          >
-            {cronMessage.text}
-          </div>
-        )}
+        {/* Status Message (Updated) */}
+        {renderMessage()}
+        
       </div>
     </div>
   )

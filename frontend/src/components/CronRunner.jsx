@@ -2,15 +2,14 @@
 // ✅ REDESIGNED: Modern UI for Manual Price & Inventory Update
 
 import { useState, useEffect } from 'react'
-import { theme } from '../styles/theme'
 import { usePriceUpdateStore } from '../store/priceUpdateStore'
 
 export default function CronRunner({
   cronRunning,
   cronMessage,
   cronProgress,
-  onRunPriceCron,       // ✅ NAYA: Price button ke liye
-  onRunInventoryCron,   // ✅ NAYA: Inventory button ke liye
+  onRunPriceCron,       // ✅ Price button ke liye
+  onRunInventoryCron,   // ✅ Inventory button ke liye
 }) {
   const { running, step, total, currentProduct, summary } = cronProgress || {}
   const { dismissSummary } = usePriceUpdateStore()
@@ -195,7 +194,15 @@ export default function CronRunner({
                     }}
                   >
                     <span style={styles.resultAsin}>{r.asin}</span>
-                    <span style={styles.resultTitle}>{r.title}</span>
+                    <div style={{ overflow: 'hidden' }}>
+                      <span style={styles.resultTitle}>{r.title}</span>
+                      {/* ✅ FIXED: Skip hone ka reason bhi show hoga */}
+                      {r.status === 'skipped' && r.reason && (
+                        <div style={{ fontSize: '11px', color: '#92400e', marginTop: '2px', fontStyle: 'italic' }}>
+                          Reason: {r.reason}
+                        </div>
+                      )}
+                    </div>
                     <span
                       style={{
                         ...styles.resultStatus,
@@ -235,7 +242,7 @@ export default function CronRunner({
 }
 
 // ============================================
-// Styles (same as before)
+// Styles
 // ============================================
 const styles = {
   card: {
@@ -473,6 +480,7 @@ const styles = {
     textOverflow: 'ellipsis',
     whiteSpace: 'nowrap',
     fontWeight: '500',
+    display: 'block', // ✅ Fix: Title block display
   },
   resultStatus: {
     fontWeight: '700',
