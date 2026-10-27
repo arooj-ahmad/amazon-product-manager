@@ -56,7 +56,7 @@ from app.services.shopify.product_extras import (
 )
 
 # ✅ Variants (package ke andar ka module)
-from app.services.shopify.product_variants import (
+from app.services.shopify.variants import (
     update_variant_with_tracked,
     ensure_product_has_option,
     add_variant_to_existing_product,

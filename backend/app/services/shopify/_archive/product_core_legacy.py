@@ -26,7 +26,7 @@ from app.services.shopify.product_extras import (
     publish_product_to_channels,
     add_product_images,
 )
-from app.services.shopify.product_variants import (
+from app.services.shopify.variants import (
     update_variant_with_tracked,
     _assign_image_to_variant,
     _normalize_compare_at_price,

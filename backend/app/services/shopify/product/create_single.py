@@ -1,9 +1,9 @@
-﻿import logging
+import logging
 from app.services.shopify.helpers import shopify_graphql, _build_shopify_tags, _get_product_type
 from app.services.shopify.metafields import _build_all_metafields, set_product_metafields
 from app.services.shopify.description import _build_description_with_metafields
 from app.services.shopify.product_extras import publish_product_to_channels, add_product_images
-from app.services.shopify.product_variants import update_variant_with_tracked
+from app.services.shopify.variants import update_variant_with_tracked
 from app.services.shopify.inventory import set_inventory_quantity
 from .helpers import (
     calculate_compare_at_price, _get_compare_at_settings_from_store,
