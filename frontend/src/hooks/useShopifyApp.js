@@ -8,6 +8,7 @@
 // ✅ FIXED v4: Polling cleanup on unmount
 // ✅ FIXED v5: Cron state ab ZUSTAND global store me hai (page change pe survive)
 // ✅ FIXED v6: checkStatusOnce — page load pe backend se fresh status
+// ✅ NAYA v7: Inventory update ke liye alag function
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { usePriceUpdateStore } from '../store/priceUpdateStore'
 
@@ -118,7 +119,7 @@ export function useShopifyApp() {
     setCronProgress,
     startPolling,
     stopPolling,
-    checkStatusOnce,   // ✅ NAYA
+    checkStatusOnce,
   } = usePriceUpdateStore()
 
   const bridgeCheckRef = useRef(null)
@@ -166,7 +167,6 @@ export function useShopifyApp() {
 
   // ========================================
   // 2. App Bridge ready + shop domain
-  // ✅ FIXED v6: checkStatusOnce() bhi call karo
   // ========================================
   useEffect(() => {
     let attempts = 0
@@ -193,9 +193,6 @@ export function useShopifyApp() {
         showToast('Amazon Product Manager loaded!')
         loadBillingData()
 
-        // ✅ NAYA v6: Backend se ek baar fresh status check karo
-        // (agar job background me chal rahi hai toh progress dikhe,
-        //  ya complete ho chuki hai toh summary dikhe)
         try {
           const idToken = await getIdToken()
           await checkStatusOnce(API_URL, idToken)
@@ -326,7 +323,7 @@ export function useShopifyApp() {
   }, [shopDomain, loadCollections])
 
   // ========================================
-  // ✅ Trigger Cron Job Manually — GLOBAL polling
+  // ✅ Trigger Price Update (Only Price)
   // ========================================
   const handleRunCron = useCallback(async () => {
     if (cronRunning) return
@@ -361,12 +358,11 @@ export function useShopifyApp() {
         throw new Error(res.data.detail || `HTTP ${res.status}`)
       }
 
-      console.log('✅ Async trigger accepted:', res.data)
+      console.log('✅ Async price trigger accepted:', res.data)
 
-      // ✅ GLOBAL polling start karo (Zustand store ke through)
       startPolling(API_URL, idToken)
     } catch (err) {
-      console.error('❌ Cron trigger failed:', err)
+      console.error('❌ Price trigger failed:', err)
 
       stopPolling()
 
@@ -395,13 +391,81 @@ export function useShopifyApp() {
     setCronProgress,
   ])
 
-  // ✅ Cleanup on unmount — SIRF bridgeCheck (polling global store me hai)
+  // ========================================
+  // ✅ NAYA: Trigger Inventory Update (Only Inventory)
+  // ========================================
+  const handleRunInventoryUpdate = useCallback(async () => {
+    if (cronRunning) return
+
+    setCronRunning(true)
+    setCronMessage(null)
+    setCronProgress({
+      running: true,
+      step: 0,
+      total: 0,
+      currentProduct: 'Starting inventory update...',
+      summary: null,
+    })
+
+    try {
+      const idToken = await getIdToken()
+
+      console.log('🚀 Triggering async inventory update...')
+
+      const res = await safeFetch(
+        `${API_URL}/api/shopify/trigger-inventory-update-async`,
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${idToken}`,
+          },
+        }
+      )
+
+      if (!res.ok) {
+        throw new Error(res.data.detail || `HTTP ${res.status}`)
+      }
+
+      console.log('✅ Async inventory trigger accepted:', res.data)
+
+      startPolling(API_URL, idToken)
+    } catch (err) {
+      console.error('❌ Inventory trigger failed:', err)
+
+      stopPolling()
+
+      setCronProgress({
+        running: false,
+        step: 0,
+        total: 0,
+        currentProduct: null,
+        summary: null,
+      })
+
+      setCronMessage({
+        type: 'error',
+        text: `❌ ${err.message}`,
+      })
+
+      showToast('Inventory update failed!', true)
+      setCronRunning(false)
+    }
+  }, [
+    cronRunning,
+    startPolling,
+    stopPolling,
+    setCronRunning,
+    setCronMessage,
+    setCronProgress,
+  ])
+
+  // ✅ Cleanup on unmount — SIRF bridgeCheck
   useEffect(() => {
     return () => {
       if (bridgeCheckRef.current) {
         clearInterval(bridgeCheckRef.current)
       }
-      // ❌ Polling ko unmount pe band NAHI karo — global store handle karega
     }
   }, [])
 
@@ -539,7 +603,6 @@ export function useShopifyApp() {
       const collectionIdsArray = Array.from(selectedCollections)
 
       console.log('📤 Sending product with collections:', collectionIdsArray)
-      console.log('💰 Will use store default markup + tax from backend')
 
       const res = await safeFetch(
         `${API_URL}/api/shopify/app/add-product`,
@@ -635,5 +698,6 @@ export function useShopifyApp() {
     cronMessage,
     cronProgress,
     handleRunCron,
+    handleRunInventoryUpdate, // ✅ NAYA: Inventory button ke liye
   }
 }

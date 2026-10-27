@@ -26,7 +26,11 @@ from .price_sync import sync_shopify_price
 
 logger = logging.getLogger(__name__)
 
-async def update_all_prices():
+
+# ============================================
+# ✅ 1. SIRF PRICE UPDATE KARNE WALA JOB
+# ============================================
+async def update_prices_only():
     logger.info("=" * 60)
     logger.info("PRICE UPDATE JOB STARTED")
     logger.info("=" * 60)
@@ -42,14 +46,10 @@ async def update_all_prices():
     try:
         products = db.query(Product).all()
         total_products = len(products)
-        
+
         updated_count = 0
         skipped_count = 0
         error_count = 0
-        out_of_stock_count = 0
-        back_in_stock_count = 0
-        shopify_synced_count = 0
-        price_changed_count = 0
         results = []
 
         for index, product in enumerate(products, start=1):
@@ -63,15 +63,136 @@ async def update_all_prices():
                 ) = get_store_default_markup(store)
 
                 amazon_url = f"https://www.amazon.com/dp/{product.asin}"
-                
-                # ✅ Bright Data se sirf Price aur Stock fetch hoga
                 data = await fetch_product_from_brightdata(amazon_url)
-
                 new_amazon_price = data.get("amazon_price")
 
-                # SMART FALLBACK LOGIC
+                if new_amazon_price is None:
+                    logger.warning(f"[WARN] ASIN={product.asin} — price nahi mila")
+                    db.commit()
+                    error_count += 1
+                    results.append({"index": index, "asin": product.asin, "status": "error", "error": "Price not available"})
+                    continue
+
+                if store_markup is None or store_markup_type is None:
+                    logger.warning(f"⚠️ ASIN={product.asin}: markup missing — skip")
+                    skipped_count += 1
+                    results.append({"index": index, "asin": product.asin, "status": "skipped", "reason": "Markup missing"})
+                    continue
+
+                old_amazon = product.amazon_price or 0
+                old_price = product.price
+
+                capped_markup = apply_markup_cap(store_markup, store_markup_type)
+                new_final_price = calculate_final_price(
+                    amazon_price=new_amazon_price,
+                    markup=capped_markup,
+                    markup_type=store_markup_type,
+                    extra_percent=store_extra_pct,
+                    tax_rate=store_tax_rate,
+                )
+                compare_at_price = calculate_compare_at_price(store, new_final_price, new_amazon_price)
+
+                product.amazon_price = new_amazon_price
+                product.price = new_final_price
+                product.markup = capped_markup
+                product.markup_type = store_markup_type
+
+                if hasattr(product, "extra_percent"):
+                    product.extra_percent = store_extra_pct
+                if hasattr(product, "tax_rate"):
+                    product.tax_rate = store_tax_rate
+
+                product.last_synced_at = datetime.now(timezone.utc)
+                db.commit()
+                db.refresh(product)
+
+                price_changed = (new_amazon_price != old_amazon or new_final_price != old_price)
+
+                if price_changed:
+                    await sync_shopify_price(
+                        product=product,
+                        new_price=new_final_price,
+                        db=db,
+                        compare_at_price=compare_at_price,
+                    )
+                    logger.info(f"[PRICE CHANGED] ASIN={product.asin} amazon: ${old_amazon} → ${new_amazon_price}")
+                    updated_count += 1
+                    results.append({"index": index, "asin": product.asin, "status": "updated", "old_price": old_price, "new_price": new_final_price})
+                else:
+                    skipped_count += 1
+                    results.append({"index": index, "asin": product.asin, "status": "skipped"})
+
+            except BrightDataError as e:
+                logger.error(f"[ERROR] ASIN={product.asin}: {e}")
+                error_count += 1
+                results.append({"index": index, "asin": product.asin, "status": "error", "error": str(e)[:200]})
+            except Exception as e:
+                logger.error(f"[UNEXPECTED] ASIN={product.asin}: {e}")
+                error_count += 1
+                results.append({"index": index, "asin": product.asin, "status": "error", "error": str(e)[:200]})
+
+        logger.info("=" * 60)
+        logger.info(f"PRICE UPDATE COMPLETE — Updated: {updated_count}, Errors: {error_count}")
+        logger.info("=" * 60)
+
+        summary = {
+            "total": total_products,
+            "updated": updated_count,
+            "skipped": skipped_count,
+            "errors": error_count,
+            "results": results,
+        }
+
+        last_run_status["running"] = False
+        last_run_status["finished_at"] = datetime.now(timezone.utc).isoformat()
+        last_run_status["summary"] = summary
+
+        return summary
+
+    except Exception as e:
+        logger.error(f"Price update job failed: {e}")
+        last_run_status["running"] = False
+        last_run_status["finished_at"] = datetime.now(timezone.utc).isoformat()
+        last_run_status["summary"] = {"error": str(e)}
+        return {"error": str(e)}
+    finally:
+        db.close()
+
+
+# ============================================
+# ✅ 2. SIRF INVENTORY UPDATE KARNE WALA JOB
+# ============================================
+async def update_inventory_only():
+    logger.info("=" * 60)
+    logger.info("INVENTORY UPDATE JOB STARTED")
+    logger.info("=" * 60)
+
+    from . import last_run_status
+    last_run_status["running"] = True
+    last_run_status["started_at"] = datetime.now(timezone.utc).isoformat()
+    last_run_status["finished_at"] = None
+    last_run_status["summary"] = None
+
+    db: Session = SessionLocal()
+
+    try:
+        products = db.query(Product).all()
+        total_products = len(products)
+
+        updated_count = 0
+        skipped_count = 0
+        error_count = 0
+        out_of_stock_count = 0
+        back_in_stock_count = 0
+        results = []
+
+        for index, product in enumerate(products, start=1):
+            try:
+                amazon_url = f"https://www.amazon.com/dp/{product.asin}"
+                data = await fetch_product_from_brightdata(amazon_url)
+
                 old_availability = product.is_available
-                
+
                 if data.get("is_available") is None:
                     logger.warning(f"⚠️ Bright Data availability nahi de raha ASIN={product.asin}. Purana stock use kar rahe hain.")
                     new_availability = old_availability
@@ -95,74 +216,16 @@ async def update_all_prices():
                         logger.warning(f"❌ [OUT OF STOCK] ASIN={product.asin}")
                         out_of_stock_count += 1
 
-                # 2. Shopify Inventory Sync (Alag module se)
+                db.commit()
+
                 await sync_shopify_inventory(
                     product=product,
                     is_available=new_availability,
                     stock_quantity=product.stock_quantity,
                     db=db,
                 )
-                shopify_synced_count += 1
-
-                # 3. Price Check & Update
-                if new_amazon_price is None:
-                    logger.warning(f"[WARN] ASIN={product.asin} — price nahi mila")
-                    db.commit()
-                    error_count += 1
-                    results.append({"index": index, "asin": product.asin, "status": "error", "error": "Price not available"})
-                    continue
-
-                if store_markup is None or store_markup_type is None:
-                    logger.warning(f"⚠️ ASIN={product.asin}: markup missing — skip")
-                    skipped_count += 1
-                    results.append({"index": index, "asin": product.asin, "status": "skipped", "reason": "Markup missing"})
-                    continue
-
-                old_amazon = product.amazon_price or 0
-                old_price = product.price
-
-                capped_markup = apply_markup_cap(store_markup, store_markup_type)
-
-                new_final_price = calculate_final_price(
-                    amazon_price=new_amazon_price,
-                    markup=capped_markup,
-                    markup_type=store_markup_type,
-                    extra_percent=store_extra_pct,
-                    tax_rate=store_tax_rate,
-                )
-
-                compare_at_price = calculate_compare_at_price(store, new_final_price, new_amazon_price)
-
-                product.amazon_price = new_amazon_price
-                product.price = new_final_price
-                product.markup = capped_markup
-                product.markup_type = store_markup_type
-                
-                if hasattr(product, "extra_percent"):
-                    product.extra_percent = store_extra_pct
-                if hasattr(product, "tax_rate"):
-                    product.tax_rate = store_tax_rate
-
-                db.commit()
-                db.refresh(product)
-
-                # 4. Push to Shopify if changed (Alag module se)
-                price_changed = (new_amazon_price != old_amazon or new_final_price != old_price)
-
-                if price_changed:
-                    await sync_shopify_price(
-                        product=product,
-                        new_price=new_final_price,
-                        db=db,
-                        compare_at_price=compare_at_price,
-                    )
-                    logger.info(f"[PRICE CHANGED] ASIN={product.asin} amazon: ${old_amazon} → ${new_amazon_price}")
-                    price_changed_count += 1
-                    updated_count += 1
-                    results.append({"index": index, "asin": product.asin, "status": "updated", "old_price": old_price, "new_price": new_final_price})
-                else:
-                    skipped_count += 1
-                    results.append({"index": index, "asin": product.asin, "status": "skipped"})
+                updated_count += 1
+                results.append({"index": index, "asin": product.asin, "status": "updated"})
 
             except BrightDataError as e:
                 logger.error(f"[ERROR] ASIN={product.asin}: {e}")
@@ -174,7 +237,7 @@ async def update_all_prices():
                 results.append({"index": index, "asin": product.asin, "status": "error", "error": str(e)[:200]})
 
         logger.info("=" * 60)
-        logger.info(f"PRICE UPDATE COMPLETE — Updated: {updated_count}, Errors: {error_count}, OOS: {out_of_stock_count}, Back: {back_in_stock_count}")
+        logger.info(f"INVENTORY UPDATE COMPLETE — Updated: {updated_count}, Errors: {error_count}, OOS: {out_of_stock_count}, Back: {back_in_stock_count}")
         logger.info("=" * 60)
 
         summary = {
@@ -184,8 +247,6 @@ async def update_all_prices():
             "errors": error_count,
             "out_of_stock": out_of_stock_count,
             "back_in_stock": back_in_stock_count,
-            "shopify_synced": shopify_synced_count,
-            "price_changed": price_changed_count,
             "results": results,
         }
 
@@ -196,7 +257,7 @@ async def update_all_prices():
         return summary
 
     except Exception as e:
-        logger.error(f"Scheduler job failed: {e}")
+        logger.error(f"Inventory update job failed: {e}")
         last_run_status["running"] = False
         last_run_status["finished_at"] = datetime.now(timezone.utc).isoformat()
         last_run_status["summary"] = {"error": str(e)}

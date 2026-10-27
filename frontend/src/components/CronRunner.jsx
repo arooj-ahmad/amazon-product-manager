@@ -1,5 +1,5 @@
 // src/components/CronRunner.jsx
-// ✅ REDESIGNED: Modern & Professional UI for Manual Price Update
+// ✅ REDESIGNED: Modern UI for Manual Price & Inventory Update
 
 import { useState, useEffect } from 'react'
 import { theme } from '../styles/theme'
@@ -9,7 +9,8 @@ export default function CronRunner({
   cronRunning,
   cronMessage,
   cronProgress,
-  onRunCron,
+  onRunPriceCron,       // ✅ NAYA: Price button ke liye
+  onRunInventoryCron,   // ✅ NAYA: Inventory button ke liye
 }) {
   const { running, step, total, currentProduct, summary } = cronProgress || {}
   const { dismissSummary } = usePriceUpdateStore()
@@ -46,41 +47,68 @@ export default function CronRunner({
         <div style={styles.headerTextContent}>
           <h2 style={styles.title}>Update Prices & Inventory</h2>
           <p style={styles.subtitle}>
-            Fetches the latest Amazon prices, recalculates markups, and pushes stock updates to Shopify.
+            Update Amazon prices and inventory separately for your Shopify store.
           </p>
         </div>
       </div>
 
-      {/* Action Button */}
-      <button
-        type="button"
-        onClick={onRunCron}
-        disabled={cronRunning}
-        style={{
-          ...styles.button,
-          background: cronRunning ? '#9ca3af' : 'linear-gradient(135deg, #10b981 0%, #059669 100%)',
-          cursor: cronRunning ? 'not-allowed' : 'pointer',
-          boxShadow: cronRunning ? 'none' : '0 4px 12px rgba(16, 185, 129, 0.25)',
-        }}
-        onMouseEnter={(e) => {
-          if (!cronRunning) e.currentTarget.style.transform = 'translateY(-1px)'
-        }}
-        onMouseLeave={(e) => {
-          if (!cronRunning) e.currentTarget.style.transform = 'translateY(0)'
-        }}
-      >
-        {cronRunning ? (
-          <>
-            <span style={styles.spinner} />
-            <span>Syncing Products...</span>
-          </>
-        ) : (
-          <>
-            <span style={{ fontSize: '18px' }}>🚀</span>
-            <span>Run Price Update Now</span>
-          </>
-        )}
-      </button>
+      {/* ✅ 2 Buttons Side-by-Side */}
+      <div style={{ display: 'flex', gap: '15px', marginBottom: '20px', flexWrap: 'wrap' }}>
+        
+        {/* Price Update Button */}
+        <button
+          type="button"
+          onClick={onRunPriceCron}
+          disabled={cronRunning}
+          style={{
+            ...styles.button,
+            flex: 1,
+            minWidth: '200px',
+            background: cronRunning ? '#9ca3af' : 'linear-gradient(135deg, #3b82f6 0%, #2563eb 100%)', // Blue
+            cursor: cronRunning ? 'not-allowed' : 'pointer',
+            boxShadow: cronRunning ? 'none' : '0 4px 12px rgba(37, 99, 235, 0.25)',
+          }}
+        >
+          {cronRunning ? (
+            <>
+              <span style={styles.spinner} />
+              <span>Processing...</span>
+            </>
+          ) : (
+            <>
+              <span style={{ fontSize: '18px' }}>💰</span>
+              <span>Run Price Update</span>
+            </>
+          )}
+        </button>
+
+        {/* Inventory Update Button */}
+        <button
+          type="button"
+          onClick={onRunInventoryCron}
+          disabled={cronRunning}
+          style={{
+            ...styles.button,
+            flex: 1,
+            minWidth: '200px',
+            background: cronRunning ? '#9ca3af' : 'linear-gradient(135deg, #10b981 0%, #059669 100%)', // Green
+            cursor: cronRunning ? 'not-allowed' : 'pointer',
+            boxShadow: cronRunning ? 'none' : '0 4px 12px rgba(16, 185, 129, 0.25)',
+          }}
+        >
+          {cronRunning ? (
+            <>
+              <span style={styles.spinner} />
+              <span>Processing...</span>
+            </>
+          ) : (
+            <>
+              <span style={{ fontSize: '18px' }}>📦</span>
+              <span>Run Inventory Update</span>
+            </>
+          )}
+        </button>
+      </div>
 
       {/* Progress Bar */}
       {running && (
@@ -207,7 +235,7 @@ export default function CronRunner({
 }
 
 // ============================================
-// Styles
+// Styles (same as before)
 // ============================================
 const styles = {
   card: {
@@ -253,7 +281,6 @@ const styles = {
     lineHeight: '1.5',
   },
   button: {
-    width: '100%',
     padding: '16px 24px',
     color: 'white',
     border: 'none',
@@ -284,8 +311,6 @@ const styles = {
     alignItems: 'center',
     gap: '12px',
   },
-
-  // Progress
   progressContainer: {
     marginTop: '24px',
     padding: '20px',
@@ -343,8 +368,6 @@ const styles = {
     textAlign: 'center',
     fontStyle: 'italic',
   },
-
-  // Summary
   summaryBox: {
     marginTop: '28px',
     padding: '24px',
