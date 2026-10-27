@@ -1,10 +1,11 @@
-# app/services/amazon/apify_scraper.py
+﻿# app/services/amazon/apify_scraper.py
 import logging
 from apify_client import ApifyClient
 from app.core.config import settings
 from .exceptions import ApifyError
 from .helpers import extract_asin_from_url, validate_parent_asin, parse_price
-from .availability import check_availability
+# Yahan change kiya gaya hai (inventory_apify se import)
+from .inventory_apify import check_availability_apify
 
 logger = logging.getLogger(__name__)
 
@@ -39,7 +40,8 @@ def fetch_product_from_apify(amazon_url: str) -> dict:
                         variant_attributes.append({"name": name.strip(), "value": value.strip()})
                         variations.append({"name": name.strip(), "value": value.strip()})
 
-            is_available, avail_text, reason = check_availability(item)
+            # Yahan change kiya gaya hai (check_availability_apify use ho raha hai)
+            is_available, avail_text, reason = check_availability_apify(item)
             stock_qty = 100 if is_available else 0
 
             images_raw = item.get("images") or []
