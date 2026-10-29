@@ -12,7 +12,7 @@ async def sync_product_price(
     new_price, 
     tags, 
     categories, 
-    sku=None  # ✅ NAYA: sku parameter add kiya
+    sku=None
 ):
     """Shopify pe price aur tags update karta hai (Specific variant ke liye)."""
     product_type = categories[0] if categories else ""
@@ -25,7 +25,7 @@ async def sync_product_price(
         refresh_token=refresh_token,
         tags=tags,
         product_type=product_type,
-        sku=sku,  # ✅ FIX: SKU yahan pass kiya
+        sku=sku,
     )
     
     if ok:
