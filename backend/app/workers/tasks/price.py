@@ -14,11 +14,11 @@ logger = logging.getLogger(__name__)
 async def process_price_update(ctx: Dict[str, Any], asin: str):
     """Main entry point: Amazon se fetch karo, DB update karo, phir Shopify sync karo."""
     from app.models import Product
-    from app.services.amazon.brightdata_scraper import (
-        calculate_final_price,
-        BrightDataError,
-        fetch_product_from_brightdata,
-    )
+    
+    # ✅ FIXED IMPORTS: Alag-alag modules se import kiya
+    from app.services.amazon.brightdata_scraper import fetch_product_from_brightdata
+    from app.services.amazon.pricing import calculate_final_price
+    from app.services.amazon.exceptions import BrightDataError
     from app.services.shopify import get_shopify_product_by_sku
 
     db = SessionLocal()
