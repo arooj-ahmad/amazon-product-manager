@@ -1,4 +1,4 @@
-# app/services/amazon/apify_scraper.py
+﻿# app/services/amazon/apify_scraper.py
 # ============================================================
 # Fetches a single Amazon product page via Apify.
 # Returns the normalised product dict INCLUDING the raw
@@ -175,6 +175,23 @@ def fetch_product_from_apify(amazon_url: str) -> dict:
             # ── Child ASIN extraction ──────────────────────────────────
             child_asins, variant_details = _extract_child_asins_from_raw(item, asin)
 
+            # ✅ NAYA: Rating aur Reviews extract karein
+            rating_val = item.get("rating") or item.get("stars") or item.get("average_rating")
+            reviews_val = item.get("reviews_count") or item.get("reviews") or item.get("ratings_count")
+            
+            # String se number nikalne ke liye safe parsing
+            if rating_val is not None:
+                try:
+                    rating_val = float(str(rating_val).replace(",", "").strip())
+                except (ValueError, TypeError):
+                    rating_val = None
+                    
+            if reviews_val is not None:
+                try:
+                    reviews_val = int(str(reviews_val).replace(",", "").strip().split()[0])
+                except (ValueError, TypeError, IndexError):
+                    reviews_val = None
+
             logger.info(
                 f"[Apify] ASIN={asin} | "
                 f"child_asins_found={len(child_asins)} | "
@@ -189,6 +206,8 @@ def fetch_product_from_apify(amazon_url: str) -> dict:
                 # Content
                 "title": item.get("title") or "Untitled Product",
                 "brand": item.get("brand") or item.get("manufacturer") or "",
+                "rating": rating_val,            # ✅ YEH ADD KAREIN
+                "reviews_count": reviews_val,    # ✅ YEH ADD KAREIN
                 "description": "",
                 "feature_bullets": bullets,
                 # Pricing
