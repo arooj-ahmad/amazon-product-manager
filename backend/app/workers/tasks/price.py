@@ -48,13 +48,13 @@ async def process_price_update(ctx: Dict[str, Any], asin: str):
         if data.get("categories") is not None: product.categories = data["categories"]
         if data.get("tags") is not None: product.tags = data["tags"]
 
-        # ✅ NO DEFAULT MARKUP: Sirf user ka set kiya hua markup use hoga
+        # ✅ NO DEFAULT MARKUP: Sirf product mein save kiya hua markup use hoga
         user_markup = product.markup
         user_markup_type = product.markup_type
         user_extra = getattr(product, "extra_percent", 0.0) or 0.0
         user_tax = getattr(product, "tax_rate", 0.0) or 0.0
 
-        # Agar product mein markup save hi nahi hai, to error dein (default na lagayein)
+        # Agar product mein markup save hi nahi hai, to error dein
         if user_markup is None or user_markup_type is None:
             logger.error(f"[PRICE] ❌ No markup set for ASIN={asin}. Skipping price calculation.")
             return {"asin": asin, "status": "error", "error": "Markup not set for product"}
