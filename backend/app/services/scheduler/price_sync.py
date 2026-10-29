@@ -59,21 +59,38 @@ async def sync_shopify_price(
             sku=target_sku,  # ✅ NAYA: SKU yahan pass kiya
         )
 
-        # Metafields update
-        metafields_input = []
-        if product.amazon_price is not None:
-            metafields_input.append({"namespace": "custom", "key": "amazon_price", "value": str(product.amazon_price), "type": "single_line_text_field"})
-        if product.availability:
-            metafields_input.append({"namespace": "custom", "key": "availability", "value": str(product.availability), "type": "single_line_text_field"})
-        if getattr(product, "rating", None) is not None:
-            metafields_input.append({"namespace": "custom", "key": "rating", "value": str(product.rating), "type": "single_line_text_field"})
-        if getattr(product, "reviews_count", None) is not None:
-            metafields_input.append({"namespace": "custom", "key": "reviews_count", "value": str(product.reviews_count), "type": "single_line_text_field"})
-        if product.asin:
-            metafields_input.append({"namespace": "custom", "key": "asin", "value": str(product.asin), "type": "single_line_text_field"})
+        # ✅ FIX: Agar fail hua, to check karo ke token refresh hua tha ya nahi
+        if not success:
+            db.refresh(store)  # Database se fresh data lo
+            if store.access_token != access_token:
+                logger.info(f"🔄 Token updated in DB by sync.py. Retrying for {product.asin}...")
+                # Naya token use karke dobara try karo
+                success = await sync_update_shopify_price(
+                    shop_domain=shop,
+                    access_token=store.access_token,
+                    shopify_product_id=shopify_id,
+                    new_price=new_price,
+                    refresh_token=store.refresh_token,
+                    compare_at_price=compare_at_price,
+                    sku=target_sku,
+                )
 
-        if metafields_input:
-            await set_product_metafields(shop=shop, access_token=access_token, product_id=shopify_id, metafields=metafields_input)
+        # Metafields update (sirf tab jab success ho)
+        if success:
+            metafields_input = []
+            if product.amazon_price is not None:
+                metafields_input.append({"namespace": "custom", "key": "amazon_price", "value": str(product.amazon_price), "type": "single_line_text_field"})
+            if product.availability:
+                metafields_input.append({"namespace": "custom", "key": "availability", "value": str(product.availability), "type": "single_line_text_field"})
+            if getattr(product, "rating", None) is not None:
+                metafields_input.append({"namespace": "custom", "key": "rating", "value": str(product.rating), "type": "single_line_text_field"})
+            if getattr(product, "reviews_count", None) is not None:
+                metafields_input.append({"namespace": "custom", "key": "reviews_count", "value": str(product.reviews_count), "type": "single_line_text_field"})
+            if product.asin:
+                metafields_input.append({"namespace": "custom", "key": "asin", "value": str(product.asin), "type": "single_line_text_field"})
+
+            if metafields_input:
+                await set_product_metafields(shop=shop, access_token=store.access_token, product_id=shopify_id, metafields=metafields_input)
 
         return success
     except Exception as e:

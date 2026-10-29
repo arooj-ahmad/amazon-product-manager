@@ -82,7 +82,7 @@ async def sync_shopify_inventory(product: Product, is_available: bool, stock_qua
             db.commit()
             return
 
-        # Status update
+        # Status update (Ab yeh khud 401 handle karega helpers.py ke through)
         await update_shopify_product_status(
             shop=shop,
             access_token=access_token,
@@ -101,6 +101,7 @@ async def sync_shopify_inventory(product: Product, is_available: bool, stock_qua
               edges {
                 node {
                   id
+                  sku
                   inventoryItem {
                     id
                   }
@@ -111,9 +112,10 @@ async def sync_shopify_inventory(product: Product, is_available: bool, stock_qua
         }
         """
 
+        # ✅ Ab helpers.py ka shopify_graphql khud 401 par token refresh karega
         result = await shopify_graphql(shop, access_token, query, {"id": shopify_id})
-        
-        # ✅ SAFE CHECKS (Crash se bachne ke liye)
+
+        # ✅ SAFE CHECKS
         if not result:
             logger.warning(f"⚠️ Shopify API ne khali response diya (None) ASIN={product.asin}")
             return
@@ -135,17 +137,30 @@ async def sync_shopify_inventory(product: Product, is_available: bool, stock_qua
         variants_data = product_data.get("variants") or {}
         edges = variants_data.get("edges") or []
 
-        for edge in edges:
-            inventory_item_id = edge.get("node", {}).get("inventoryItem", {}).get("id")
-            if not inventory_item_id:
-                continue
+        # ✅ FIX: Sirf usi variant ka stock update karein jiska SKU (ASIN) match kare
+        target_sku = product.asin
+        found_variant = False
 
-            await set_inventory_quantity(
-                shop=shop,
-                access_token=access_token,
-                inventory_item_id=inventory_item_id,
-                quantity=stock_quantity,
-            )
+        for edge in edges:
+            node = edge.get("node", {})
+            variant_sku = node.get("sku")
+            
+            # Agar SKU match karta hai (exact string match)
+            if str(variant_sku).strip() == str(target_sku).strip():
+                inventory_item_id = node.get("inventoryItem", {}).get("id")
+                if inventory_item_id:
+                    await set_inventory_quantity(
+                        shop=shop,
+                        access_token=access_token,
+                        inventory_item_id=inventory_item_id,
+                        quantity=stock_quantity,
+                    )
+                    logger.info(f"✅ Inventory synced: ASIN={target_sku}, Qty={stock_quantity}")
+                    found_variant = True
+                    break  # Sirf ek variant update karna hai
+
+        if not found_variant:
+            logger.warning(f"⚠️ No matching variant found for SKU {target_sku} in product {shopify_id}")
 
     except Exception as e:
         logger.error(f"❌ Shopify inventory sync error: ASIN={product.asin}: {e}")
