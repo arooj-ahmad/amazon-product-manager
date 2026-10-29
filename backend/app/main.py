@@ -11,9 +11,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from arq import create_pool
 from arq.connections import RedisSettings
 
-# ✅ Naye routes import kiye hain (shopify_routes ki jagah shopify_router)
+# ✅ Admin Auth (auth) ko hata diya gaya hai
 from app.api.routes import (
-    auth,
     products,
     billing_routes,
     batch_routes,
@@ -90,7 +89,7 @@ app = FastAPI(
     title="Amazon Product Manager API",
     description=(
         "Amazon products manage karne ke liye API with Shopify integration. "
-        "User side public hai, admin side JWT protected hai."
+        "User side public hai, Shopify OAuth se protected hai."
     ),
     version="1.0.0",
     lifespan=lifespan,
@@ -119,7 +118,7 @@ app.add_middleware(
 # ============================================
 # ROUTERS
 # ============================================
-app.include_router(auth.router)
+# ✅ app.include_router(auth.router)  <-- YEH HATA DIYA HAI
 app.include_router(products.router)
 
 # ✅ Naya Shopify Router include kiya hai

@@ -1,6 +1,6 @@
 # ============================================
 # app/api/routes/products.py
-# + ✅ FIXED: Frontend se aayi value direct save hogi
+# + ✅ FIXED: Removed Admin Auth (get_current_admin) dependencies
 # ============================================
 
 import logging
@@ -10,9 +10,8 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
-from app.api.routes.auth import get_current_admin
 from app.core.database import get_db
-from app.models import Admin, Product, ShopifyStore
+from app.models import Product, ShopifyStore
 from app.schemas import (
     MarkupUpdate,
     ProductCreate,
@@ -170,13 +169,13 @@ def get_product_variants(product_id: int, db: Session = Depends(get_db)):
 
 
 @router.get("/admin/products", response_model=ProductListResponse)
-def get_all_products_admin(db: Session = Depends(get_db), current_admin: Admin = Depends(get_current_admin)):
+def get_all_products_admin(db: Session = Depends(get_db)):  # ✅ Auth removed
     products = db.query(Product).order_by(Product.created_at.desc()).all()
     return ProductListResponse(total=len(products), products=products)
 
 
 @router.post("/admin/fetch", response_model=ProductFetchResponse, status_code=201)
-async def admin_fetch_product(payload: ProductCreate, db: Session = Depends(get_db), current_admin: Admin = Depends(get_current_admin)):
+async def admin_fetch_product(payload: ProductCreate, db: Session = Depends(get_db)):  # ✅ Auth removed
     amazon_url = payload.amazon_url
     try:
         data = await fetch_product_from_brightdata(amazon_url)
@@ -228,7 +227,7 @@ async def admin_fetch_product(payload: ProductCreate, db: Session = Depends(get_
 
 
 @router.put("/admin/products/{product_id}", response_model=ProductResponse)
-def admin_update_product(product_id: int, payload: ProductUpdate, db: Session = Depends(get_db), current_admin: Admin = Depends(get_current_admin)):
+def admin_update_product(product_id: int, payload: ProductUpdate, db: Session = Depends(get_db)):  # ✅ Auth removed
     product = db.query(Product).filter(Product.id == product_id).first()
     if not product: raise HTTPException(status_code=404, detail="Product not found")
     update_data = payload.model_dump(exclude_unset=True)
@@ -241,7 +240,7 @@ def admin_update_product(product_id: int, payload: ProductUpdate, db: Session = 
 
 
 @router.delete("/admin/products/{product_id}", status_code=204)
-async def admin_delete_product(product_id: int, db: Session = Depends(get_db), current_admin: Admin = Depends(get_current_admin)):
+async def admin_delete_product(product_id: int, db: Session = Depends(get_db)):  # ✅ Auth removed
     product = db.query(Product).filter(Product.id == product_id).first()
     if not product: raise HTTPException(status_code=404, detail="Product not found")
     asin = product.asin
@@ -266,9 +265,6 @@ def list_products_for_markup(store_id: int = None, db: Session = Depends(get_db)
     return query.order_by(Product.created_at.desc()).all()
 
 
-# ============================================
-# ✅ FIXED: SINGLE PRODUCT UPDATE
-# ============================================
 @router.patch("/markup/{product_id}", response_model=ProductResponse)
 async def update_product_markup(product_id: int, payload: MarkupUpdate, db: Session = Depends(get_db)):
     product = db.query(Product).filter(Product.id == product_id).first()
@@ -288,7 +284,6 @@ async def update_product_markup(product_id: int, payload: MarkupUpdate, db: Sess
     product.price = new_price
     product.is_manual_override = True
 
-    # ✅ YEH LINE ADD KAREIN (Direct Database Update)
     db.query(Product).filter(Product.id == product.id).update({"tax_rate": tax_rate})
 
     db.commit()
@@ -304,9 +299,6 @@ async def update_product_markup(product_id: int, payload: MarkupUpdate, db: Sess
     return product
 
 
-# ============================================
-# ✅ FIXED: BULK UPDATE
-# ============================================
 @router.post("/markup/bulk-update")
 async def bulk_update_markup(payload: MarkupUpdate, store_id: int = None, db: Session = Depends(get_db)):
     query = db.query(Product).filter(Product.shopify_status == "active")
@@ -332,7 +324,6 @@ async def bulk_update_markup(payload: MarkupUpdate, store_id: int = None, db: Se
         product.price = new_price
         product.is_manual_override = True
         
-        # ✅ YEH LINE ADD KAREIN (Yeh bulk update mein missing thi)
         db.query(Product).filter(Product.id == product.id).update({"tax_rate": tax_rate})
         
         updated += 1

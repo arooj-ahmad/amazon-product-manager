@@ -2,12 +2,11 @@
 # app/api/routes/__init__.py
 # ============================================
 
-from app.api.routes import auth, products
+from app.api.routes import products
 from app.api.routes.shopify import shopify_router  # ✅ Naya router import kiya
 
 # Purane imports ko break hone se bachane ke liye __all__ define kiya hai
 __all__ = [
-    "auth", 
     "products", 
     "shopify_router", 
     "shopify_routes" # Agar purane naam se koi import ho raha ho to error na aaye
