@@ -10,6 +10,7 @@
 # + ✅ FIXED: markup default 0.0 (user khud set karega)
 # + ✅ FIXED: tax_rate added to model
 # + ✅ NAYA: feature_bullets added for "About this item"
+# + ✅ NAYA: product_details & physical attributes added for metafields
 # ============================================
 
 from sqlalchemy import (
@@ -52,21 +53,27 @@ class Product(Base):
     images = Column(JSON, default=list)
     specifications = Column(JSON, default=dict)
     
-    # ✅ YEH NAYI LINE ADD KI HAI
+    # ✅ YEH NAYI LINE ADD KI HAI (Dynamic Specs ke liye)
+    product_details = Column(JSONB, default=list, nullable=True) 
+    
     feature_bullets = Column(JSONB, default=list, nullable=False)
     
     rating = Column(Float, nullable=True)
     reviews_count = Column(BigInteger, nullable=True)
 
+    # ✅ NAYA: Specific physical attributes (jo builder.py mein use hote hain)
+    item_dimensions = Column(String(500), nullable=True)
+    item_weight = Column(String(100), nullable=True)
+    package_dimensions = Column(String(500), nullable=True)
+    size = Column(String(100), nullable=True)
+    color = Column(String(100), nullable=True)
+    material_type = Column(String(200), nullable=True)
+    model_number = Column(String(255), nullable=True)
+
     # ----------------------------------------
     # ✅ Collections + Tags
     # ----------------------------------------
-    # Amazon categories — Shopify collections ke liye
-    # Format: ["Books", "Romance", "Fantasy"]
     categories = Column(JSONB, default=list, nullable=False)
-
-    # Amazon features/specs — Shopify tags ke liye
-    # Format: ["Paperback: 366 pages", "Language: English", "Books"]
     tags = Column(JSONB, default=list, nullable=False)
 
     # ----------------------------------------
@@ -79,8 +86,6 @@ class Product(Base):
 
     # ----------------------------------------
     # Variant Attributes
-    # Shopify options ke liye
-    # Format: [{"name": "Size", "value": "Large"}, ...]
     # ----------------------------------------
     variant_attributes = Column(JSON, default=list)
 
@@ -99,9 +104,6 @@ class Product(Base):
     # ----------------------------------------
     shopify_product_id = Column(String(255), nullable=True)
     shopify_handle = Column(String(255), nullable=True)
-
-    # Shopify status track karne ke liye
-    # Values: "active" ya "draft"
     shopify_status = Column(String(20), default="draft", nullable=True)
 
     # ----------------------------------------
@@ -110,14 +112,9 @@ class Product(Base):
     amazon_price = Column(Float, nullable=True)
     price = Column(Float, nullable=True)
 
-    # ✅ FIXED: markup default 0.0 — user khud set karega
     markup = Column(Float, default=0.0, nullable=False)
     markup_type = Column(String(20), default="fixed", nullable=False)
-    # "both" (Fixed + Percent) type ke liye
-    # Example: markup=2.0, extra_percent=10 → (amazon + 2) × 1.10
     extra_percent = Column(Float, default=0.0, nullable=False)
-    
-    # ✅ YEH NAYI LINE ADD KI HAI
     tax_rate = Column(Float, default=0.0, nullable=False)
 
     # ----------------------------------------

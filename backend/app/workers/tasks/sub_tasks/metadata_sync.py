@@ -4,13 +4,15 @@ from app.services.shopify import (
     update_shopify_product_status,
     set_product_metafields,
 )
+# ✅ NAYA: Dynamic metafields builder import kiya
+from app.services.shopify.metafields.builder import _build_all_metafields
 
 logger = logging.getLogger(__name__)
 
 async def sync_product_metadata(shop, access_token, shopify_product_id, product, is_available):
-    """Status aur Metafields update karta hai."""
+    """Status aur Metafields (Specs, Rating, Reviews) update karta hai."""
     
-    # 1. Status Update
+    # 1. Status Update (ACTIVE ya DRAFT)
     status_ok = await update_shopify_product_status(
         shop=shop,
         access_token=access_token,
@@ -18,20 +20,30 @@ async def sync_product_metadata(shop, access_token, shopify_product_id, product,
         is_available=is_available,
     )
     if status_ok:
-        logger.info(f"[METADATA] ? Status synced, available={is_available}")
+        logger.info(f"[METADATA] ✅ Status synced, available={is_available}")
 
-    # 2. Metafields Update
-    metafields_input = []
-    if product.amazon_price is not None:
-        metafields_input.append({"namespace": "custom", "key": "amazon_price", "value": str(product.amazon_price), "type": "single_line_text_field"})
-    if product.availability:
-        metafields_input.append({"namespace": "custom", "key": "availability", "value": str(product.availability), "type": "single_line_text_field"})
-    if product.rating is not None:
-        metafields_input.append({"namespace": "custom", "key": "rating", "value": str(product.rating), "type": "single_line_text_field"})
-    if product.reviews_count is not None:
-        metafields_input.append({"namespace": "custom", "key": "reviews_count", "value": str(product.reviews_count), "type": "single_line_text_field"})
-    if product.asin:
-        metafields_input.append({"namespace": "custom", "key": "asin", "value": str(product.asin), "type": "single_line_text_field"})
+    # 2. Metafields Update (Saari dynamic specifications ke saath)
+    
+    # Product data ko dictionary mein convert karein taake builder use kar sake
+    product_data_for_mf = {
+        "asin": product.asin,
+        "brand": product.brand,
+        "manufacturer": getattr(product, "manufacturer", None),
+        "rating": product.rating,
+        "reviews_count": product.reviews_count,
+        "amazon_price": product.amazon_price,
+        "availability": product.availability,
+        "model_number": getattr(product, "model_number", None),
+        "item_dimensions": getattr(product, "item_dimensions", None),
+        "item_weight": getattr(product, "item_weight", None),
+        "size": getattr(product, "size", None),
+        "color": getattr(product, "color", None),
+        "specifications": product.specifications or {},
+        "variant_attributes": product.variant_attributes or [],
+    }
+    
+    # ✅ Builder se saari specs (Educational Objective, Number of Batteries, etc.) nikaalein
+    metafields_input = _build_all_metafields(product_data_for_mf)
 
     if metafields_input:
         await set_product_metafields(
@@ -40,4 +52,6 @@ async def sync_product_metadata(shop, access_token, shopify_product_id, product,
             product_id=shopify_product_id,
             metafields=metafields_input,
         )
-        logger.info(f"[METADATA] ? Metafields synced ({len(metafields_input)} items)")
+        logger.info(f"[METADATA] ✅ Metafields synced ({len(metafields_input)} items)")
+    else:
+        logger.info(f"[METADATA] ⚠️ No metafields to sync for {product.asin}")
