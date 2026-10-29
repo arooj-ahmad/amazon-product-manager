@@ -15,7 +15,6 @@ from .inventory_sync import find_shopify_product_by_title
 
 logger = logging.getLogger(__name__)
 
-# 🚨 YAHAN FUNCTION KA NAAM 'sync_shopify_price' HONA ZAROORI HAI
 async def sync_shopify_price(
     product: Product, 
     new_price: float, 

@@ -4,8 +4,17 @@ from app.services.shopify import shopify_graphql, set_inventory_quantity
 
 logger = logging.getLogger(__name__)
 
-async def sync_product_inventory(shop, access_token, shopify_product_id, stock_quantity, is_available):
-    """Shopify product ke saare variants ka inventory update karta hai."""
+async def sync_product_inventory(
+    shop, 
+    access_token, 
+    shopify_product_id, 
+    stock_quantity, 
+    is_available,
+    sku=None  # ✅ NAYA: SKU parameter add kiya
+):
+    """Shopify product ke specific variant ka inventory update karta hai."""
+    
+    # 1. Product ke saare variants fetch karein (SKU ke saath)
     inv_query = """
     query getProductInventory($id: ID!) {
       product(id: $id) {
@@ -13,6 +22,7 @@ async def sync_product_inventory(shop, access_token, shopify_product_id, stock_q
           edges {
             node {
               id
+              sku
               inventoryItem {
                 id
               }
@@ -35,25 +45,43 @@ async def sync_product_inventory(shop, access_token, shopify_product_id, stock_q
         logger.warning(f"[INVENTORY] No variants found for product {shopify_product_id}")
         return False
 
-    all_updated = True
-    for edge in inv_edges:
-        inv_item_id = edge.get("node", {}).get("inventoryItem", {}).get("id")
-        if inv_item_id:
-            qty = stock_quantity or 0
-            if qty == 0 and is_available:
-                qty = 100  # Fallback (Business rule)
+    # ✅ FIX: Sirf target SKU ka variant dhundein
+    target_variant = None
+    if sku:
+        for edge in inv_edges:
+            node = edge.get("node", {})
+            if str(node.get("sku")).strip() == str(sku).strip():
+                target_variant = node
+                break
+    else:
+        # Fallback: agar sku nahi diya to pehla variant
+        if inv_edges:
+            target_variant = inv_edges[0].get("node", {})
 
-            inv_ok = await set_inventory_quantity(
-                shop=shop,
-                access_token=access_token,
-                inventory_item_id=inv_item_id,
-                quantity=qty,
-            )
+    if not target_variant:
+        logger.warning(f"[INVENTORY] No variant found for SKU: {sku}")
+        return False
 
-            if inv_ok:
-                logger.info(f"[INVENTORY] ? Inventory synced: qty={qty}")
-            else:
-                logger.error(f"[INVENTORY] ? Inventory update FAILED")
-                all_updated = False
+    # 2. Sirf us specific variant ka inventory update karein
+    inv_item_id = target_variant.get("inventoryItem", {}).get("id")
+    if not inv_item_id:
+        logger.warning(f"[INVENTORY] No inventory item found for SKU: {sku}")
+        return False
 
-    return all_updated
+    qty = stock_quantity or 0
+    if qty == 0 and is_available:
+        qty = 100  # Fallback (Business rule)
+
+    inv_ok = await set_inventory_quantity(
+        shop=shop,
+        access_token=access_token,
+        inventory_item_id=inv_item_id,
+        quantity=qty,
+    )
+
+    if inv_ok:
+        logger.info(f"[INVENTORY] ✅ Inventory synced: SKU={sku}, qty={qty}")
+        return True
+    else:
+        logger.error(f"[INVENTORY] ❌ Inventory update FAILED for SKU={sku}")
+        return False
