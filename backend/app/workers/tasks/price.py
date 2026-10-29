@@ -14,8 +14,6 @@ logger = logging.getLogger(__name__)
 async def process_price_update(ctx: Dict[str, Any], asin: str):
     """Main entry point: Amazon se fetch karo, DB update karo, phir Shopify sync karo."""
     from app.models import Product
-    
-    # ✅ FIXED IMPORTS: Alag-alag modules se import kiya
     from app.services.amazon.brightdata_scraper import fetch_product_from_brightdata
     from app.services.amazon.pricing import calculate_final_price
     from app.services.amazon.exceptions import BrightDataError
@@ -44,16 +42,31 @@ async def process_price_update(ctx: Dict[str, Any], asin: str):
         product.is_available = new_availability
         product.stock_quantity = data.get("stock_quantity", 0)
         product.last_synced_at = datetime.now(timezone.utc)
+        
         if data.get("rating") is not None: product.rating = data["rating"]
         if data.get("reviews_count") is not None: product.reviews_count = data["reviews_count"]
         if data.get("categories") is not None: product.categories = data["categories"]
         if data.get("tags") is not None: product.tags = data["tags"]
 
+        # ✅ NO DEFAULT MARKUP: Sirf user ka set kiya hua markup use hoga
+        user_markup = product.markup
+        user_markup_type = product.markup_type
+        user_extra = getattr(product, "extra_percent", 0.0) or 0.0
+        user_tax = getattr(product, "tax_rate", 0.0) or 0.0
+
+        # Agar product mein markup save hi nahi hai, to error dein (default na lagayein)
+        if user_markup is None or user_markup_type is None:
+            logger.error(f"[PRICE] ❌ No markup set for ASIN={asin}. Skipping price calculation.")
+            return {"asin": asin, "status": "error", "error": "Markup not set for product"}
+
         new_final_price = calculate_final_price(
             amazon_price=new_amazon_price,
-            markup=product.markup or 2.0,
-            markup_type=getattr(product, "markup_type", "fixed") or "fixed",
+            markup=user_markup,
+            markup_type=user_markup_type,
+            extra_percent=user_extra,
+            tax_rate=user_tax,
         )
+        
         product.amazon_price = new_amazon_price
         product.price = new_final_price
 
@@ -78,15 +91,25 @@ async def process_price_update(ctx: Dict[str, Any], asin: str):
                 
                 # 4b. Price + Tags
                 price_ok = await sync_product_price(
-                    store.shop_domain, store.access_token, store.refresh_token, 
-                    shopify_id, new_final_price, product.tags, product.categories
+                    store.shop_domain, 
+                    store.access_token, 
+                    store.refresh_token, 
+                    shopify_id, 
+                    new_final_price, 
+                    product.tags, 
+                    product.categories,
+                    sku=product.asin  # ✅ SKU yahan pass kiya
                 )
 
                 if price_ok:
                     # 4c. Inventory
                     await sync_product_inventory(
-                        store.shop_domain, store.access_token, shopify_id, 
-                        product.stock_quantity, new_availability
+                        store.shop_domain, 
+                        store.access_token, 
+                        shopify_id, 
+                        product.stock_quantity, 
+                        new_availability,
+                        sku=product.asin  # ✅ Inventory ke liye bhi SKU
                     )
                     shopify_updated = True
         else:
