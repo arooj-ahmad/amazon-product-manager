@@ -4,7 +4,6 @@ from app.services.shopify import (
     update_shopify_product_status,
     set_product_metafields,
 )
-# ✅ NAYA: Dynamic metafields builder import kiya
 from app.services.shopify.metafields.builder import _build_all_metafields
 
 logger = logging.getLogger(__name__)
@@ -23,8 +22,6 @@ async def sync_product_metadata(shop, access_token, shopify_product_id, product,
         logger.info(f"[METADATA] ✅ Status synced, available={is_available}")
 
     # 2. Metafields Update (Saari dynamic specifications ke saath)
-    
-    # Product data ko dictionary mein convert karein taake builder use kar sake
     product_data_for_mf = {
         "asin": product.asin,
         "brand": product.brand,
@@ -36,13 +33,19 @@ async def sync_product_metadata(shop, access_token, shopify_product_id, product,
         "model_number": getattr(product, "model_number", None),
         "item_dimensions": getattr(product, "item_dimensions", None),
         "item_weight": getattr(product, "item_weight", None),
+        "package_dimensions": getattr(product, "package_dimensions", None),
         "size": getattr(product, "size", None),
         "color": getattr(product, "color", None),
+        "material_type": getattr(product, "material_type", None),
+        
+        # ✅ YEH LINE ZAROORI HAI (Dynamic specs ke liye)
+        "product_details": getattr(product, "product_details", []), 
+        
         "specifications": product.specifications or {},
         "variant_attributes": product.variant_attributes or [],
     }
     
-    # ✅ Builder se saari specs (Educational Objective, Number of Batteries, etc.) nikaalein
+    # Builder se saari specs nikaalein
     metafields_input = _build_all_metafields(product_data_for_mf)
 
     if metafields_input:

@@ -42,8 +42,19 @@ def save_or_update_db_product(
                 image_url=vp["image_url"], 
                 images=vp["images"],
                 specifications=(v_data.get("specifications") if v_data else None) or data.get("specifications", {}),
-                rating=rating_val,              # ✅ Save rating
-                reviews_count=reviews_val,      # ✅ Save reviews
+                
+                # ✅ YEH NAYI FIELDS ADD KAREIN (Specs & Physical Attrs)
+                product_details=(v_data.get("product_details") if v_data else None) or data.get("product_details", []),
+                item_dimensions=(v_data.get("item_dimensions") if v_data else None) or data.get("item_dimensions"),
+                item_weight=(v_data.get("item_weight") if v_data else None) or data.get("item_weight"),
+                package_dimensions=(v_data.get("package_dimensions") if v_data else None) or data.get("package_dimensions"),
+                size=(v_data.get("size") if v_data else None) or data.get("size"),
+                color=(v_data.get("color") if v_data else None) or data.get("color"),
+                material_type=(v_data.get("material_type") if v_data else None) or data.get("material_type"),
+                model_number=(v_data.get("model_number") if v_data else None) or data.get("model_number"),
+                
+                rating=rating_val,              
+                reviews_count=reviews_val,      
                 availability=vp["availability"], 
                 is_available=vp["is_available"], 
                 stock_quantity=vp["stock_quantity"],
@@ -76,6 +87,16 @@ def save_or_update_db_product(
             db_product.is_available = vp["is_available"]
             db_product.stock_quantity = vp["stock_quantity"]
             
+            # ✅ Update karte waqt bhi nayi fields update karein
+            if data.get("product_details"): db_product.product_details = data["product_details"]
+            if data.get("item_dimensions"): db_product.item_dimensions = data["item_dimensions"]
+            if data.get("item_weight"): db_product.item_weight = data["item_weight"]
+            if data.get("package_dimensions"): db_product.package_dimensions = data["package_dimensions"]
+            if data.get("size"): db_product.size = data["size"]
+            if data.get("color"): db_product.color = data["color"]
+            if data.get("material_type"): db_product.material_type = data["material_type"]
+            if data.get("model_number"): db_product.model_number = data["model_number"]
+
             # ✅ Update karte waqt bhi rating aur reviews update karein
             if rating_val is not None:
                 db_product.rating = rating_val
